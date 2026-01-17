@@ -1,0 +1,8 @@
+# Default owner for all files
+* @john-agentic-ai-tools
+
+# GitHub configuration
+/.github/ @john-agentic-ai-tools
+
+# Constitution changes
+/.specify/memory/constitution.md @john-agentic-ai-tools
