@@ -1,21 +1,110 @@
-MIT License
+DrugInsightAI Proprietary License
+Copyright (c) 2026 DrugInsightAI LLC. All rights reserved.
 
-Copyright (c) 2026 Crush Contributors
+TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+1. DEFINITIONS
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+   "Software" refers to DrugInsightAI and all associated code, documentation,
+   data, and other materials in this repository.
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+   "Licensor" means DrugInsightAI LLC.
+
+   "You" (or "Your") means an individual or Legal Entity exercising
+   permissions granted by this License.
+
+   "Commercial Use" means any use of the Software for commercial purposes,
+   including but not limited to selling, licensing, or otherwise monetizing
+   the Software or any derivative works.
+
+2. GRANT OF RIGHTS
+
+   Subject to the terms and conditions of this License, Licensor hereby
+   grants You a limited, non-exclusive, non-transferable license to:
+
+   a) Use the Software for personal, educational, and non-commercial purposes;
+   b) Study and examine the source code;
+   c) Create derivative works for personal and educational use only;
+   d) Contribute improvements back to the original project.
+
+3. RESTRICTIONS
+
+   You may NOT:
+
+   a) Use the Software for any Commercial Use without explicit written
+      permission from the Licensor;
+   b) Sell, license, sublicense, or otherwise monetize the Software or any
+      derivative works without a separate commercial agreement with the Licensor;
+   c) Remove or modify any copyright notices, license terms, or attribution
+      requirements;
+   d) Use the Software in any way that competes with or undermines the
+      Licensor's business interests;
+   e) Use the Software in any illegal or unethical manner.
+
+4. COMMERCIAL LICENSING
+
+   Any Commercial Use of the Software requires a separate commercial license
+   agreement with DrugInsightAI LLC. To inquire about commercial licensing,
+   contact: [contact information to be provided]
+
+   Commercial licenses may be granted at the sole discretion of the Licensor
+   and will typically include:
+   - Royalty or licensing fee arrangements
+   - Specific terms for commercial distribution
+   - Support and maintenance agreements
+   - Liability and warranty provisions
+
+5. CONTRIBUTIONS
+
+   By submitting a contribution to this project, You grant the Licensor
+   a perpetual, worldwide, non-exclusive, royalty-free license to use,
+   modify, and distribute Your contribution under the terms of this License
+   and any future commercial licenses.
+
+6. ATTRIBUTION
+
+   You must retain all copyright notices and attribution in any use or
+   distribution of the Software. Any derivative works must clearly indicate
+   they are based on DrugInsightAI and include appropriate attribution
+   to DrugInsightAI LLC.
+
+7. DISCLAIMER OF WARRANTY
+
+   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+   OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+   FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
+   THE LICENSOR BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
+   IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+   CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+8. LIMITATION OF LIABILITY
+
+   IN NO EVENT SHALL THE LICENSOR BE LIABLE FOR ANY DIRECT, INDIRECT,
+   INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT
+   NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+   DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+   THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+   (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+   OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+9. TERMINATION
+
+   This License is effective until terminated. Your rights under this License
+   will terminate automatically without notice if You fail to comply with any
+   term hereof. Upon termination, You must cease all use of the Software and
+   destroy all copies in Your possession.
+
+10. GOVERNING LAW
+
+    This License shall be governed by and construed in accordance with the
+    laws of [Jurisdiction to be specified], without regard to conflict of
+    law principles.
+
+11. ENTIRE AGREEMENT
+
+    This License constitutes the entire agreement between You and the Licensor
+    regarding the Software and supersedes all prior agreements and
+    understandings, whether written or oral.
+
+For questions about this License or to request commercial licensing,
+please contact DrugInsightAI LLC at [contact information to be provided].

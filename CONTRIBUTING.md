@@ -19,27 +19,33 @@ Crush uses a pinned Rust toolchain to ensure consistency across all development 
 ### Installation Steps
 
 1. **Install Rust** (if not already installed):
+
    ```bash
    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
    ```
 
 2. **Clone the repository**:
+
    ```bash
    git clone git@github.com:john-agentic-ai-tools/crush.git
    cd crush
    ```
 
 3. **Build the project**:
+
    ```bash
    cargo build
    ```
+
    The pinned toolchain from `rust-toolchain.toml` will be automatically installed.
 
 4. **Set up pre-commit hooks** (via cargo-husky):
+
    ```bash
    cargo install cargo-husky
    cargo husky install
    ```
+
    Pre-commit hooks will automatically run `cargo fmt` and `cargo clippy` before each commit.
 
 ### Verify Your Setup
@@ -89,7 +95,7 @@ git checkout -b feature/my-feature-name
 
 Use **semantic commit messages** with conventional commit format:
 
-```
+```text
 <type>(<scope>): <subject>
 
 <body>
@@ -109,7 +115,7 @@ Use **semantic commit messages** with conventional commit format:
 
 ### Examples
 
-```
+```text
 feat(compression): add LZ4 algorithm support
 
 Implement LZ4 compression as a pluggable algorithm per constitution
@@ -118,7 +124,7 @@ principle III (Modularity & Extensibility).
 Benchmarks show 30% faster compression vs gzip on text workloads.
 ```
 
-```
+```text
 fix(decompression): prevent buffer overflow on malformed input
 
 Add bounds checking in decompression loop. Fixes #123.
@@ -130,7 +136,7 @@ Tests added to verify safe handling of truncated input.
 
 If you use AI tools (like Claude, GitHub Copilot, ChatGPT) to write code, add a co-author line:
 
-```
+```text
 feat(benchmark): add multi-threaded compression benchmark
 
 Co-Authored-By: Claude Sonnet 4.5 <noreply@anthropic.com>
@@ -181,16 +187,19 @@ cargo tarpaulin --out Html
 ### Before Opening a PR
 
 1. **Ensure all tests pass**:
+
    ```bash
    cargo test
    ```
 
 2. **Run linter**:
+
    ```bash
    cargo clippy --all-targets --all-features -- -D warnings
    ```
 
 3. **Format code**:
+
    ```bash
    cargo fmt --all
    ```
@@ -200,6 +209,7 @@ cargo tarpaulin --out Html
 ### Opening a Pull Request
 
 1. **Push your feature branch**:
+
    ```bash
    git push origin feature/my-feature-name
    ```
@@ -246,12 +256,14 @@ Crush enforces strict code style via automated tools:
 #### No `.unwrap()` or `.expect()` in Production Code
 
 **Prohibited**:
+
 ```rust
 let value = option.unwrap(); // ❌ Will fail CI
 let result = result.expect("failed"); // ❌ Will fail CI
 ```
 
 **Use instead**:
+
 ```rust
 let value = option.ok_or(Error::MissingValue)?; // ✅
 match result {
@@ -272,6 +284,7 @@ All public APIs must be documented with:
 4. **Panics**: If the function can panic (avoid in production code)
 
 **Example**:
+
 ```rust
 /// Compresses data using the specified algorithm.
 ///
@@ -300,21 +313,25 @@ pub fn compress(data: &[u8], algo: Algorithm) -> Result<Vec<u8>, Error> {
 All contributions must comply with the Crush Constitution principles:
 
 ### I. Performance First (NON-NEGOTIABLE)
+
 - Benchmark any performance-sensitive changes
 - No regressions in compression speed or ratio
 - Target: Match or exceed pigz performance
 
 ### II. Correctness & Safety (NON-NEGOTIABLE)
+
 - 100% memory-safe Rust code
 - No unsafe blocks without justification and review
 - No `.unwrap()` in production code
 
 ### III. Modularity & Extensibility (NON-NEGOTIABLE)
+
 - Use trait-based interfaces for algorithms
 - Support plugin architecture
 - Avoid tight coupling between components
 
 ### IV. Test-First Development (NON-NEGOTIABLE)
+
 - Write tests before implementation (TDD)
 - Maintain 80%+ code coverage
 - Include benchmark tests for performance claims
@@ -322,6 +339,7 @@ All contributions must comply with the Crush Constitution principles:
 ### Quality Gates (CI Enforcement)
 
 Before merge, all PRs must pass:
+
 - ✅ All tests pass (`cargo test`)
 - ✅ No clippy warnings (`cargo clippy`)
 - ✅ Code coverage > 80% (`cargo tarpaulin`)
