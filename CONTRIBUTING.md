@@ -132,6 +132,11 @@ Add bounds checking in decompression loop. Fixes #123.
 Tests added to verify safe handling of truncated input.
 ```
 
+### Signed Commits Required
+
+All commits must be signed and verified. Please follow the GitHub documentation on how to set up a
+GPG key and associate it with your GitHub account.
+
 ### AI-Assisted Contributions
 
 If you use AI tools (like Claude, GitHub Copilot, ChatGPT) to write code, add a co-author line:
@@ -141,6 +146,12 @@ feat(benchmark): add multi-threaded compression benchmark
 
 Co-Authored-By: Claude Sonnet 4.5 <noreply@anthropic.com>
 ```
+
+### Spec Driven Development
+
+This project uses the Spec Kit framework for AI-Assisted workflows. This approach ensures that
+changes made by AI adhere the rules specified in the constitution and are backed up by
+clear specifications. This helps to avoid AI hallucinations and unwanted features.
 
 ## Testing Requirements
 
