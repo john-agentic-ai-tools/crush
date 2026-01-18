@@ -3,8 +3,14 @@
 
 # Rust
 target/
+debug/
+release/
 **/*.rs.bk
 *.pdb
+*.rlib
+*.prof*
+
+# Build artifacts
 Cargo.lock
 
 # IDE
@@ -22,3 +28,8 @@ Thumbs.db
 coverage/
 *.profraw
 *.profdata
+test-results/
+
+# Environment
+.env*
+*.log

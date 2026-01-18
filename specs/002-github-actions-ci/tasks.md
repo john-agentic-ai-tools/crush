@@ -25,9 +25,9 @@
 
 **Purpose**: Create directory structure and configuration files needed by all workflows
 
-- [ ] T001 Create .github/workflows directory at repository root
-- [ ] T002 Create .config directory for tool configurations
-- [ ] T003 Create .cargo directory for cargo configuration
+- [X] T001 Create .github/workflows directory at repository root
+- [X] T002 Create .config directory for tool configurations
+- [X] T003 Create .cargo directory for cargo configuration
 
 ---
 
@@ -39,22 +39,22 @@
 
 ### Configuration for User Story 1
 
-- [ ] T004 [P] [US1] Create .config/nextest.toml with CI profile configuration for cargo-nextest test runner
-- [ ] T005 [P] [US1] Create .cargo/deny.toml with license and dependency policies for cargo deny
+- [X] T004 [P] [US1] Create .config/nextest.toml with CI profile configuration for cargo-nextest test runner
+- [X] T005 [P] [US1] Create .cargo/deny.toml with license and dependency policies for cargo deny
 
 ### Implementation for User Story 1
 
-- [ ] T006 [US1] Create .github/workflows/ci.yml with complete CI pipeline workflow including format_check, lint, build_matrix, test, and coverage jobs per contracts/workflow-contracts.md
-- [ ] T007 [US1] Configure format_check job in .github/workflows/ci.yml to run `cargo fmt --all -- --check` on ubuntu-latest
-- [ ] T008 [US1] Configure lint job in .github/workflows/ci.yml to run `cargo clippy --all-targets --all-features -- -D warnings` on ubuntu-latest in parallel with format_check
-- [ ] T009 [US1] Configure build_matrix job in .github/workflows/ci.yml with matrix strategy for 3 OS (ubuntu/windows/macos-latest) × 2 Rust versions (stable/beta), fail-fast enabled, beta marked as continue-on-error
-- [ ] T010 [US1] Add Swatinem/rust-cache@v2 caching to build_matrix job in .github/workflows/ci.yml with shared-key per OS and Rust version
-- [ ] T011 [US1] Configure test job in .github/workflows/ci.yml with cargo-nextest runner on 3 platforms (ubuntu/windows/macos-latest), fail-fast strategy, JUnit XML output
-- [ ] T012 [US1] Add test result reporting to .github/workflows/ci.yml using EnricoMi/publish-unit-test-result-action for GitHub PR integration
-- [ ] T013 [US1] Configure coverage job in .github/workflows/ci.yml using cargo-llvm-cov with 90% threshold enforcement and Codecov integration
-- [ ] T014 [US1] Add concurrency configuration to .github/workflows/ci.yml with group: ci-${{ github.ref }} and cancel-in-progress for pull_request events
-- [ ] T015 [US1] Configure workflow triggers in .github/workflows/ci.yml for pull_request and push events on develop and main branches
-- [ ] T016 [US1] Set workflow permissions in .github/workflows/ci.yml: contents: read, checks: write, pull-requests: write
+- [X] T006 [US1] Create .github/workflows/ci.yml with complete CI pipeline workflow including format_check, lint, build_matrix, test, and coverage jobs per contracts/workflow-contracts.md
+- [X] T007 [US1] Configure format_check job in .github/workflows/ci.yml to run `cargo fmt --all -- --check` on ubuntu-latest
+- [X] T008 [US1] Configure lint job in .github/workflows/ci.yml to run `cargo clippy --all-targets --all-features -- -D warnings` on ubuntu-latest in parallel with format_check
+- [X] T009 [US1] Configure build_matrix job in .github/workflows/ci.yml with matrix strategy for 3 OS (ubuntu/windows/macos-latest) × 2 Rust versions (stable/beta), fail-fast enabled, beta marked as continue-on-error
+- [X] T010 [US1] Add Swatinem/rust-cache@v2 caching to build_matrix job in .github/workflows/ci.yml with shared-key per OS and Rust version
+- [X] T011 [US1] Configure test job in .github/workflows/ci.yml with cargo-nextest runner on 3 platforms (ubuntu/windows/macos-latest), fail-fast strategy, JUnit XML output
+- [X] T012 [US1] Add test result reporting to .github/workflows/ci.yml using EnricoMi/publish-unit-test-result-action for GitHub PR integration
+- [X] T013 [US1] Configure coverage job in .github/workflows/ci.yml using cargo-llvm-cov with 90% threshold enforcement and Codecov integration
+- [X] T014 [US1] Add concurrency configuration to .github/workflows/ci.yml with group: ci-${{ github.ref }} and cancel-in-progress for pull_request events
+- [X] T015 [US1] Configure workflow triggers in .github/workflows/ci.yml for pull_request and push events on develop and main branches
+- [X] T016 [US1] Set workflow permissions in .github/workflows/ci.yml: contents: read, checks: write, pull-requests: write
 
 **Checkpoint**: At this point, User Story 1 should be fully functional and testable independently. Create test PR, verify all quality gates run and enforce standards. This is the MVP.
 
@@ -68,10 +68,10 @@
 
 ### Implementation for User Story 2
 
-- [ ] T017 [US2] Verify build_matrix job in .github/workflows/ci.yml correctly configures 6 build combinations (3 OS × stable, 3 OS × beta) with proper matrix exclusions
-- [ ] T018 [US2] Verify fail-fast: true is enabled for build_matrix job in .github/workflows/ci.yml to cancel remaining jobs on first failure
-- [ ] T019 [US2] Verify beta Rust builds in .github/workflows/ci.yml are marked with continue-on-error: true using matrix.experimental condition
-- [ ] T020 [US2] Add dtolnay/rust-toolchain action to build_matrix job in .github/workflows/ci.yml for consistent toolchain management with rustfmt and clippy components
+- [X] T017 [US2] Verify build_matrix job in .github/workflows/ci.yml correctly configures 6 build combinations (3 OS × stable, 3 OS × beta) with proper matrix exclusions
+- [X] T018 [US2] Verify fail-fast: true is enabled for build_matrix job in .github/workflows/ci.yml to cancel remaining jobs on first failure
+- [X] T019 [US2] Verify beta Rust builds in .github/workflows/ci.yml are marked with continue-on-error: true using matrix.experimental condition
+- [X] T020 [US2] Add dtolnay/rust-toolchain action to build_matrix job in .github/workflows/ci.yml for consistent toolchain management with rustfmt and clippy components
 
 **Checkpoint**: At this point, User Story 2 should be fully functional. Introduce platform-specific bug, verify CI catches it. All platform builds run correctly.
 
@@ -85,12 +85,12 @@
 
 ### Implementation for User Story 3
 
-- [ ] T021 [P] [US3] Create .github/workflows/security-audit.yml with security audit workflow per contracts/workflow-contracts.md
-- [ ] T022 [US3] Configure audit job in .github/workflows/security-audit.yml to run `cargo audit --deny warnings` on ubuntu-latest
-- [ ] T023 [US3] Configure supply_chain job in .github/workflows/security-audit.yml to run `cargo deny check` for license and source validation
-- [ ] T024 [US3] Add workflow triggers to .github/workflows/security-audit.yml for pull_request, push (develop/main), and daily schedule (cron: '0 0 * * *')
-- [ ] T025 [US3] Add concurrency configuration to .github/workflows/security-audit.yml with group: security-audit-${{ github.ref }} and cancel-in-progress: true
-- [ ] T026 [US3] Set workflow permissions in .github/workflows/security-audit.yml: contents: read, security-events: write
+- [X] T021 [P] [US3] Create .github/workflows/security-audit.yml with security audit workflow per contracts/workflow-contracts.md
+- [X] T022 [US3] Configure audit job in .github/workflows/security-audit.yml to run `cargo audit --deny warnings` on ubuntu-latest
+- [X] T023 [US3] Configure supply_chain job in .github/workflows/security-audit.yml to run `cargo deny check` for license and source validation
+- [X] T024 [US3] Add workflow triggers to .github/workflows/security-audit.yml for pull_request, push (develop/main), and daily schedule (cron: '0 0 * * *')
+- [X] T025 [US3] Add concurrency configuration to .github/workflows/security-audit.yml with group: security-audit-${{ github.ref }} and cancel-in-progress: true
+- [X] T026 [US3] Set workflow permissions in .github/workflows/security-audit.yml: contents: read, security-events: write
 
 **Checkpoint**: At this point, User Story 3 should be fully functional. Test with vulnerable dependency, verify audit catches it. Verify daily scheduled run works.
 
@@ -104,17 +104,17 @@
 
 ### Implementation for User Story 4
 
-- [ ] T027 [P] [US4] Create .github/workflows/release.yml with release workflow per contracts/workflow-contracts.md
-- [ ] T028 [US4] Configure validate_version job in .github/workflows/release.yml to check Cargo.toml version is semver compliant and query crates.io API for uniqueness
-- [ ] T029 [US4] Configure run_ci job in .github/workflows/release.yml to reuse .github/workflows/ci.yml via workflow_call for complete quality gate validation
-- [ ] T030 [US4] Configure publish job in .github/workflows/release.yml with cargo publish using trusted publishing (rust-lang/crates-io-auth-action@v1) and exponential backoff retry
-- [ ] T031 [US4] Set OIDC permissions in publish job: id-token: write, contents: read for trusted publishing authentication
-- [ ] T032 [US4] Configure create_github_release job in .github/workflows/release.yml using gh release create with tag v${{ version }} and auto-generated release notes
-- [ ] T033 [US4] Configure merge_to_develop job in .github/workflows/release.yml to merge release branch to develop with --no-ff merge commit
-- [ ] T034 [US4] Configure merge_to_main job in .github/workflows/release.yml to merge release branch to main with --no-ff merge commit after merge_to_develop completes
-- [ ] T035 [US4] Add workflow triggers to .github/workflows/release.yml for push to release/** branches and workflow_dispatch with version input
-- [ ] T036 [US4] Add concurrency configuration to .github/workflows/release.yml with group: release-${{ github.ref }} and cancel-in-progress: false
-- [ ] T037 [US4] Set workflow permissions in .github/workflows/release.yml: id-token: write, contents: write, pull-requests: read
+- [X] T027 [P] [US4] Create .github/workflows/release.yml with release workflow per contracts/workflow-contracts.md
+- [X] T028 [US4] Configure validate_version job in .github/workflows/release.yml to check Cargo.toml version is semver compliant and query crates.io API for uniqueness
+- [X] T029 [US4] Configure run_ci job in .github/workflows/release.yml to reuse .github/workflows/ci.yml via workflow_call for complete quality gate validation
+- [X] T030 [US4] Configure publish job in .github/workflows/release.yml with cargo publish using trusted publishing (rust-lang/crates-io-auth-action@v1) and exponential backoff retry
+- [X] T031 [US4] Set OIDC permissions in publish job: id-token: write, contents: read for trusted publishing authentication
+- [X] T032 [US4] Configure create_github_release job in .github/workflows/release.yml using gh release create with tag v${{ version }} and auto-generated release notes
+- [X] T033 [US4] Configure merge_to_develop job in .github/workflows/release.yml to merge release branch to develop with --no-ff merge commit
+- [X] T034 [US4] Configure merge_to_main job in .github/workflows/release.yml to merge release branch to main with --no-ff merge commit after merge_to_develop completes
+- [X] T035 [US4] Add workflow triggers to .github/workflows/release.yml for push to release/** branches and workflow_dispatch with version input
+- [X] T036 [US4] Add concurrency configuration to .github/workflows/release.yml with group: release-${{ github.ref }} and cancel-in-progress: false
+- [X] T037 [US4] Set workflow permissions in .github/workflows/release.yml: id-token: write, contents: write, pull-requests: read
 
 **Checkpoint**: At this point, User Story 4 should be fully functional. Create test release branch, verify version validation, CI run, publish (dry-run), and branch merges work.
 
@@ -128,10 +128,10 @@
 
 ### Implementation for User Story 5
 
-- [ ] T038 [US5] Configure build_musl_static job in .github/workflows/release.yml to cross-compile for x86_64-unknown-linux-musl target using cross tool
-- [ ] T039 [US5] Add musl binary verification steps to build_musl_static job in .github/workflows/release.yml: file command check, ldd check for static linking, Alpine container test
-- [ ] T040 [US5] Configure build_musl_static job in .github/workflows/release.yml to upload static binary as artifact with name crush-${{ version }}-x86_64-unknown-linux-musl
-- [ ] T041 [US5] Add musl binary artifact to create_github_release job in .github/workflows/release.yml with SHA256 checksum file
+- [X] T038 [US5] Configure build_musl_static job in .github/workflows/release.yml to cross-compile for x86_64-unknown-linux-musl target using cross tool
+- [X] T039 [US5] Add musl binary verification steps to build_musl_static job in .github/workflows/release.yml: file command check, ldd check for static linking, Alpine container test
+- [X] T040 [US5] Configure build_musl_static job in .github/workflows/release.yml to upload static binary as artifact with name crush-${{ version }}-x86_64-unknown-linux-musl
+- [X] T041 [US5] Add musl binary artifact to create_github_release job in .github/workflows/release.yml with SHA256 checksum file
 
 **Checkpoint**: At this point, User Story 5 should be fully functional. Verify musl binary builds, is statically linked, and runs on Alpine. Artifact available in GitHub release.
 
@@ -141,11 +141,11 @@
 
 **Purpose**: Validate all workflows, update documentation, configure repository settings
 
-- [ ] T042 [P] Validate .github/workflows/ci.yml YAML syntax using yamllint or GitHub Actions workflow validator
-- [ ] T043 [P] Validate .github/workflows/security-audit.yml YAML syntax
-- [ ] T044 [P] Validate .github/workflows/release.yml YAML syntax
-- [ ] T045 [P] Validate .config/nextest.toml TOML syntax
-- [ ] T046 [P] Validate .cargo/deny.toml TOML syntax
+- [X] T042 [P] Validate .github/workflows/ci.yml YAML syntax using yamllint or GitHub Actions workflow validator
+- [X] T043 [P] Validate .github/workflows/security-audit.yml YAML syntax
+- [X] T044 [P] Validate .github/workflows/release.yml YAML syntax
+- [X] T045 [P] Validate .config/nextest.toml TOML syntax
+- [X] T046 [P] Validate .cargo/deny.toml TOML syntax
 - [ ] T047 Test ci.yml workflow locally using act: `act pull_request -W .github/workflows/ci.yml` (format_check and lint jobs only, matrix requires GitHub runners)
 - [ ] T048 Test security-audit.yml workflow locally using act: `act pull_request -W .github/workflows/security-audit.yml`
 - [ ] T049 Create test PR with intentional formatting violation, verify format_check job fails and blocks PR (quickstart.md Test 1.1)

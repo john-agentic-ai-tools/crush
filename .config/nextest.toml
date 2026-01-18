@@ -1,0 +1,22 @@
+# cargo-nextest configuration for Crush CI/CD pipeline
+# See: https://nexte.st/docs/configuration/reference/
+
+[profile.default]
+# Local development profile
+retries = 0
+fail-fast = true
+
+[profile.ci]
+# CI profile with retries for flaky tests
+retries = 2
+# Continue running tests even after failure to get full report
+fail-fast = false
+# Slower timeout for CI runners (may have slower I/O)
+slow-timeout = { period = "60s", terminate-after = 2 }
+
+[profile.ci.junit]
+# Output JUnit XML for GitHub Actions test summary
+path = "junit.xml"
+# Include stdout/stderr for failed tests only (reduce file size)
+store-success-output = false
+store-failure-output = true
