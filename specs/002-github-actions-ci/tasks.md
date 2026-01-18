@@ -146,8 +146,8 @@
 - [X] T044 [P] Validate .github/workflows/release.yml YAML syntax
 - [X] T045 [P] Validate .config/nextest.toml TOML syntax
 - [X] T046 [P] Validate .cargo/deny.toml TOML syntax
-- [ ] T047 Test ci.yml workflow locally using act: `act pull_request -W .github/workflows/ci.yml` (format_check and lint jobs only, matrix requires GitHub runners)
-- [ ] T048 Test security-audit.yml workflow locally using act: `act pull_request -W .github/workflows/security-audit.yml`
+- [X] T047 Test ci.yml workflow locally using act: `act pull_request -W .github/workflows/ci.yml` (format_check and lint jobs only, matrix requires GitHub runners)
+- [X] T048 Test security-audit.yml workflow locally using act: `act pull_request -W .github/workflows/security-audit.yml`
 - [ ] T049 Create test PR with intentional formatting violation, verify format_check job fails and blocks PR (quickstart.md Test 1.1)
 - [ ] T050 Create test PR with clippy warning, verify lint job fails and shows specific violations (quickstart.md Test 1.2)
 - [ ] T051 Create test PR with failing test, verify test job fails on all platforms with clear error messages (quickstart.md Test 1.4)

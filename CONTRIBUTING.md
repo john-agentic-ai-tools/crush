@@ -16,6 +16,14 @@ Welcome to Crush! We're excited that you're interested in contributing to a high
 
 Crush uses a pinned Rust toolchain to ensure consistency across all development environments. The exact version is defined in `rust-toolchain.toml` at the repository root.
 
+#### Required Tools
+
+| Tool | Purpose | Installation |
+|------|---------|--------------|
+| Rust | Compilation | [rustup.rs](https://rustup.rs) |
+| Docker | Local CI testing | [docker.com](https://docs.docker.com/get-docker/) |
+| act-cli | Run GitHub Actions locally | `choco install act-cli` or [nektos/act](https://github.com/nektos/act) |
+
 ### Installation Steps
 
 1. **Install Rust** (if not already installed):
@@ -359,6 +367,97 @@ Before merge, all PRs must pass:
 - ✅ Miri clean for unsafe code (`cargo miri test`)
 
 See `.specify/memory/constitution.md` for complete governance rules.
+
+## CI/CD Workflows
+
+Crush uses GitHub Actions for continuous integration and deployment. Understanding these workflows helps you diagnose failures and test changes locally.
+
+### Workflow Overview
+
+| Workflow | Trigger | Purpose |
+|----------|---------|---------|
+| `ci.yml` | PRs, pushes to develop/main | Quality gates, multi-platform builds, tests, coverage |
+| `security-audit.yml` | PRs, pushes, daily schedule | Dependency vulnerability and license checks |
+| `release.yml` | Pushes to release/** branches | Version validation, publishing, branch merging |
+
+### CI Workflow Jobs
+
+The main CI pipeline runs these jobs in sequence:
+
+1. **format_check**: Verifies code formatting with `cargo fmt --all -- --check`
+2. **lint**: Runs Clippy with strict warnings (`-D warnings`)
+3. **build_matrix**: Builds on 3 platforms × 2 Rust versions (stable/beta)
+4. **test**: Runs tests with cargo-nextest on all platforms
+5. **coverage**: Enforces 90% code coverage threshold
+
+### Testing Workflows Locally
+
+Use `act` to run workflows locally before pushing:
+
+```bash
+# Test format check job
+act pull_request -j format_check -W .github/workflows/ci.yml
+
+# Test lint job
+act pull_request -j lint -W .github/workflows/ci.yml
+
+# Test security audit
+act pull_request -W .github/workflows/security-audit.yml
+```
+
+**Note**: Matrix builds (multi-platform) require actual GitHub runners and cannot be fully tested locally.
+
+### Troubleshooting CI Failures
+
+#### Format Check Fails
+
+```bash
+# Diagnosis
+cargo fmt --all -- --check
+
+# Fix
+cargo fmt --all
+git add . && git commit -m "fix: apply formatting"
+```
+
+#### Lint Fails (Clippy Warnings)
+
+```bash
+# Diagnosis
+cargo clippy --all-targets --all-features -- -D warnings
+
+# Auto-fix where possible
+cargo clippy --fix --all-targets --all-features
+git add . && git commit -m "fix: resolve clippy warnings"
+```
+
+#### Tests Fail in CI But Pass Locally
+
+Common causes:
+- **Test pollution**: Tests depend on execution order. Use `cargo nextest run` locally to match CI.
+- **Environment differences**: Use `env!("CARGO_MANIFEST_DIR")` for paths.
+- **Timing issues**: Add proper synchronization or use nextest retries.
+
+#### Coverage Below Threshold
+
+```bash
+# Generate coverage report
+cargo install cargo-llvm-cov
+cargo llvm-cov --html
+# Open target/llvm-cov/html/index.html to find uncovered code
+```
+
+#### Security Audit Fails
+
+```bash
+# Check for vulnerabilities
+cargo audit
+
+# Check licenses and sources
+cargo deny check
+```
+
+See `.github/workflows/README.md` for detailed workflow documentation.
 
 ## Getting Help
 
