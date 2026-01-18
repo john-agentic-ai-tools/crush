@@ -16,3 +16,7 @@ Crush is built to:
 - Integrate cleanly with Rust-based systems, offering safety, performance, and predictable behavior
 
 By focusing on fast, extensible compression rather than one-size-fits-all algorithms, Crush helps data pipelines move faster without becoming a bottleneck.
+
+## Contributing
+
+See the [Contributing Guide](CONTRIBUTING.md) for details on how to contribute to Crush.
