@@ -148,6 +148,22 @@
 - [X] T046 [P] Validate .cargo/deny.toml TOML syntax
 - [X] T047 Test ci.yml workflow locally using act: `act pull_request -W .github/workflows/ci.yml` (format_check and lint jobs only, matrix requires GitHub runners)
 - [X] T048 Test security-audit.yml workflow locally using act: `act pull_request -W .github/workflows/security-audit.yml`
+
+**⚠️ REMINDER: Tasks T049-T061 require Rust project implementation to be completed first**
+
+The following tasks depend on having actual Rust code (Cargo.toml, source files, tests) to validate CI/CD workflows with real scenarios. These should be revisited after the core Crush library implementation is in place.
+
+**Dependencies:**
+- T049-T054: Need Rust codebase to test CI failure scenarios (format violations, clippy warnings, test failures, coverage)
+- T055: Requires time passage (verify daily scheduled runs)
+- T059: Requires external service setup (Codecov)
+- T060: Requires external service setup (crates.io trusted publishing)
+- T061: Final comprehensive verification using quickstart.md
+
+**When to resume:** After implementing the basic Rust workspace structure (crush-core and crush-cli crates) from the project's expected structure in CLAUDE.md.
+
+---
+
 - [ ] T049 Create test PR with intentional formatting violation, verify format_check job fails and blocks PR (quickstart.md Test 1.1)
 - [ ] T050 Create test PR with clippy warning, verify lint job fails and shows specific violations (quickstart.md Test 1.2)
 - [ ] T051 Create test PR with failing test, verify test job fails on all platforms with clear error messages (quickstart.md Test 1.4)
