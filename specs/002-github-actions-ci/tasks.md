@@ -155,9 +155,9 @@
 - [ ] T053 Test multi-platform build matrix by introducing platform-specific code, verify builds succeed on target platform but may fail on others (quickstart.md Test 2.1)
 - [ ] T054 Test security-audit workflow by adding dependency with known vulnerability, verify audit job fails with CVE details (quickstart.md Test 3.1)
 - [ ] T055 Verify daily scheduled security audit runs at midnight UTC, check workflow run history
-- [ ] T056 Update CONTRIBUTING.md to add CI/CD Workflow section documenting how CI works, what checks run, and how to troubleshoot failures
-- [ ] T057 Configure GitHub branch protection rules for develop branch: require ci.yml workflow to pass before merge, require 1 review
-- [ ] T058 Configure GitHub branch protection rules for main branch: require ci.yml workflow to pass before merge, require 1 review
+- [X] T056 Update CONTRIBUTING.md to add CI/CD Workflow section documenting how CI works, what checks run, and how to troubleshoot failures
+- [X] T057 Configure GitHub branch protection rules for develop branch: require ci.yml workflow to pass before merge, require 1 review
+- [X] T058 Configure GitHub branch protection rules for main branch: require ci.yml workflow to pass before merge, require 1 review
 - [ ] T059 Set up Codecov integration: create codecov.io account, add CODECOV_TOKEN to repository secrets, verify coverage PR comments work
 - [ ] T060 Configure crates.io trusted publishing: add Crush repository to crates.io trusted publishers via OIDC, verify GitHub Actions can publish without manual token
 - [ ] T061 Run complete quickstart.md verification guide to ensure all success criteria from spec.md are met (SC-001 through SC-011)
