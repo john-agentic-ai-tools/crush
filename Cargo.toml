@@ -1,0 +1,26 @@
+[workspace]
+resolver = "2"
+members = [
+    "crush-core",
+    "crush-cli",
+]
+
+[workspace.package]
+edition = "2021"
+authors = ["Crush Contributors"]
+license = "MIT"
+repository = "https://github.com/john-agentic-ai-tools/crush"
+homepage = "https://github.com/john-agentic-ai-tools/crush"
+
+[profile.dev]
+opt-level = 0
+debug = true
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
+
+[profile.test]
+opt-level = 1

@@ -1,0 +1,19 @@
+[package]
+name = "crush-core"
+version = "0.1.0"
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "High-performance parallel compression library core"
+
+[lib]
+name = "crush_core"
+path = "src/lib.rs"
+
+[dependencies]
+# No dependencies initially - deferred to compression features
+
+[dev-dependencies]
+# Test framework is built into Rust - no additional dependencies needed
