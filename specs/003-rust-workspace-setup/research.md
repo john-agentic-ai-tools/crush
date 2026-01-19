@@ -30,7 +30,7 @@ clap = { version = "4.5", features = ["derive"] }
 [workspace.metadata]
 # Workspace-level metadata
 authors = ["Crush Contributors"]
-edition = "2024"
+edition = "2026"
 rust-version = "1.84"
 license = "MIT OR Apache-2.0"
 
