@@ -128,18 +128,18 @@
 
 **Purpose**: Validate complete workspace, run comprehensive quality checks, integrate with CI
 
-- [ ] T036 [P] Validate Cargo.toml workspace manifest structure matches contracts/workspace.md specification
-- [ ] T037 [P] Validate crush-core crate manifest structure matches data-model.md schema
-- [ ] T038 [P] Validate crush-cli crate manifest structure matches data-model.md schema
-- [ ] T039 Run complete quality gate suite from quickstart.md section 2 (fmt check, clippy, build, test)
-- [ ] T040 Run cargo clean && time cargo build to verify build time <30 seconds (SC-002) on clean build
-- [ ] T041 Verify project structure matches CLAUDE.md Expected Workspace Structure (SC-010) via directory tree comparison
-- [ ] T042 Run cargo build --release to verify release profile compiles successfully (constitutional quality gate)
-- [ ] T043 Create test commit with formatted code, verify git status shows clean working tree (no uncommitted format changes)
-- [ ] T044 Push branch 003-rust-workspace-setup to origin to trigger CI workflows from feature 002
-- [ ] T045 Verify CI pipeline passes all jobs: format_check, lint, build_matrix (3 platforms × 2 Rust versions), test, coverage (SC-008)
-- [ ] T046 Review CI results, verify zero warnings across all jobs, coverage >80% reported
-- [ ] T047 Create feature completion checklist documenting all success criteria met (SC-001 through SC-010)
+- [X] T036 [P] Validate Cargo.toml workspace manifest structure matches contracts/workspace.md specification
+- [X] T037 [P] Validate crush-core crate manifest structure matches data-model.md schema
+- [X] T038 [P] Validate crush-cli crate manifest structure matches data-model.md schema
+- [X] T039 Run complete quality gate suite from quickstart.md section 2 (fmt check, clippy, build, test)
+- [X] T040 Run cargo clean && time cargo build to verify build time <30 seconds (SC-002) on clean build - RESULT: 0.64s
+- [X] T041 Verify project structure matches CLAUDE.md Expected Workspace Structure (SC-010) via directory tree comparison
+- [X] T042 Run cargo build --release to verify release profile compiles successfully (constitutional quality gate) - RESULT: 1.19s
+- [X] T043 Create test commit with formatted code, verify git status shows clean working tree (no uncommitted format changes)
+- [X] T044 Push branch 003-rust-workspace-setup to origin to trigger CI workflows from feature 002
+- [ ] T045 Verify CI pipeline passes all jobs: format_check, lint, build_matrix (3 platforms × 2 Rust versions), test, coverage (SC-008) - PENDING: CI running
+- [ ] T046 Review CI results, verify zero warnings across all jobs, coverage >80% reported - PENDING: CI running
+- [ ] T047 Create feature completion checklist documenting all success criteria met (SC-001 through SC-010) - DEFERRED: Complete after CI validation
 
 ---
 
