@@ -1,0 +1,19 @@
+[package]
+name = "crush-cli"
+version = "0.1.0"
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Command-line interface for the Crush compression library"
+
+[[bin]]
+name = "crush"
+path = "src/main.rs"
+
+[dependencies]
+crush-core = { path = "../crush-core" }
+
+[dev-dependencies]
+# Test framework is built into Rust - no additional dependencies needed

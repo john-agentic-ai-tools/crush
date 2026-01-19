@@ -1,0 +1,27 @@
+# Clippy Configuration for Crush
+# Based on constitution safety requirements and research.md
+
+# Safety enforcement - deny unwrap/expect/panic per constitution
+# These are configured via command-line flags:
+# cargo clippy -- -D warnings -D clippy::unwrap_used -D clippy::expect_used -D clippy::panic
+
+# Cognitive complexity threshold
+cognitive-complexity-threshold = 15
+
+# Type complexity threshold
+type-complexity-threshold = 250
+
+# Too many arguments threshold
+too-many-arguments-threshold = 7
+
+# Too many lines threshold
+too-many-lines-threshold = 100
+
+# Doc markdown
+doc-valid-idents = ["Crush", "Deflate", "Gzip", "Zlib", "SIMD", "TDD"]
+
+# Single char binding names
+single-char-binding-names-threshold = 4
+
+# Enable pedantic lints via command line:
+# cargo clippy -- -W clippy::pedantic
