@@ -967,3 +967,466 @@ cargo doc --no-deps              # Documentation must build
 3. Set up toolchain, formatting, and linting configs
 4. Implement minimal lib.rs and main.rs stubs
 5. Verify clean compilation with strict lints
+
+---
+
+## 8. Magic Number Format and File Header Structure for Plugin System
+
+### Context
+
+Crush's plugin architecture requires a robust file format identification system. Each compression plugin must define a unique magic number to route decompression to the correct plugin. The file header must provide enough metadata for decompression while minimizing overhead on small files.
+
+### Research Findings
+
+#### 8.1 Existing Format Survey
+
+**GZIP (RFC 1952):**
+- **Magic Number**: `0x1F 0x8B` (2 bytes)
+- **Compression Method**: 1 byte (0x08 for DEFLATE)
+- **Flags**: 1 byte (indicates optional sections)
+- **Timestamp**: 4 bytes (little-endian Unix timestamp)
+- **Extra Flags**: 1 byte
+- **OS Identifier**: 1 byte
+- **Total Header**: 10 bytes minimum, variable with optional sections (filename, comment, CRC16)
+- **Endianness**: Little-endian for multi-byte values
+
+**Zstandard (RFC 8878):**
+- **Magic Number**: `0x28 0xB5 0x2F 0xFD` (4 bytes)
+- **Frame Header**: Variable size based on descriptor flags
+- **Frame Descriptor**: 1-2 bytes encoding window size, content size flag, checksum flag
+- **Content Size**: 0, 1, 2, or 8 bytes (optional)
+- **Dictionary ID**: 0 or 4 bytes (optional)
+- **Total Header**: Minimum 4 bytes magic + 1 byte descriptor = 5 bytes, maximum ~20 bytes
+- **Endianness**: Little-endian (0xFD2FB528 when read as 32-bit LE integer)
+- **Skippable Frames**: Magic 0x184D2A5X (where X = 0-F) allows embedding metadata
+
+**bzip2:**
+- **Magic Number**: `0x42 0x5A 0x68` (3 bytes, ASCII "BZh")
+- **Block Size**: 1 byte (indicates 100k-900k block size)
+- **Stream Composition**: Multiple blocks with block magic `0x314159265359` (6 bytes, digits of π)
+- **Total Header**: 4 bytes minimum (magic + block size)
+- **Design Note**: Uses mathematical constants for magic numbers (π digits)
+
+**LZ4 Frame Format:**
+- **Magic Number**: `0x04 0x22 0x4D 0x18` (4 bytes, little-endian: 0x184D2204)
+- **Frame Descriptor**: 3-15 bytes (flags, block size, content size, dictionary ID)
+- **Total Header**: 7-19 bytes
+- **Skippable Frames**: Magic `0x184D2A50` through `0x184D2A5F` (16 variants)
+- **Endianness**: Little-endian
+- **Design Note**: Reserved magic number range for future extensions
+
+**Brotli:**
+- **Magic Number**: **NONE**
+- **Critical Gap**: No file-level magic bytes, only stream-level metadata
+- **Impact**: Difficult to identify `.br` files without trying decompression
+- **Lesson**: Lack of magic numbers creates usability and tooling problems
+
+#### 8.2 Magic Number Size Analysis
+
+| Size | Formats | Collision Risk | Recommendations |
+|------|---------|----------------|-----------------|
+| **2 bytes** | GZIP, JPEG | Higher (65,536 combinations) | Acceptable for single-purpose formats |
+| **4 bytes** | Zstd, LZ4, ZIP | Low (4.3 billion combinations) | **Industry standard** for modern formats |
+| **8 bytes** | PNG | Minimal (2^64 combinations) | Overkill for most use cases |
+
+**Key Findings:**
+- **4 bytes is the modern standard**: Balances collision resistance with overhead
+- **Little-endian preferred**: Matches x86/ARM architectures, simplifies implementation
+- **Reserved ranges**: LZ4's approach of reserving 0x184D2A5X for skippable frames enables extensibility
+
+#### 8.3 Header Overhead Impact on Small Files
+
+From compression benchmarks and format analysis:
+
+**LZAV (Low-Overhead Algorithm):**
+- Hash-table-based compression has minimal memory overhead
+- Ideal for small data (< 1KB)
+- Header size critical for compression ratio on small files
+
+**Analysis:**
+- **10-byte header** (like GZIP): 10% overhead on 100-byte file
+- **20-byte header**: 20% overhead on 100-byte file, 2% on 1KB file
+- **Acceptable threshold**: < 5% overhead on 1KB files = max 50 bytes
+- **Optimal range**: 12-24 bytes for most use cases
+
+**Zstandard Strategy:**
+- Minimum 5 bytes (magic + descriptor) for simple frames
+- Optional fields increase size only when needed
+- Excellent overhead/feature tradeoff
+
+#### 8.4 Collision Prevention Strategies
+
+**No Centralized Registry:**
+- IANA maintains protocol parameter registries (port numbers, MIME types)
+- **File format magic numbers are NOT centralized** (unlike port numbers)
+- Community-maintained lists exist (Gary Kessler's table, Wikipedia) but are informational only
+
+**Prevention Strategies:**
+
+1. **Reserved Ranges (Recommended):**
+   - Reserve `0xCR` prefix for Crush formats (CR = "CRush")
+   - Default plugins: `0xCR 0x00` - `0xCR 0x0F` (16 reserved IDs)
+   - User plugins: `0xCR 0x10` - `0xCR 0xFF` (240 available IDs)
+   - Future expansion: `0xCR 0xXX 0xYY` (2-byte plugin IDs)
+
+2. **Runtime Registry Validation:**
+   - Plugin manager maintains HashMap of registered magic numbers
+   - Registration fails if magic number already exists
+   - First-come-first-served within application instance
+
+3. **Global Uniqueness Check:**
+   - Compare against known formats database (embedded or external)
+   - Warn developers if chosen magic conflicts with popular formats
+   - Non-blocking warning (allows override for internal use)
+
+4. **UUID Alternative (Not Recommended):**
+   - 16-byte UUID guarantees uniqueness
+   - **Rejected**: 16 bytes is excessive overhead (16% on 100-byte file)
+   - Better suited for file metadata, not magic numbers
+
+#### 8.5 Header Structure Best Practices
+
+**Extensibility Lessons from ZIP:**
+- ZIP's "Extra" data fields enable format evolution
+- Supports ZIP64, AES encryption, timestamps without breaking compatibility
+- **Key Principle**: Reserve flags for future features from day one
+
+**Versioning:**
+- Include version field early (even if only one version exists)
+- Enables format migration and deprecation paths
+- Example: 1 byte = 256 format versions (sufficient for decades)
+
+**Endianness:**
+- **Little-endian (recommended)**: Matches x86, ARM, RISC-V (dominant architectures)
+- Simplifies implementation on 95%+ of target platforms
+- Big-endian only needed for network protocols or cross-platform binary formats
+
+### Decision Recommendation
+
+#### Magic Number Format
+
+**Structure: 4-byte magic number with reserved range system**
+
+```rust
+/// Magic number structure for Crush compressed files
+pub struct MagicNumber([u8; 4]);
+
+impl MagicNumber {
+    /// Crush magic number prefix (ASCII "CR" + version)
+    pub const PREFIX: [u8; 2] = [0x43, 0x52]; // "CR"
+
+    /// Format version (0x01 for V1)
+    pub const VERSION: u8 = 0x01;
+
+    /// Default DEFLATE plugin
+    pub const DEFLATE: Self = Self([0x43, 0x52, 0x01, 0x00]);
+
+    /// Reserved range for default plugins (0x00-0x0F)
+    pub const RESERVED_START: u8 = 0x00;
+    pub const RESERVED_END: u8 = 0x0F;
+
+    /// User plugin range (0x10-0xFF)
+    pub const USER_START: u8 = 0x10;
+    pub const USER_END: u8 = 0xFF;
+
+    /// Create magic number for a plugin
+    pub const fn new(plugin_id: u8) -> Self {
+        Self([Self::PREFIX[0], Self::PREFIX[1], Self::VERSION, plugin_id])
+    }
+
+    /// Validate magic number format
+    pub fn validate(&self) -> Result<u8, FormatError> {
+        if self.0[0..2] != Self::PREFIX {
+            return Err(FormatError::InvalidMagic);
+        }
+        if self.0[2] != Self::VERSION {
+            return Err(FormatError::UnsupportedVersion(self.0[2]));
+        }
+        Ok(self.0[3]) // Return plugin ID
+    }
+}
+```
+
+**Rationale:**
+- **4 bytes total**: Industry standard, balances collision resistance and overhead
+- **"CR" prefix (0x43 0x52)**: ASCII readable in hex dumps, unlikely to conflict
+- **Version byte**: Enables format evolution (currently 0x01)
+- **Plugin ID byte**: 256 possible plugins (16 reserved, 240 user-defined)
+- **Little-endian**: Read as `0x00015243` on LE systems (natural byte order)
+
+#### File Header Structure
+
+**Structure: 16-byte fixed header + optional metadata**
+
+```rust
+/// Crush file header (16 bytes fixed size)
+#[repr(C, packed)]
+pub struct CrushHeader {
+    /// Magic number (4 bytes: "CR" + version + plugin_id)
+    pub magic: MagicNumber,
+
+    /// Header flags (1 byte)
+    /// Bit 0: Has original size field
+    /// Bit 1: Has CRC32 checksum
+    /// Bit 2: Has metadata section
+    /// Bit 3: Reserved (compression level hint)
+    /// Bit 4-7: Reserved for future use
+    pub flags: u8,
+
+    /// Original (uncompressed) size in bytes (8 bytes, little-endian)
+    /// If size > u64::MAX, set to u64::MAX and use metadata section
+    pub original_size: u64,
+
+    /// CRC32 checksum of compressed data (4 bytes, little-endian)
+    /// Computed from compressed payload only (excludes header)
+    pub crc32: u32,
+
+    // Total: 16 bytes (4 + 1 + 8 + 4 - 1 padding)
+}
+
+impl CrushHeader {
+    pub const SIZE: usize = 16;
+
+    /// Header flags
+    pub const FLAG_HAS_SIZE: u8 = 0x01;
+    pub const FLAG_HAS_CRC: u8 = 0x02;
+    pub const FLAG_HAS_METADATA: u8 = 0x04;
+
+    /// Create minimal header (magic + flags only)
+    pub fn minimal(plugin_id: u8) -> Self {
+        Self {
+            magic: MagicNumber::new(plugin_id),
+            flags: 0,
+            original_size: 0,
+            crc32: 0,
+        }
+    }
+
+    /// Create header with size and CRC
+    pub fn with_size_and_crc(plugin_id: u8, size: u64, crc: u32) -> Self {
+        Self {
+            magic: MagicNumber::new(plugin_id),
+            flags: Self::FLAG_HAS_SIZE | Self::FLAG_HAS_CRC,
+            original_size: size,
+            crc32: crc,
+        }
+    }
+
+    /// Serialize to bytes (little-endian)
+    pub fn to_bytes(&self) -> [u8; Self::SIZE] {
+        let mut bytes = [0u8; Self::SIZE];
+        bytes[0..4].copy_from_slice(&self.magic.0);
+        bytes[4] = self.flags;
+        bytes[5..13].copy_from_slice(&self.original_size.to_le_bytes());
+        bytes[13..17].copy_from_slice(&self.crc32.to_le_bytes());
+        // Note: Adjust if padding differs
+        bytes
+    }
+
+    /// Deserialize from bytes
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, FormatError> {
+        if bytes.len() < Self::SIZE {
+            return Err(FormatError::TruncatedHeader);
+        }
+
+        let magic = MagicNumber([bytes[0], bytes[1], bytes[2], bytes[3]]);
+        magic.validate()?;
+
+        Ok(Self {
+            magic,
+            flags: bytes[4],
+            original_size: u64::from_le_bytes(bytes[5..13].try_into().unwrap()),
+            crc32: u32::from_le_bytes(bytes[13..17].try_into().unwrap()),
+        })
+    }
+}
+```
+
+**Rationale:**
+
+1. **16 bytes fixed size**:
+   - Overhead: 1.6% on 1KB file, 0.16% on 10KB file (acceptable)
+   - Cache-line friendly (fits in single 64-byte cache line with data)
+   - Simpler parsing than variable-length headers
+
+2. **Magic number (4 bytes)**:
+   - Plugin identification and version checking
+
+3. **Flags byte**:
+   - Enables optional fields without breaking format
+   - Extensible to 8 feature flags
+
+4. **Original size (8 bytes)**:
+   - Pre-allocates decompression buffer (performance optimization)
+   - Enables progress reporting for large files
+   - u64 supports files up to 16 exabytes
+
+5. **CRC32 (4 bytes)**:
+   - Detects corruption in compressed data
+   - Fast to compute (crc32fast crate: ~16 GB/s)
+   - Standard in ZIP, GZIP, PNG
+
+6. **Little-endian**:
+   - Matches x86/ARM architectures
+   - Direct memory mapping on most platforms
+
+7. **No padding fields**:
+   - Packed representation saves space
+   - Alignment handled by serialization code
+
+**Optional Metadata Section (Future Extension):**
+
+For plugins needing additional metadata (dictionary IDs, algorithm parameters):
+
+```rust
+/// Optional metadata section (follows header if FLAG_HAS_METADATA is set)
+pub struct CrushMetadata {
+    /// Metadata length (2 bytes, little-endian)
+    pub length: u16,
+
+    /// Plugin-specific metadata (variable length, max 65535 bytes)
+    pub data: Vec<u8>,
+}
+```
+
+#### Collision Handling Strategy
+
+**Implementation:**
+
+```rust
+use std::collections::HashMap;
+
+pub struct PluginRegistry {
+    /// Maps magic numbers to plugin implementations
+    plugins: HashMap<[u8; 4], Box<dyn CompressionPlugin>>,
+}
+
+impl PluginRegistry {
+    /// Register a new plugin
+    pub fn register(&mut self, plugin: Box<dyn CompressionPlugin>) -> Result<(), RegistryError> {
+        let magic = plugin.magic_number();
+
+        // Check for collisions in registry
+        if self.plugins.contains_key(&magic.0) {
+            return Err(RegistryError::MagicNumberCollision(magic.0));
+        }
+
+        // Optional: Check against known formats database
+        if is_known_format(&magic.0) {
+            eprintln!(
+                "Warning: Magic number {:02X?} conflicts with known format. \
+                 Use for internal purposes only.",
+                magic.0
+            );
+        }
+
+        self.plugins.insert(magic.0, plugin);
+        Ok(())
+    }
+
+    /// Route decompression to correct plugin
+    pub fn decompress(&self, data: &[u8]) -> Result<Vec<u8>, DecompressionError> {
+        if data.len() < CrushHeader::SIZE {
+            return Err(DecompressionError::TruncatedFile);
+        }
+
+        let header = CrushHeader::from_bytes(data)?;
+        let magic = header.magic.0;
+
+        let plugin = self.plugins.get(&magic)
+            .ok_or(DecompressionError::UnknownFormat(magic))?;
+
+        plugin.decompress(&data[CrushHeader::SIZE..])
+    }
+}
+
+/// Database of well-known magic numbers to avoid collisions
+fn is_known_format(magic: &[u8; 4]) -> bool {
+    const KNOWN_FORMATS: &[[u8; 4]] = &[
+        [0x1F, 0x8B, 0x08, 0x00], // GZIP
+        [0x28, 0xB5, 0x2F, 0xFD], // Zstandard
+        [0x04, 0x22, 0x4D, 0x18], // LZ4
+        [0x50, 0x4B, 0x03, 0x04], // ZIP
+        [0x52, 0x61, 0x72, 0x21], // RAR
+        // Add more as needed
+    ];
+
+    KNOWN_FORMATS.contains(magic)
+}
+```
+
+**Collision Prevention Features:**
+
+1. **Runtime validation**: Registry refuses duplicate magic numbers
+2. **Known format check**: Warns if conflicts with popular formats
+3. **Reserved ranges**: Default plugins use 0x00-0x0F, user plugins use 0x10-0xFF
+4. **Clear error messages**: Helps plugin developers fix collisions quickly
+
+### Alternatives Considered
+
+**1. UUID-Based Magic Numbers (16 bytes)**
+- **Pros**: Guaranteed globally unique
+- **Cons**: 16 bytes overhead (16% on 100-byte files), not human-readable
+- **Verdict**: Rejected - overhead too high for magic numbers
+
+**2. String Identifiers (e.g., "CRUSH-DEFLATE")**
+- **Pros**: Human-readable, self-documenting
+- **Cons**: Variable length, inefficient parsing, large overhead
+- **Verdict**: Rejected - use for metadata, not magic numbers
+
+**3. 2-Byte Magic Numbers (like GZIP)**
+- **Pros**: Minimal overhead (2%)
+- **Cons**: Only 65,536 combinations, higher collision risk
+- **Verdict**: Rejected - insufficient for plugin system with many formats
+
+**4. Variable-Length Headers (like ZIP)**
+- **Pros**: Flexible, supports arbitrary metadata
+- **Cons**: Complex parsing, non-deterministic overhead
+- **Verdict**: Rejected for V1 - fixed header simpler, add metadata section later if needed
+
+**5. Big-Endian Byte Order**
+- **Pros**: Network byte order standard
+- **Cons**: Requires byte-swapping on x86/ARM
+- **Verdict**: Rejected - little-endian matches 95%+ of target platforms
+
+### Header Size Comparison
+
+| Format | Magic | Fixed Header | Optional Fields | Total Min | Total Max |
+|--------|-------|--------------|-----------------|-----------|-----------|
+| **GZIP** | 2 | 10 | Filename, comment, extra | 10 | ~1KB |
+| **Zstandard** | 4 | 5 | Content size, dict ID | 5 | ~20 |
+| **LZ4** | 4 | 7 | Content size, dict ID | 7 | 19 |
+| **Bzip2** | 3 | 4 | None | 4 | 4 |
+| **Crush (Proposed)** | 4 | 16 | Metadata section | 16 | ~64KB |
+
+**Overhead Analysis:**
+- **100-byte file**: 16% overhead (acceptable for small files not primary use case)
+- **1KB file**: 1.6% overhead (excellent)
+- **10KB file**: 0.16% overhead (negligible)
+- **1MB file**: 0.0016% overhead (unmeasurable)
+
+**Conclusion**: 16-byte header strikes optimal balance between features and overhead.
+
+### Implementation Checklist
+
+- [ ] Define `MagicNumber` struct with validation logic
+- [ ] Implement `CrushHeader` with serialization/deserialization
+- [ ] Create `PluginRegistry` with collision detection
+- [ ] Add known format database for conflict warnings
+- [ ] Write unit tests for header parsing (valid/invalid cases)
+- [ ] Benchmark header overhead on file sizes: 100B, 1KB, 10KB, 1MB
+- [ ] Document magic number allocation process for plugin developers
+- [ ] Reserve default plugin IDs (0x00-0x0F) in registry
+
+### References
+
+- [RFC 1952: GZIP file format specification version 4.3](https://www.rfc-editor.org/rfc/rfc1952)
+- [RFC 8878: Zstandard Compression and the 'application/zstd' Media Type](https://datatracker.ietf.org/doc/html/rfc8878)
+- [LZ4 Frame Format Description](https://github.com/lz4/lz4/blob/release/doc/lz4_Frame_format.md)
+- [List of file signatures - Wikipedia](https://en.wikipedia.org/wiki/List_of_file_signatures)
+- [Unix Magic Numbers - The Hitchhiker's Guide to Compression](https://go-compression.github.io/reference/magic_numbers/)
+- [Zstandard Compression Format Documentation](https://fuchsia.googlesource.com/third_party/zstd/+/refs/tags/v0.7.2/zstd_compression_format.md)
+- [bzip2 - Wikipedia](https://en.wikipedia.org/wiki/Bzip2)
+- [Standardize some magic bytes to identify a brotli stream · Issue #298](https://github.com/google/brotli/issues/298)
+- [File Magic Numbers - GitHub Gist](https://gist.github.com/leommoore/f9e57ba2aa4bf197ebc5)
+- [Gary Kessler's File Signatures Table](https://www.garykessler.net/library/file_sigs.html)

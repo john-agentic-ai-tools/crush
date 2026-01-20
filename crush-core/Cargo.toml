@@ -13,7 +13,25 @@ name = "crush_core"
 path = "src/lib.rs"
 
 [dependencies]
-# No dependencies initially - deferred to compression features
+linkme = { workspace = true }
+crossbeam = { workspace = true }
+rayon = { workspace = true }
+flate2 = { workspace = true }
+crc32fast = { workspace = true }
+thiserror = { workspace = true }
 
 [dev-dependencies]
-# Test framework is built into Rust - no additional dependencies needed
+criterion = { workspace = true }
+proptest = "1.5"
+
+[lints.clippy]
+# Deny all warnings to enforce quality
+all = "deny"
+# Enable pedantic lints for stricter code quality
+pedantic = "warn"
+# Constitution requirement: No unwrap() in production
+unwrap_used = "deny"
+expect_used = "deny"
+# Additional safety lints
+panic = "deny"
+panic_in_result_fn = "deny"

@@ -1,13 +1,12 @@
 //! Crush Core Library
 //!
-//! High-performance parallel compression library.
-//!
-//! # Examples
-//!
-//! ```
-//! use crush_core::hello;
-//! assert_eq!(hello(), "Hello from crush-core!");
-//! ```
+//! High-performance parallel compression library with pluggable compression algorithms.
+
+pub mod error;
+pub mod plugin;
+
+pub use error::{CrushError, PluginError, Result, TimeoutError, ValidationError};
+pub use plugin::{CompressionAlgorithm, CrushHeader, PluginMetadata, COMPRESSION_ALGORITHMS};
 
 /// Placeholder function demonstrating public API structure.
 ///

@@ -12,6 +12,15 @@ license = "MIT"
 repository = "https://github.com/john-agentic-ai-tools/crush"
 homepage = "https://github.com/john-agentic-ai-tools/crush"
 
+[workspace.dependencies]
+linkme = "0.3"
+crossbeam = "0.8"
+rayon = "1.10"
+flate2 = "1.0"
+crc32fast = "1.4"
+thiserror = "1.0"
+criterion = "0.5"
+
 [profile.dev]
 opt-level = 0
 debug = true
