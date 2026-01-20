@@ -63,19 +63,19 @@ From plan.md - Rust workspace structure:
 
 > **NOTE: Write these tests FIRST, ensure they FAIL before implementation**
 
-- [ ] T012 [P] [US1] Roundtrip test for default compression in crush-core/tests/integration/roundtrip.rs (compress→decompress→verify)
-- [ ] T013 [P] [US1] Corrupted data test in crush-core/tests/integration/roundtrip.rs (verify error handling)
-- [ ] T014 [P] [US1] Property-based roundtrip test in crush-core/tests/integration/roundtrip.rs using proptest (random data)
+- [X] T012 [P] [US1] Roundtrip test for default compression in crush-core/tests/roundtrip.rs (compress→decompress→verify)
+- [X] T013 [P] [US1] Corrupted data test in crush-core/tests/roundtrip.rs (verify error handling)
+- [X] T014 [P] [US1] Property-based roundtrip test in crush-core/tests/roundtrip.rs using proptest (random data)
 
 ### Implementation for User Story 1
 
-- [ ] T015 [P] [US1] Implement default DEFLATE plugin in crush-core/src/plugin/default.rs (name="deflate", magic=CR0100, uses flate2)
-- [ ] T016 [P] [US1] Register DEFLATE plugin via distributed_slice in crush-core/src/plugin/default.rs
-- [ ] T017 [US1] Implement compress() function in crush-core/src/compression.rs (routes to plugin, writes CrushHeader)
-- [ ] T018 [US1] Implement decompress() function in crush-core/src/decompression.rs (reads CrushHeader, routes to plugin by magic number)
-- [ ] T019 [US1] Implement header serialization/deserialization in crush-core/src/plugin/metadata.rs (little-endian, CRC32 validation)
-- [ ] T020 [US1] Add error handling for missing plugin during decompression in crush-core/src/decompression.rs (FR-001: helpful error message)
-- [ ] T021 [US1] Export public API in crush-core/src/lib.rs (compress, decompress functions)
+- [X] T015 [P] [US1] Implement default DEFLATE plugin in crush-core/src/plugin/default.rs (name="deflate", magic=CR0100, uses flate2)
+- [X] T016 [P] [US1] Register DEFLATE plugin via distributed_slice in crush-core/src/plugin/default.rs
+- [X] T017 [US1] Implement compress() function in crush-core/src/compression.rs (routes to plugin, writes CrushHeader)
+- [X] T018 [US1] Implement decompress() function in crush-core/src/decompression.rs (reads CrushHeader, routes to plugin by magic number)
+- [X] T019 [US1] Implement header serialization/deserialization in crush-core/src/plugin/metadata.rs (little-endian, CRC32 validation)
+- [X] T020 [US1] Add error handling for missing plugin during decompression in crush-core/src/decompression.rs (FR-001: helpful error message)
+- [X] T021 [US1] Export public API in crush-core/src/lib.rs (compress, decompress functions)
 
 **Checkpoint**: At this point, User Story 1 should be fully functional - can compress/decompress files with default algorithm
 

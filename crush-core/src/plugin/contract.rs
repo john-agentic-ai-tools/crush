@@ -33,7 +33,7 @@ use std::sync::Arc;
 /// struct MyPlugin;
 ///
 /// impl CompressionAlgorithm for MyPlugin {
-///     fn name(&self) -> &str { "my_plugin" }
+///     fn name(&self) -> &'static str { "my_plugin" }
 ///
 ///     fn metadata(&self) -> PluginMetadata {
 ///         PluginMetadata {
@@ -74,7 +74,7 @@ use std::sync::Arc;
 /// ```
 pub trait CompressionAlgorithm: Send + Sync {
     /// Plugin name (must be unique, used for manual selection)
-    fn name(&self) -> &str;
+    fn name(&self) -> &'static str;
 
     /// Plugin metadata (performance characteristics and identification)
     fn metadata(&self) -> PluginMetadata;

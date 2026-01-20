@@ -5,6 +5,7 @@
 //! the `linkme` crate for zero runtime overhead.
 
 pub mod contract;
+pub mod default;
 pub mod metadata;
 
 pub use contract::CompressionAlgorithm;
