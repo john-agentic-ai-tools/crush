@@ -4,7 +4,8 @@
 //! validates headers and checksums, routes to the correct plugin, and decompresses.
 
 use crate::error::{PluginError, Result, ValidationError};
-use crate::plugin::{CrushHeader, COMPRESSION_ALGORITHMS};
+use crate::plugin::registry::get_plugin_by_magic;
+use crate::plugin::{list_plugins, CrushHeader};
 use crc32fast::Hasher;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
@@ -27,8 +28,9 @@ use std::sync::Arc;
 /// # Examples
 ///
 /// ```
-/// use crush_core::{compress, decompress};
+/// use crush_core::{init_plugins, compress, decompress};
 ///
+/// init_plugins().expect("Plugin initialization failed");
 /// let data = b"Hello, world!";
 /// let compressed = compress(data).expect("Compression failed");
 /// let decompressed = decompress(&compressed).expect("Decompression failed");
@@ -91,22 +93,21 @@ pub fn decompress(input: &[u8]) -> Result<Vec<u8>> {
 
     let compressed_payload = &input[payload_start..];
 
-    // Find plugin by magic number
-    let plugin = COMPRESSION_ALGORITHMS
-        .iter()
-        .find(|p| p.metadata().magic_number == header.magic)
-        .ok_or_else(|| {
-            PluginError::NotFound(format!(
-                "No plugin found for magic number {:02X?}. \
-                 Available plugins: {}",
-                header.magic,
-                COMPRESSION_ALGORITHMS
-                    .iter()
-                    .map(|p| p.name())
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ))
-        })?;
+    // Find plugin by magic number from registry
+    let plugin = get_plugin_by_magic(header.magic).ok_or_else(|| {
+        let available = list_plugins()
+            .iter()
+            .map(|p| p.name)
+            .collect::<Vec<_>>()
+            .join(", ");
+
+        PluginError::NotFound(format!(
+            "No plugin found for magic number {:02X?}. \
+             Available plugins: {}. \
+             Did you call init_plugins()?",
+            header.magic, available
+        ))
+    })?;
 
     // Create cancellation flag (not yet connected to timeout system)
     let cancel_flag = Arc::new(AtomicBool::new(false));
@@ -133,11 +134,12 @@ pub fn decompress(input: &[u8]) -> Result<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compress;
+    use crate::{compress, init_plugins};
 
     #[test]
     #[allow(clippy::unwrap_used)]
     fn test_decompress_valid() {
+        init_plugins().unwrap();
         let original = b"Test data for decompression";
         let compressed = compress(original).unwrap();
         let decompressed = decompress(&compressed).unwrap();
@@ -165,6 +167,7 @@ mod tests {
     #[test]
     #[allow(clippy::unwrap_used)]
     fn test_decompress_corrupted_crc() {
+        init_plugins().unwrap();
         let original = b"Data to corrupt";
         let mut compressed = compress(original).unwrap();
 
@@ -180,6 +183,7 @@ mod tests {
     #[test]
     #[allow(clippy::unwrap_used)]
     fn test_decompress_corrupted_payload() {
+        init_plugins().unwrap();
         let original = b"Data to corrupt";
         let mut compressed = compress(original).unwrap();
 

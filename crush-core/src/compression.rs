@@ -4,7 +4,8 @@
 //! DEFLATE plugin and wraps it with a Crush header.
 
 use crate::error::Result;
-use crate::plugin::{CrushHeader, COMPRESSION_ALGORITHMS};
+use crate::plugin::registry::get_default_plugin;
+use crate::plugin::CrushHeader;
 use crc32fast::Hasher;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
@@ -27,24 +28,22 @@ use std::sync::Arc;
 /// # Examples
 ///
 /// ```
-/// use crush_core::compress;
+/// use crush_core::{init_plugins, compress};
 ///
+/// init_plugins().expect("Plugin initialization failed");
 /// let data = b"Hello, world!";
 /// let compressed = compress(data).expect("Compression failed");
 /// assert!(!compressed.is_empty());
 /// ```
 pub fn compress(input: &[u8]) -> Result<Vec<u8>> {
-    // Find the default DEFLATE plugin (magic = CR0100)
-    let default_magic = [0x43, 0x52, 0x01, 0x00];
+    // Get the default DEFLATE plugin from registry
+    let plugin = get_default_plugin().ok_or_else(|| {
+        crate::error::PluginError::NotFound(
+            "Default DEFLATE plugin not found. Call init_plugins() first.".to_string(),
+        )
+    })?;
 
-    let plugin = COMPRESSION_ALGORITHMS
-        .iter()
-        .find(|p| p.metadata().magic_number == default_magic)
-        .ok_or_else(|| {
-            crate::error::PluginError::NotFound(
-                "Default DEFLATE plugin not found".to_string()
-            )
-        })?;
+    let default_magic = [0x43, 0x52, 0x01, 0x00];
 
     // Create cancellation flag (not yet connected to timeout system)
     let cancel_flag = Arc::new(AtomicBool::new(false));
@@ -77,10 +76,12 @@ pub fn compress(input: &[u8]) -> Result<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::init_plugins;
 
     #[test]
     #[allow(clippy::unwrap_used)]
     fn test_compress_basic() {
+        init_plugins().unwrap();
         let data = b"Hello, Crush!";
         let compressed = compress(data).unwrap();
 
@@ -94,6 +95,7 @@ mod tests {
     #[test]
     #[allow(clippy::unwrap_used)]
     fn test_compress_empty() {
+        init_plugins().unwrap();
         let data = b"";
         let compressed = compress(data).unwrap();
 
@@ -104,6 +106,7 @@ mod tests {
     #[test]
     #[allow(clippy::unwrap_used)]
     fn test_compress_large() {
+        init_plugins().unwrap();
         let data = vec![0x42; 1_000_000]; // 1MB of repeated bytes
         let compressed = compress(&data).unwrap();
 

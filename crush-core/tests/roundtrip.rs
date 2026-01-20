@@ -7,7 +7,7 @@
 #![allow(clippy::cast_possible_truncation)]
 #![allow(clippy::cast_sign_loss)]
 
-use crush_core::{compress, decompress};
+use crush_core::{compress, decompress, init_plugins};
 
 /// Test basic roundtrip: compress data and decompress it back
 ///
@@ -15,6 +15,7 @@ use crush_core::{compress, decompress};
 /// the original data byte-for-byte.
 #[test]
 fn test_roundtrip_basic() {
+    init_plugins().expect("Plugin initialization failed");
     let original = b"Hello, Crush! This is a test of the compression system.";
 
     // Compress the data
@@ -38,6 +39,7 @@ fn test_roundtrip_basic() {
 /// Test roundtrip with empty data
 #[test]
 fn test_roundtrip_empty() {
+    init_plugins().expect("Plugin initialization failed");
     let original = b"";
 
     let compressed = compress(original).expect("Compression should succeed on empty data");
@@ -49,6 +51,7 @@ fn test_roundtrip_empty() {
 /// Test roundtrip with large data (>1MB)
 #[test]
 fn test_roundtrip_large() {
+    init_plugins().expect("Plugin initialization failed");
     // Create 1MB of repeating pattern (compresses well)
     let original: Vec<u8> = (0..1_000_000).map(|i| (i % 256) as u8).collect();
 
@@ -70,6 +73,7 @@ fn test_roundtrip_large() {
 /// Test roundtrip with random data (incompressible)
 #[test]
 fn test_roundtrip_random() {
+    init_plugins().expect("Plugin initialization failed");
     // Simulate random data (won't compress well)
     let original: Vec<u8> = (0..10_000)
         .map(|i| ((i * 7919) % 256) as u8) // Pseudo-random sequence
@@ -116,6 +120,7 @@ fn test_corrupted_data_truncated() {
 /// Test that modified compressed payload produces an error
 #[test]
 fn test_corrupted_data_modified_payload() {
+    init_plugins().expect("Plugin initialization failed");
     let original = b"Test data that will be corrupted";
     let mut compressed = compress(original).expect("Compression should succeed");
 
@@ -145,6 +150,7 @@ mod property_tests {
         /// compress→decompress always produces the original data.
         #[test]
         fn proptest_roundtrip(data: Vec<u8>) {
+            init_plugins().expect("Plugin initialization failed");
             let compressed = compress(&data).expect("Compression should always succeed");
             let decompressed = decompress(&compressed).expect("Decompression should always succeed");
 
@@ -156,6 +162,7 @@ mod property_tests {
         /// Compressing the same data twice should produce identical output.
         #[test]
         fn proptest_deterministic(data: Vec<u8>) {
+            init_plugins().expect("Plugin initialization failed");
             let compressed1 = compress(&data).expect("Compression should succeed");
             let compressed2 = compress(&data).expect("Compression should succeed");
 

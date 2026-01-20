@@ -5,8 +5,9 @@
 //! # Quick Start
 //!
 //! ```
-//! use crush_core::{compress, decompress};
+//! use crush_core::{init_plugins, compress, decompress};
 //!
+//! init_plugins().expect("Plugin initialization failed");
 //! let data = b"Hello, Crush!";
 //! let compressed = compress(data).expect("Compression failed");
 //! let decompressed = decompress(&compressed).expect("Decompression failed");
@@ -21,7 +22,10 @@ pub mod plugin;
 pub use compression::compress;
 pub use decompression::decompress;
 pub use error::{CrushError, PluginError, Result, TimeoutError, ValidationError};
-pub use plugin::{CompressionAlgorithm, CrushHeader, PluginMetadata, COMPRESSION_ALGORITHMS};
+pub use plugin::{
+    init_plugins, list_plugins, CompressionAlgorithm, CrushHeader, PluginMetadata,
+    COMPRESSION_ALGORITHMS,
+};
 
 /// Placeholder function demonstrating public API structure.
 ///

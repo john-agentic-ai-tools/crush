@@ -89,20 +89,20 @@ From plan.md - Rust workspace structure:
 
 ### Tests for User Story 2 (TDD - Write First)
 
-- [ ] T022 [P] [US2] Plugin discovery test in crush-core/tests/integration/plugin_discovery.rs (verify DEFLATE plugin found)
-- [ ] T023 [P] [US2] Multiple plugin registration test in crush-core/tests/integration/plugin_discovery.rs (mock 3 plugins, verify all registered)
-- [ ] T024 [P] [US2] Duplicate plugin warning test in crush-core/tests/integration/plugin_discovery.rs (register same magic twice, verify warning logged)
-- [ ] T025 [P] [US2] Re-initialization test in crush-core/tests/integration/plugin_discovery.rs (call init twice, verify refresh works)
+- [X] T022 [P] [US2] Plugin discovery test in crush-core/tests/plugin_discovery.rs (verify DEFLATE plugin found)
+- [X] T023 [P] [US2] Multiple plugin registration test in crush-core/tests/plugin_discovery.rs (verify all registered)
+- [X] T024 [P] [US2] Duplicate plugin warning test in crush-core/tests/plugin_discovery.rs (register same magic twice, verify warning logged)
+- [X] T025 [P] [US2] Re-initialization test in crush-core/tests/plugin_discovery.rs (call init twice, verify refresh works)
 
 ### Implementation for User Story 2
 
-- [ ] T026 [P] [US2] Implement PluginRegistry struct in crush-core/src/plugin/registry.rs (Arc<RwLock<HashMap<[u8; 4], Box<dyn CompressionAlgorithm>>>>)
-- [ ] T027 [P] [US2] Implement init_plugins() function in crush-core/src/plugin/registry.rs (iterates COMPRESSION_ALGORITHMS, validates, registers)
-- [ ] T028 [US2] Add plugin validation logic in crush-core/src/plugin/registry.rs (check metadata non-zero, magic number unique per FR-013)
-- [ ] T029 [US2] Add duplicate magic number detection in crush-core/src/plugin/registry.rs (FR-013a: log warning, use first-registered)
-- [ ] T030 [US2] Implement list_plugins() function in crush-core/src/plugin/registry.rs (returns Vec<PluginMetadata>)
-- [ ] T031 [US2] Add re-initialization support in crush-core/src/plugin/registry.rs (clear + re-scan per FR-003a)
-- [ ] T032 [US2] Export init_plugins() and list_plugins() in crush-core/src/lib.rs
+- [X] T026 [P] [US2] Implement PluginRegistry struct in crush-core/src/plugin/registry.rs (RwLock<Option<HashMap<[u8; 4], &dyn CompressionAlgorithm>>>)
+- [X] T027 [P] [US2] Implement init_plugins() function in crush-core/src/plugin/registry.rs (iterates COMPRESSION_ALGORITHMS, validates, registers)
+- [X] T028 [US2] Add plugin validation logic in crush-core/src/plugin/registry.rs (check metadata non-zero, magic number unique per FR-013)
+- [X] T029 [US2] Add duplicate magic number detection in crush-core/src/plugin/registry.rs (FR-013a: log warning, use first-registered)
+- [X] T030 [US2] Implement list_plugins() function in crush-core/src/plugin/registry.rs (returns Vec<PluginMetadata>)
+- [X] T031 [US2] Add re-initialization support in crush-core/src/plugin/registry.rs (clear + re-scan per FR-003a)
+- [X] T032 [US2] Export init_plugins() and list_plugins() in crush-core/src/lib.rs
 
 **Checkpoint**: At this point, Users can discover plugins and see what's available
 
