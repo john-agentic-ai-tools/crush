@@ -186,6 +186,9 @@ jobs:
 
       - uses: taiki-e/install-action@cargo-fuzz
 
+      - name: Ensure cargo-fuzz is installed
+        run: cargo install cargo-fuzz --force
+        
       - name: Fuzz compress (100k iterations minimum)
         run: |
           cd crush-core
