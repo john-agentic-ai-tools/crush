@@ -55,7 +55,10 @@ fn test_multiple_plugin_registration() {
     // Verify all discovered plugins have valid metadata
     for plugin in &plugins {
         assert!(!plugin.name.is_empty(), "Plugin name should not be empty");
-        assert!(!plugin.version.is_empty(), "Plugin version should not be empty");
+        assert!(
+            !plugin.version.is_empty(),
+            "Plugin version should not be empty"
+        );
         assert!(plugin.throughput > 0.0, "Throughput should be positive");
         assert!(
             plugin.compression_ratio > 0.0 && plugin.compression_ratio <= 1.0,

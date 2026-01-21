@@ -43,11 +43,15 @@ impl PluginRegistry {
 
         // Validate metadata
         if metadata.name.is_empty() {
-            return Err(PluginError::InvalidMetadata("Plugin name cannot be empty".to_string()).into());
+            return Err(
+                PluginError::InvalidMetadata("Plugin name cannot be empty".to_string()).into(),
+            );
         }
 
         if metadata.version.is_empty() {
-            return Err(PluginError::InvalidMetadata("Plugin version cannot be empty".to_string()).into());
+            return Err(
+                PluginError::InvalidMetadata("Plugin version cannot be empty".to_string()).into(),
+            );
         }
 
         if metadata.throughput <= 0.0 {
@@ -73,7 +77,10 @@ impl PluginRegistry {
                 "Warning: Duplicate magic number {:02X?} detected. \
                  Plugin '{}' conflicts with '{}'. \
                  Using first-registered plugin '{}'.",
-                metadata.magic_number, metadata.name, existing_metadata.name, existing_metadata.name
+                metadata.magic_number,
+                metadata.name,
+                existing_metadata.name,
+                existing_metadata.name
             );
             return Ok(()); // Skip registration, keep first-registered
         }
@@ -204,7 +211,10 @@ mod tests {
         init_plugins().unwrap();
 
         let plugins = list_plugins();
-        assert!(!plugins.is_empty(), "Should discover at least DEFLATE plugin");
+        assert!(
+            !plugins.is_empty(),
+            "Should discover at least DEFLATE plugin"
+        );
     }
 
     #[test]
@@ -213,7 +223,10 @@ mod tests {
         init_plugins().unwrap();
 
         let plugin = get_default_plugin();
-        assert!(plugin.is_some(), "Default DEFLATE plugin should be available");
+        assert!(
+            plugin.is_some(),
+            "Default DEFLATE plugin should be available"
+        );
 
         let plugin = plugin.unwrap();
         assert_eq!(plugin.name(), "deflate");
@@ -228,6 +241,9 @@ mod tests {
         init_plugins().unwrap();
         let count2 = list_plugins().len();
 
-        assert_eq!(count1, count2, "Re-initialization should maintain plugin count");
+        assert_eq!(
+            count1, count2,
+            "Re-initialization should maintain plugin count"
+        );
     }
 }

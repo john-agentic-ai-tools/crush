@@ -113,10 +113,16 @@ fn test_custom_scoring_weights() {
 fn test_invalid_scoring_weights() {
     // Weights must sum to 1.0
     let result = ScoringWeights::new(0.6, 0.6);
-    assert!(result.is_err(), "Weights summing to >1.0 should be rejected");
+    assert!(
+        result.is_err(),
+        "Weights summing to >1.0 should be rejected"
+    );
 
     let result = ScoringWeights::new(0.3, 0.3);
-    assert!(result.is_err(), "Weights summing to <1.0 should be rejected");
+    assert!(
+        result.is_err(),
+        "Weights summing to <1.0 should be rejected"
+    );
 
     let result = ScoringWeights::new(-0.1, 1.1);
     assert!(result.is_err(), "Negative weights should be rejected");
@@ -148,7 +154,7 @@ fn test_scoring_calculation() {
         name: "fast_low_ratio",
         version: "1.0.0",
         magic_number: [0x43, 0x52, 0x01, 0x10],
-        throughput: 1000.0, // Very fast
+        throughput: 1000.0,     // Very fast
         compression_ratio: 0.8, // Poor compression (larger file)
         description: "Fast but low compression",
     };
@@ -157,7 +163,7 @@ fn test_scoring_calculation() {
         name: "slow_high_ratio",
         version: "1.0.0",
         magic_number: [0x43, 0x52, 0x01, 0x11],
-        throughput: 100.0, // Slower
+        throughput: 100.0,      // Slower
         compression_ratio: 0.3, // Good compression (smaller file)
         description: "Slow but high compression",
     };
@@ -177,8 +183,10 @@ fn test_scoring_calculation() {
 
     // With 50/50 weights, might be different
     let balanced_weights = ScoringWeights::new(0.5, 0.5).unwrap();
-    let balanced_score_a = crush_core::calculate_plugin_score(&plugin_a, &plugins, &balanced_weights);
-    let balanced_score_b = crush_core::calculate_plugin_score(&plugin_b, &plugins, &balanced_weights);
+    let balanced_score_a =
+        crush_core::calculate_plugin_score(&plugin_a, &plugins, &balanced_weights);
+    let balanced_score_b =
+        crush_core::calculate_plugin_score(&plugin_b, &plugins, &balanced_weights);
 
     // Scores should be different from 70/30 case
     assert!((balanced_score_a - score_a).abs() > 1e-6);

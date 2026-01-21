@@ -164,9 +164,11 @@ impl CrushHeader {
         }
 
         if !header.has_valid_version() {
-            return Err(
-                ValidationError::InvalidHeader(format!("Unsupported version: 0x{:02x}", header.magic[2])).into(),
-            );
+            return Err(ValidationError::InvalidHeader(format!(
+                "Unsupported version: 0x{:02x}",
+                header.magic[2]
+            ))
+            .into());
         }
 
         Ok(header)

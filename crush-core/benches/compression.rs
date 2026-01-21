@@ -116,7 +116,8 @@ fn benchmark_roundtrip(c: &mut Criterion) {
         group.bench_with_input(BenchmarkId::from_parameter(size), size, |b, _| {
             b.iter(|| {
                 let compressed = compress(black_box(&data)).expect("Compression failed");
-                let decompressed = decompress(black_box(&compressed)).expect("Decompression failed");
+                let decompressed =
+                    decompress(black_box(&compressed)).expect("Decompression failed");
                 black_box(decompressed)
             });
         });

@@ -23,7 +23,10 @@ fn test_roundtrip_basic() {
 
     // Compressed data should be smaller or similar size for small inputs
     // (DEFLATE may expand very small inputs due to header overhead)
-    assert!(!compressed.is_empty(), "Compressed data should not be empty");
+    assert!(
+        !compressed.is_empty(),
+        "Compressed data should not be empty"
+    );
 
     // Decompress the data
     let decompressed = decompress(&compressed).expect("Decompression should succeed");

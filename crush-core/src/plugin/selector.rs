@@ -42,10 +42,9 @@ impl ScoringWeights {
     /// ```
     pub fn new(throughput: f64, compression_ratio: f64) -> Result<Self> {
         if throughput < 0.0 || compression_ratio < 0.0 {
-            return Err(ValidationError::InvalidWeights(
-                "Weights cannot be negative".to_string(),
-            )
-            .into());
+            return Err(
+                ValidationError::InvalidWeights("Weights cannot be negative".to_string()).into(),
+            );
         }
 
         let sum = throughput + compression_ratio;
@@ -125,10 +124,7 @@ pub fn calculate_plugin_score(
     }
 
     // Apply logarithmic scaling to throughput
-    let log_throughputs: Vec<f64> = all_plugins
-        .iter()
-        .map(|p| p.throughput.ln())
-        .collect();
+    let log_throughputs: Vec<f64> = all_plugins.iter().map(|p| p.throughput.ln()).collect();
 
     let plugin_log_throughput = plugin.throughput.ln();
 
@@ -142,10 +138,7 @@ pub fn calculate_plugin_score(
         .copied()
         .fold(f64::NEG_INFINITY, f64::max);
 
-    let compression_ratios: Vec<f64> = all_plugins
-        .iter()
-        .map(|p| p.compression_ratio)
-        .collect();
+    let compression_ratios: Vec<f64> = all_plugins.iter().map(|p| p.compression_ratio).collect();
 
     let min_ratio = compression_ratios
         .iter()
@@ -232,21 +225,18 @@ impl PluginSelector {
     pub fn select_by_name(&self, name: &str) -> Result<PluginMetadata> {
         let plugins = list_plugins();
 
-        plugins
-            .into_iter()
-            .find(|p| p.name == name)
-            .ok_or_else(|| {
-                PluginError::NotFound(format!(
-                    "Plugin '{}' not found. Available plugins: {}",
-                    name,
-                    list_plugins()
-                        .iter()
-                        .map(|p| p.name)
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                ))
-                .into()
-            })
+        plugins.into_iter().find(|p| p.name == name).ok_or_else(|| {
+            PluginError::NotFound(format!(
+                "Plugin '{}' not found. Available plugins: {}",
+                name,
+                list_plugins()
+                    .iter()
+                    .map(|p| p.name)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ))
+            .into()
+        })
     }
 }
 

@@ -163,7 +163,10 @@ mod tests {
         // Verify it's a cancellation error by checking the error message
         let err = result.unwrap_err();
         assert!(
-            matches!(err, crate::error::CrushError::Plugin(crate::error::PluginError::Cancelled)),
+            matches!(
+                err,
+                crate::error::CrushError::Plugin(crate::error::PluginError::Cancelled)
+            ),
             "Expected PluginError::Cancelled, got: {err:?}"
         );
     }

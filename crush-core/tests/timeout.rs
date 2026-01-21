@@ -135,7 +135,10 @@ fn test_multiple_operations_with_timeout() {
         let data = format!("Test data iteration {i}");
         let result = compress_with_options(data.as_bytes(), &options);
 
-        assert!(result.is_ok(), "Iteration {i} should succeed within timeout");
+        assert!(
+            result.is_ok(),
+            "Iteration {i} should succeed within timeout"
+        );
     }
 }
 

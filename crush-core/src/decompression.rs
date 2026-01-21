@@ -116,8 +116,9 @@ pub fn decompress(input: &[u8]) -> Result<Vec<u8>> {
     let decompressed = plugin.decompress(compressed_payload, cancel_flag)?;
 
     // Validate decompressed size matches header
-    let expected_size = usize::try_from(header.original_size)
-        .map_err(|_| ValidationError::InvalidHeader("Original size exceeds platform limits".to_string()))?;
+    let expected_size = usize::try_from(header.original_size).map_err(|_| {
+        ValidationError::InvalidHeader("Original size exceeds platform limits".to_string())
+    })?;
 
     if decompressed.len() != expected_size {
         return Err(ValidationError::CorruptedData(format!(
