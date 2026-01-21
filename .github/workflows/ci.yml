@@ -184,19 +184,18 @@ jobs:
         with:
           shared-key: fuzz
 
-      - name: Install cargo-fuzz
-        run: cargo install cargo-fuzz
+      - uses: taiki-e/install-action@cargo-fuzz
 
       - name: Fuzz compress (100k iterations minimum)
         run: |
           cd crush-core
-          cargo +nightly fuzz run compress -- -max_total_time=300 -runs=100000
+          cargo fuzz run compress -- -max_total_time=300 -runs=100000
         continue-on-error: false
 
       - name: Fuzz decompress (100k iterations minimum)
         run: |
           cd crush-core
-          cargo +nightly fuzz run decompress -- -max_total_time=300 -runs=100000
+          cargo fuzz run decompress -- -max_total_time=300 -runs=100000
         continue-on-error: false
 
       - name: Upload fuzz artifacts on failure
