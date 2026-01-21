@@ -128,6 +128,9 @@ where
     F: FnOnce(Arc<AtomicBool>) -> Result<T> + Send + 'static,
     T: Send + 'static,
 {
+    if timeout == Duration::from_secs(0) {
+        return Err(TimeoutError::Timeout(timeout).into());
+    }
     let cancel_flag = Arc::new(AtomicBool::new(false));
     let cancel_flag_thread = Arc::clone(&cancel_flag);
     let cancel_flag_guard = Arc::clone(&cancel_flag);
