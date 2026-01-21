@@ -188,17 +188,17 @@ jobs:
 
       - name: Ensure cargo-fuzz is installed
         run: cargo install cargo-fuzz --force
-        
+
       - name: Fuzz compress (100k iterations minimum)
         run: |
           cd crush-core
-          cargo fuzz run compress -- -max_total_time=300 -runs=100000
+          cargo +nightly fuzz run compress -- -max_total_time=300 -runs=100000
         continue-on-error: false
 
       - name: Fuzz decompress (100k iterations minimum)
         run: |
           cd crush-core
-          cargo fuzz run decompress -- -max_total_time=300 -runs=100000
+          cargo +nightly fuzz run decompress -- -max_total_time=300 -runs=100000
         continue-on-error: false
 
       - name: Upload fuzz artifacts on failure
