@@ -9,11 +9,13 @@ pub mod default;
 pub mod metadata;
 pub mod registry;
 pub mod selector;
+pub mod timeout;
 
 pub use contract::CompressionAlgorithm;
 pub use metadata::{CrushHeader, PluginMetadata};
 pub use registry::{init_plugins, list_plugins};
 pub use selector::{calculate_plugin_score, PluginSelector, ScoringWeights};
+pub use timeout::{run_with_timeout_v2 as run_with_timeout, TimeoutGuard};
 
 use linkme::distributed_slice;
 

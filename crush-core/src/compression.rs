@@ -5,10 +5,12 @@
 
 use crate::error::Result;
 use crate::plugin::registry::{get_default_plugin, get_plugin_by_magic};
-use crate::plugin::{CrushHeader, PluginSelector, ScoringWeights};
+use crate::plugin::{run_with_timeout, CrushHeader, PluginSelector, ScoringWeights};
 use crc32fast::Hasher;
-use std::sync::atomic::AtomicBool;
-use std::sync::Arc;
+use std::time::Duration;
+
+/// Default timeout for compression operations (30 seconds)
+pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Compression options for plugin selection and scoring
 #[derive(Debug, Clone)]
@@ -18,6 +20,9 @@ pub struct CompressionOptions {
 
     /// Scoring weights for automatic selection
     weights: ScoringWeights,
+
+    /// Timeout for compression operation
+    timeout: Duration,
 }
 
 impl CompressionOptions {
@@ -27,6 +32,7 @@ impl CompressionOptions {
         Self {
             plugin_name: None,
             weights: ScoringWeights::default(),
+            timeout: DEFAULT_TIMEOUT,
         }
     }
 
@@ -41,6 +47,13 @@ impl CompressionOptions {
     #[must_use]
     pub fn with_weights(mut self, weights: ScoringWeights) -> Self {
         self.weights = weights;
+        self
+    }
+
+    /// Set timeout for compression operation
+    #[must_use]
+    pub fn with_timeout(mut self, timeout: Duration) -> Self {
+        self.timeout = timeout;
         self
     }
 }
@@ -64,7 +77,7 @@ impl Default for CompressionOptions {
 /// Returns an error if:
 /// - No default plugin is available (should never happen - DEFLATE is always registered)
 /// - Compression operation fails
-/// - Cancellation is triggered (reserved for future timeout support)
+/// - Operation exceeds the default timeout (30 seconds)
 ///
 /// # Examples
 ///
@@ -86,11 +99,13 @@ pub fn compress(input: &[u8]) -> Result<Vec<u8>> {
 
     let default_magic = [0x43, 0x52, 0x01, 0x00];
 
-    // Create cancellation flag (not yet connected to timeout system)
-    let cancel_flag = Arc::new(AtomicBool::new(false));
+    // Clone input for move into timeout closure
+    let input_owned = input.to_vec();
 
-    // Compress the data
-    let compressed_payload = plugin.compress(input, cancel_flag)?;
+    // Compress the data with timeout protection
+    let compressed_payload = run_with_timeout(DEFAULT_TIMEOUT, move |cancel_flag| {
+        plugin.compress(&input_owned, cancel_flag)
+    })?;
 
     // Calculate CRC32 of compressed payload
     let mut hasher = Hasher::new();
@@ -126,6 +141,7 @@ pub fn compress(input: &[u8]) -> Result<Vec<u8>> {
 /// - Specified plugin is not found (manual override)
 /// - No plugins are available (automatic selection)
 /// - Compression operation fails
+/// - Operation exceeds the specified timeout
 ///
 /// # Examples
 ///
@@ -163,11 +179,14 @@ pub fn compress_with_options(input: &[u8], options: &CompressionOptions) -> Resu
         ))
     })?;
 
-    // Create cancellation flag (not yet connected to timeout system)
-    let cancel_flag = Arc::new(AtomicBool::new(false));
+    // Clone input for move into timeout closure
+    let input_owned = input.to_vec();
+    let timeout = options.timeout;
 
-    // Compress the data
-    let compressed_payload = plugin.compress(input, cancel_flag)?;
+    // Compress the data with timeout protection
+    let compressed_payload = run_with_timeout(timeout, move |cancel_flag| {
+        plugin.compress(&input_owned, cancel_flag)
+    })?;
 
     // Calculate CRC32 of compressed payload
     let mut hasher = Hasher::new();
