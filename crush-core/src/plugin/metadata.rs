@@ -4,7 +4,7 @@ use crate::error::{Result, ValidationError};
 use std::io::{Read, Write};
 
 /// Metadata describing a compression plugin's capabilities and performance
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct PluginMetadata {
     /// Plugin name (e.g., "deflate", "zstd", "lz4")
     pub name: &'static str,

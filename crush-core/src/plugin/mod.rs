@@ -8,10 +8,12 @@ pub mod contract;
 pub mod default;
 pub mod metadata;
 pub mod registry;
+pub mod selector;
 
 pub use contract::CompressionAlgorithm;
 pub use metadata::{CrushHeader, PluginMetadata};
 pub use registry::{init_plugins, list_plugins};
+pub use selector::{calculate_plugin_score, PluginSelector, ScoringWeights};
 
 use linkme::distributed_slice;
 

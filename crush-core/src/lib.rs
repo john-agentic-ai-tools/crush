@@ -19,12 +19,12 @@ pub mod decompression;
 pub mod error;
 pub mod plugin;
 
-pub use compression::compress;
+pub use compression::{compress, compress_with_options, CompressionOptions};
 pub use decompression::decompress;
 pub use error::{CrushError, PluginError, Result, TimeoutError, ValidationError};
 pub use plugin::{
-    init_plugins, list_plugins, CompressionAlgorithm, CrushHeader, PluginMetadata,
-    COMPRESSION_ALGORITHMS,
+    calculate_plugin_score, init_plugins, list_plugins, CompressionAlgorithm, CrushHeader,
+    PluginMetadata, PluginSelector, ScoringWeights, COMPRESSION_ALGORITHMS,
 };
 
 /// Placeholder function demonstrating public API structure.

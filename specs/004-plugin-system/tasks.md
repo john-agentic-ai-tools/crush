@@ -116,20 +116,20 @@ From plan.md - Rust workspace structure:
 
 ### Tests for User Story 3 (TDD - Write First)
 
-- [ ] T033 [P] [US3] Plugin scoring test in crush-core/tests/integration/plugin_selection.rs (3 plugins, verify highest score wins)
-- [ ] T034 [P] [US3] Manual override test in crush-core/tests/integration/plugin_selection.rs (specify plugin by name, verify used)
-- [ ] T035 [P] [US3] Tied score test in crush-core/tests/integration/plugin_selection.rs (2 plugins same score, verify deterministic selection)
-- [ ] T036 [P] [US3] Custom weights test in crush-core/tests/integration/plugin_selection.rs (50/50 weights, verify scoring changes)
+- [X] T033 [P] [US3] Plugin scoring test in crush-core/tests/plugin_selection.rs (3 plugins, verify highest score wins)
+- [X] T034 [P] [US3] Manual override test in crush-core/tests/plugin_selection.rs (specify plugin by name, verify used)
+- [X] T035 [P] [US3] Tied score test in crush-core/tests/plugin_selection.rs (2 plugins same score, verify deterministic selection)
+- [X] T036 [P] [US3] Custom weights test in crush-core/tests/plugin_selection.rs (50/50 weights, verify scoring changes)
 
 ### Implementation for User Story 3
 
-- [ ] T037 [P] [US3] Define ScoringWeights struct in crush-core/src/plugin/selector.rs (throughput: f64, ratio: f64, validation)
-- [ ] T038 [P] [US3] Implement calculate_score() in crush-core/src/plugin/selector.rs (logarithmic throughput scaling per research, min-max normalization)
-- [ ] T039 [US3] Implement PluginSelector struct in crush-core/src/plugin/selector.rs (select() method with scoring logic)
-- [ ] T040 [US3] Add manual plugin override to compress() in crush-core/src/compression.rs (Option<&str> plugin_name parameter)
-- [ ] T041 [US3] Add configurable weights to PluginSelector in crush-core/src/plugin/selector.rs (default 70/30 per clarification)
-- [ ] T042 [US3] Handle tied scores in crush-core/src/plugin/selector.rs (alphabetical by name per FR-015)
-- [ ] T043 [US3] Integrate selector into compress() function in crush-core/src/compression.rs (call selector.select() if multiple plugins match)
+- [X] T037 [P] [US3] Define ScoringWeights struct in crush-core/src/plugin/selector.rs (throughput: f64, ratio: f64, validation)
+- [X] T038 [P] [US3] Implement calculate_score() in crush-core/src/plugin/selector.rs (logarithmic throughput scaling per research, min-max normalization)
+- [X] T039 [US3] Implement PluginSelector struct in crush-core/src/plugin/selector.rs (select() method with scoring logic)
+- [X] T040 [US3] Add manual plugin override via CompressionOptions in crush-core/src/compression.rs (with_plugin() method)
+- [X] T041 [US3] Add configurable weights to PluginSelector in crush-core/src/plugin/selector.rs (default 70/30 per clarification)
+- [X] T042 [US3] Handle tied scores in crush-core/src/plugin/selector.rs (alphabetical by name per FR-015)
+- [X] T043 [US3] Integrate selector into compress_with_options() function in crush-core/src/compression.rs (call selector.select() with options)
 
 **Checkpoint**: Plugin selection now optimizes for performance based on metadata
 
