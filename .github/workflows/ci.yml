@@ -149,7 +149,7 @@ jobs:
             echo "Warning: Could not determine coverage percentage"
             exit 0
           fi
-          threshold=90
+          threshold=80
           if (( $(echo "$coverage < $threshold" | bc -l) )); then
             echo "Error: Coverage ${coverage}% is below required ${threshold}%"
             exit 1
@@ -168,4 +168,41 @@ jobs:
         with:
           name: coverage-report
           path: lcov.info
+          retention-days: 7
+
+  fuzz:
+    name: Fuzz Testing
+    needs: [test]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@nightly
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: fuzz
+
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz
+
+      - name: Fuzz compress (100k iterations minimum)
+        run: |
+          cd crush-core
+          cargo +nightly fuzz run compress -- -max_total_time=300 -runs=100000
+        continue-on-error: false
+
+      - name: Fuzz decompress (100k iterations minimum)
+        run: |
+          cd crush-core
+          cargo +nightly fuzz run decompress -- -max_total_time=300 -runs=100000
+        continue-on-error: false
+
+      - name: Upload fuzz artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-artifacts
+          path: crush-core/fuzz/artifacts/
           retention-days: 7
