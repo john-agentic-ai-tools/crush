@@ -77,7 +77,7 @@ impl Default for ScoringWeights {
 ///
 /// Implements the scoring algorithm from research:
 /// 1. Logarithmic throughput scaling (prevents throughput dominance)
-/// 2. Min-max normalization (scales values to [0,1])
+/// 2. Min-max normalization (scales values to `[0,1]`)
 /// 3. Weighted sum based on user preferences
 ///
 /// # Arguments

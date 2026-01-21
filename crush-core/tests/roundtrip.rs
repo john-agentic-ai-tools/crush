@@ -103,6 +103,7 @@ fn test_corrupted_data_invalid_magic() {
 /// Test that truncated compressed data produces an error
 #[test]
 fn test_corrupted_data_truncated() {
+    init_plugins().expect("Plugin initialization failed");
     let original = b"Test data for corruption";
     let compressed = compress(original).expect("Compression should succeed");
 

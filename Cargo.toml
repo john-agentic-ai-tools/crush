@@ -4,6 +4,9 @@ members = [
     "crush-core",
     "crush-cli",
 ]
+exclude = [
+    "crush-core/fuzz",
+]
 
 [workspace.package]
 edition = "2021"

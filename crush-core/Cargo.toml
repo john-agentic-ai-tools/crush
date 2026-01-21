@@ -24,6 +24,18 @@ thiserror = { workspace = true }
 criterion = { workspace = true }
 proptest = "1.5"
 
+[[bench]]
+name = "plugin_discovery"
+harness = false
+
+[[bench]]
+name = "plugin_selection"
+harness = false
+
+[[bench]]
+name = "compression"
+harness = false
+
 [lints.clippy]
 # Deny all warnings to enforce quality
 all = "deny"

@@ -1,7 +1,7 @@
 //! Timeout protection for plugin operations
 //!
 //! Implements thread-based timeout enforcement with cooperative cancellation.
-//! Uses crossbeam channels for reliable timeout detection and Arc<AtomicBool>
+//! Uses crossbeam channels for reliable timeout detection and `Arc<AtomicBool>`
 //! for cooperative cancellation within plugins.
 
 use crate::error::{Result, TimeoutError};
