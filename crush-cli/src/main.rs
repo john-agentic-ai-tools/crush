@@ -1,8 +1,11 @@
 fn main() {
-    let message = crush_core::hello();
-    println!("{message}");
-    println!("Crush CLI v0.1.0 - Placeholder binary");
-    println!("This binary demonstrates successful workspace compilation.");
+    println!("Crush CLI v0.1.0 - High-performance parallel compression");
+    println!();
+    println!("This is a placeholder binary for the Crush compression library.");
+    println!("Full CLI functionality will be implemented in future phases.");
+    println!();
+    println!("For now, use crush-core library directly:");
+    println!("  use crush_core::{{init_plugins, compress, decompress}};");
 }
 
 #[cfg(test)]
