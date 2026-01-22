@@ -1,11 +1,6 @@
 # cargo-deny configuration
 # https://embarkstudios.github.io/cargo-deny/
 
-[graph]
-# Exclude fuzz target from dependency graph analysis
-# The fuzz crate uses nightly-only dependencies (edition2024)
-exclude = "crush-core-fuzz"
-
 [advisories]
 # Check for security vulnerabilities
 version = 2
