@@ -14,6 +14,19 @@ path = "src/main.rs"
 
 [dependencies]
 crush-core = { path = "../crush-core" }
+clap = { version = "4", features = ["derive"] }
+indicatif = "0.17"
+termcolor = "1.4"
+serde = { version = "1.0", features = ["derive"] }
+toml = "0.8"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
+is-terminal = "0.4"
+ctrlc = "3.4"
+dirs = "5.0"
+filetime = "0.2"
 
 [dev-dependencies]
-# Test framework is built into Rust - no additional dependencies needed
+assert_cmd = "2.0"
+predicates = "3.1"
+tempfile = "3.10"

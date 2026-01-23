@@ -1,21 +1,46 @@
+mod cli;
+mod commands;
+mod config;
+mod error;
+mod logging;
+mod output;
+mod signal;
+
+use clap::Parser;
+use cli::{Cli, Commands};
+use error::Result;
+
 fn main() {
-    println!("Crush CLI v0.1.0 - High-performance parallel compression");
-    println!();
-    println!("This is a placeholder binary for the Crush compression library.");
-    println!("Full CLI functionality will be implemented in future phases.");
-    println!();
-    println!("For now, use crush-core library directly:");
-    println!("  use crush_core::{{init_plugins, compress, decompress}};");
+    let exit_code = match run() {
+        Ok(()) => 0,
+        Err(e) => {
+            eprintln!("Error: {}", e);
+            e.exit_code()
+        }
+    };
+    std::process::exit(exit_code);
 }
 
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn test_cli_can_be_invoked() {
-        // This test verifies that the CLI binary can be compiled and invoked
-        // The actual functionality test will happen via cargo run
-        // Using a simple operation instead of assert!(true) to avoid clippy warning
-        let result = 2 + 2;
-        assert_eq!(result, 4, "CLI test infrastructure works");
+fn run() -> Result<()> {
+    // Initialize plugin registry
+    crush_core::init_plugins()?;
+
+    // Parse CLI arguments
+    let cli = Cli::parse();
+
+    // Initialize logging
+    logging::init_logging();
+
+    // Setup signal handler
+    let _interrupted = signal::setup_handler()
+        .map_err(|e| error::CliError::Config(format!("Failed to set up signal handler: {}", e)))?;
+
+    // Dispatch to appropriate command
+    match &cli.command {
+        Commands::Compress(args) => commands::compress::run(args),
+        Commands::Decompress(args) => commands::decompress::run(args),
+        Commands::Inspect(args) => commands::inspect::run(args),
+        Commands::Config(args) => commands::config::run(args),
+        Commands::Plugins(args) => commands::plugins::run(args),
     }
 }
