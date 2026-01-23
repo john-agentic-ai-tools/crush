@@ -64,19 +64,19 @@ After foundational tasks, different developers can work on different user storie
 
 **Tasks**:
 
-- [ ] T013 [P] Implement CliError Display trait with user-friendly error messages in src/error.rs
-- [ ] T014 [P] Implement exit code mapping (0, 1, 2, 130) in src/error.rs
-- [ ] T015 [P] Implement Config loading from TOML file in src/config.rs (config_file_path function using dirs crate)
-- [ ] T016 [P] Implement Config validation in src/config.rs
-- [ ] T017 [P] Implement environment variable merging in src/config.rs (CRUSH_* prefix)
-- [ ] T018 [P] Implement CLI argument override merging in src/config.rs
-- [ ] T019 [P] Implement CliState struct with terminal detection (is-terminal) in src/main.rs
-- [ ] T020 [P] Implement Ctrl+C signal handler with AtomicBool in src/signal.rs
-- [ ] T021 [P] Implement tracing subscriber setup (human and JSON formats) in src/logging.rs
-- [ ] T022 [P] Implement color detection and termcolor setup in src/output.rs
-- [ ] T023 [P] Implement CompressionLevel to ScoringWeights conversion in src/cli.rs
-- [ ] T024 Integrate signal handler into main() function in src/main.rs
-- [ ] T025 Add integration test helper functions in tests/integration/common.rs (Command::cargo_bin, tempfile setup)
+- [X] T013 [P] Implement CliError Display trait with user-friendly error messages in src/error.rs
+- [X] T014 [P] Implement exit code mapping (0, 1, 2, 130) in src/error.rs
+- [X] T015 [P] Implement Config loading from TOML file in src/config.rs (config_file_path function using dirs crate)
+- [X] T016 [P] Implement Config validation in src/config.rs
+- [X] T017 [P] Implement environment variable merging in src/config.rs (CRUSH_* prefix)
+- [X] T018 [P] Implement CLI argument override merging in src/config.rs
+- [X] T019 [P] Implement CliState struct with terminal detection (is-terminal) in src/main.rs
+- [X] T020 [P] Implement Ctrl+C signal handler with AtomicBool in src/signal.rs
+- [X] T021 [P] Implement tracing subscriber setup (human and JSON formats) in src/logging.rs
+- [X] T022 [P] Implement color detection and termcolor setup in src/output.rs
+- [X] T023 [P] Implement CompressionLevel to ScoringWeights conversion in src/cli.rs
+- [X] T024 Integrate signal handler into main() function in src/main.rs
+- [X] T025 Add integration test helper functions in tests/integration/common.rs (Command::cargo_bin, tempfile setup)
 
 **Validation**: All foundational utilities compile and unit tests pass
 
@@ -94,30 +94,30 @@ After foundational tasks, different developers can work on different user storie
 **Tasks**:
 
 ### Integration Tests (TDD)
-- [ ] T026 [P] [US1] Write compress integration test: basic file compression in tests/integration/compress_tests.rs
-- [ ] T027 [P] [US1] Write compress integration test: file not found error in tests/integration/compress_tests.rs
-- [ ] T028 [P] [US1] Write compress integration test: output already exists error in tests/integration/compress_tests.rs
-- [ ] T029 [P] [US1] Write compress integration test: force overwrite in tests/integration/compress_tests.rs
-- [ ] T030 [P] [US1] Write compress integration test: keep input file in tests/integration/compress_tests.rs
-- [ ] T031 [P] [US1] Write decompress integration test: basic decompression in tests/integration/decompress_tests.rs
-- [ ] T032 [P] [US1] Write decompress integration test: CRC32 validation failure in tests/integration/decompress_tests.rs
-- [ ] T033 [P] [US1] Write decompress integration test: invalid header error in tests/integration/decompress_tests.rs
-- [ ] T034 [P] [US1] Write roundtrip test: compress → decompress preserves data in tests/cli_roundtrip_tests.rs
+- [X] T026 [P] [US1] Write compress integration test: basic file compression in tests/integration/compress_tests.rs
+- [X] T027 [P] [US1] Write compress integration test: file not found error in tests/integration/compress_tests.rs
+- [X] T028 [P] [US1] Write compress integration test: output already exists error in tests/integration/compress_tests.rs
+- [X] T029 [P] [US1] Write compress integration test: force overwrite in tests/integration/compress_tests.rs
+- [X] T030 [P] [US1] Write compress integration test: keep input file in tests/integration/compress_tests.rs
+- [X] T031 [P] [US1] Write decompress integration test: basic decompression in tests/integration/decompress_tests.rs
+- [X] T032 [P] [US1] Write decompress integration test: CRC32 validation failure in tests/integration/decompress_tests.rs
+- [X] T033 [P] [US1] Write decompress integration test: invalid header error in tests/integration/decompress_tests.rs
+- [X] T034 [P] [US1] Write roundtrip test: compress → decompress preserves data in tests/integration/roundtrip_tests.rs
 
 ### Implementation
-- [ ] T035 [US1] Implement CompressArgs parsing in src/cli.rs
-- [ ] T036 [US1] Implement DecompressArgs parsing in src/cli.rs
-- [ ] T037 [US1] Implement compress command handler in src/commands/compress.rs (validate input, determine output path, call crush_core::compress_with_options, handle errors)
-- [ ] T038 [US1] Implement decompress command handler in src/commands/decompress.rs (validate input, determine output path, call crush_core::decompress, handle errors, verify CRC32)
-- [ ] T039 [US1] Implement input file validation in src/commands/compress.rs (file exists, readable, not directory)
-- [ ] T040 [US1] Implement output path validation in src/commands/compress.rs (parent directory exists, handle --force flag)
-- [ ] T041 [US1] Implement file cleanup logic in src/commands/compress.rs (delete input if not --keep)
-- [ ] T042 [US1] Implement file cleanup logic in src/commands/decompress.rs (delete .crush if not --keep)
-- [ ] T043 [US1] Implement batch processing loop for multiple files in src/commands/compress.rs
-- [ ] T044 [US1] Implement batch processing loop for multiple files in src/commands/decompress.rs
-- [ ] T045 [US1] Implement basic output formatting (success messages) in src/output.rs
-- [ ] T046 [US1] Wire compress command to main dispatcher in src/main.rs
-- [ ] T047 [US1] Wire decompress command to main dispatcher in src/main.rs
+- [X] T035 [US1] Implement CompressArgs parsing in src/cli.rs
+- [X] T036 [US1] Implement DecompressArgs parsing in src/cli.rs
+- [X] T037 [US1] Implement compress command handler in src/commands/compress.rs (validate input, determine output path, call crush_core::compress_with_options, handle errors)
+- [X] T038 [US1] Implement decompress command handler in src/commands/decompress.rs (validate input, determine output path, call crush_core::decompress, handle errors, verify CRC32)
+- [X] T039 [US1] Implement input file validation in src/commands/compress.rs (file exists, readable, not directory)
+- [X] T040 [US1] Implement output path validation in src/commands/compress.rs (parent directory exists, handle --force flag)
+- [X] T041 [US1] Implement file cleanup logic in src/commands/compress.rs (delete input if not --keep)
+- [X] T042 [US1] Implement file cleanup logic in src/commands/decompress.rs (delete .crush if not --keep)
+- [X] T043 [US1] Implement batch processing loop for multiple files in src/commands/compress.rs
+- [X] T044 [US1] Implement batch processing loop for multiple files in src/commands/decompress.rs
+- [X] T045 [US1] Implement basic output formatting (success messages) in src/output.rs
+- [X] T046 [US1] Wire compress command to main dispatcher in src/main.rs
+- [X] T047 [US1] Wire decompress command to main dispatcher in src/main.rs
 
 ### File Metadata Preservation
 - [ ] T048 [P] [US1] Write test: compressed file preserves mtime on Linux in tests/integration/compress_tests.rs

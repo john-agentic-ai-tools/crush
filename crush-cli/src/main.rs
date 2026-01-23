@@ -5,6 +5,7 @@ mod error;
 mod logging;
 mod output;
 mod signal;
+mod state;
 
 use clap::Parser;
 use cli::{Cli, Commands};
@@ -28,8 +29,19 @@ fn run() -> Result<()> {
     // Parse CLI arguments
     let cli = Cli::parse();
 
-    // Initialize logging
-    logging::init_logging();
+    // Load and merge configuration
+    let mut config = config::load_config()?;
+    config = config::merge_env_vars(config)?;
+    config = config::merge_cli_args(config, &cli)?;
+    config.validate()?;
+
+    // Initialize logging with config
+    let log_file_path = if !config.logging.file.is_empty() {
+        Some(std::path::Path::new(&config.logging.file))
+    } else {
+        None
+    };
+    logging::init_logging(&config.logging.level, &config.logging.format, log_file_path);
 
     // Setup signal handler
     let _interrupted = signal::setup_handler()
