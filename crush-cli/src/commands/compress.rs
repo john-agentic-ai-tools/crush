@@ -2,6 +2,8 @@ use crate::cli::CompressArgs;
 use crate::error::{CliError, Result};
 use crate::output;
 use crush_core::{compress_with_options, CompressionOptions};
+use crush_core::plugin::FileMetadata;
+use filetime::FileTime;
 use std::fs::{self, File};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -24,9 +26,15 @@ fn compress_file(input_path: &Path, args: &CompressArgs) -> Result<()> {
     // Validate output path
     validate_output(&output_path, args.force)?;
 
+    // Get file metadata for mtime
+    let file_metadata = fs::metadata(input_path)?;
+    let mtime = FileTime::from_last_modification_time(&file_metadata);
+
+
     // Prepare compression options
     let mut options = CompressionOptions::default()
-        .with_weights(args.level.to_weights());
+        .with_weights(args.level.to_weights())
+        .with_file_metadata(FileMetadata { mtime: Some(mtime.unix_seconds()) });
 
     if let Some(ref plugin) = args.plugin {
         options = options.with_plugin(plugin);

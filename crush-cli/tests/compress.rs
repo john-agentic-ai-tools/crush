@@ -2,6 +2,7 @@ mod common;
 
 use common::*;
 use predicates::prelude::*;
+use filetime;
 
 /// T026: Basic file compression test
 #[test]
@@ -106,4 +107,41 @@ fn test_compress_keep_input() {
     // Verify both files exist
     assert_file_exists(&input);
     assert_file_exists(&output);
+}
+
+/// T050: Test that compressed file preserves mtime on Windows
+#[test]
+#[cfg(windows)]
+fn test_compress_preserves_mtime_windows() {
+    let dir = test_dir();
+    let input = create_test_file(dir.path(), "test.txt", b"mtime test data");
+    let output = dir.path().join("test.txt.crush");
+    let restored_path = dir.path().join("restored.txt"); // Decompress will create this
+
+    // 1. Set a specific, known modification time
+    let original_mtime = filetime::FileTime::from_unix_time(1_500_000_000, 0); // A known past date
+    filetime::set_file_mtime(&input, original_mtime).unwrap();
+
+    // 2. Run compress command. We use --keep to have the original file for comparison.
+    crush_cmd()
+        .arg("compress")
+        .arg("--keep") // Keep original file
+        .arg(&input)
+        .assert()
+        .success();
+
+    // 3. Run decompress command
+    crush_cmd()
+        .arg("decompress")
+        .arg(&output)
+        .arg("-o")
+        .arg(&restored_path)
+        .assert()
+        .success();
+
+    // 4. Get the modification time of the restored file
+    let restored_mtime = filetime::FileTime::from_last_modification_time(&std::fs::metadata(&restored_path).unwrap());
+
+    // 5. Assert that the modification times are equal
+    assert_eq!(original_mtime, restored_mtime, "Modification time should be preserved after roundtrip");
 }

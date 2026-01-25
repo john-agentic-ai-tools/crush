@@ -5,10 +5,17 @@
 
 use crate::error::{PluginError, Result, ValidationError};
 use crate::plugin::registry::get_plugin_by_magic;
-use crate::plugin::{list_plugins, CrushHeader};
+use crate::plugin::{list_plugins, CrushHeader, FileMetadata};
 use crc32fast::Hasher;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+
+#[derive(Debug)]
+pub struct DecompressionResult {
+    pub data: Vec<u8>,
+    pub metadata: FileMetadata,
+}
+
 
 /// Decompress Crush-compressed data
 ///
@@ -34,9 +41,9 @@ use std::sync::Arc;
 /// let data = b"Hello, world!";
 /// let compressed = compress(data).expect("Compression failed");
 /// let decompressed = decompress(&compressed).expect("Decompression failed");
-/// assert_eq!(data.as_slice(), decompressed.as_slice());
+/// assert_eq!(data.as_slice(), decompressed.data.as_slice());
 /// ```
-pub fn decompress(input: &[u8]) -> Result<Vec<u8>> {
+pub fn decompress(input: &[u8]) -> Result<DecompressionResult> {
     // Validate minimum size (header + CRC32 if present)
     if input.len() < CrushHeader::SIZE {
         return Err(ValidationError::InvalidHeader(format!(
@@ -53,29 +60,27 @@ pub fn decompress(input: &[u8]) -> Result<Vec<u8>> {
         .map_err(|_| ValidationError::InvalidHeader("Failed to read header".to_string()))?;
     let header = CrushHeader::from_bytes(&header_bytes)?;
 
-    // Determine payload start based on CRC32 flag
-    let payload_start = if header.has_crc32() {
-        // CRC32 follows header (4 bytes)
-        if input.len() < CrushHeader::SIZE + 4 {
+    let mut payload_start = CrushHeader::SIZE;
+
+    // Handle CRC32
+    if header.has_crc32() {
+        if input.len() < payload_start + 4 {
             return Err(ValidationError::InvalidHeader(
                 "Truncated: CRC32 flag set but no CRC32 data".to_string(),
             )
             .into());
         }
-
-        // Extract and validate CRC32
         let stored_crc = u32::from_le_bytes([
-            input[CrushHeader::SIZE],
-            input[CrushHeader::SIZE + 1],
-            input[CrushHeader::SIZE + 2],
-            input[CrushHeader::SIZE + 3],
+            input[payload_start],
+            input[payload_start + 1],
+            input[payload_start + 2],
+            input[payload_start + 3],
         ]);
+        payload_start += 4;
 
-        let payload = &input[CrushHeader::SIZE + 4..];
-
-        // Calculate CRC32 of compressed payload
+        let payload_for_crc = &input[payload_start..];
         let mut hasher = Hasher::new();
-        hasher.update(payload);
+        hasher.update(payload_for_crc);
         let computed_crc = hasher.finalize();
 
         if stored_crc != computed_crc {
@@ -85,10 +90,29 @@ pub fn decompress(input: &[u8]) -> Result<Vec<u8>> {
             }
             .into());
         }
+    }
 
-        CrushHeader::SIZE + 4
+    // Handle metadata
+    let metadata = if header.has_metadata() {
+        if input.len() < payload_start + 2 {
+            return Err(ValidationError::InvalidHeader(
+                "Truncated: metadata flag set but no metadata length".to_string(),
+            ).into());
+        }
+        let metadata_len = u16::from_le_bytes([input[payload_start], input[payload_start + 1]]) as usize;
+        payload_start += 2;
+
+        if input.len() < payload_start + metadata_len {
+            return Err(ValidationError::InvalidHeader(
+                "Truncated: metadata length exceeds payload size".to_string(),
+            ).into());
+        }
+        let metadata_bytes = &input[payload_start..payload_start + metadata_len];
+        payload_start += metadata_len;
+
+        FileMetadata::from_bytes(metadata_bytes)?
     } else {
-        CrushHeader::SIZE
+        FileMetadata::default()
     };
 
     let compressed_payload = &input[payload_start..];
@@ -129,7 +153,10 @@ pub fn decompress(input: &[u8]) -> Result<Vec<u8>> {
         .into());
     }
 
-    Ok(decompressed)
+    Ok(DecompressionResult {
+        data: decompressed,
+        metadata,
+    })
 }
 
 #[cfg(test)]
@@ -143,7 +170,7 @@ mod tests {
         init_plugins().unwrap();
         let original = b"Test data for decompression";
         let compressed = compress(original).unwrap();
-        let decompressed = decompress(&compressed).unwrap();
+        let decompressed = decompress(&compressed).unwrap().data;
 
         assert_eq!(original.as_slice(), decompressed.as_slice());
     }

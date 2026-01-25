@@ -2,6 +2,7 @@ use crate::cli::DecompressArgs;
 use crate::error::{CliError, Result};
 use crate::output;
 use crush_core::decompress;
+use filetime::{set_file_mtime, FileTime};
 use std::fs::{self, File};
 use std::path::{Path, PathBuf};
 
@@ -27,7 +28,9 @@ fn decompress_file(input_path: &Path, args: &DecompressArgs) -> Result<()> {
     let compressed_data = fs::read(input_path)?;
 
     // Decompress
-    let decompressed_data = decompress(&compressed_data)?;
+    let result = decompress(&compressed_data)?;
+    let decompressed_data = result.data;
+    let metadata = result.metadata;
 
     // Write output
     if args.stdout {
@@ -37,6 +40,19 @@ fn decompress_file(input_path: &Path, args: &DecompressArgs) -> Result<()> {
     } else {
         // Write to file
         fs::write(&output_path, &decompressed_data)?;
+
+        // Restore mtime if available
+        if let Some(mtime_secs) = metadata.mtime {
+            let mtime = FileTime::from_unix_time(mtime_secs, 0);
+            if let Err(e) = set_file_mtime(&output_path, mtime) {
+                // Log a warning, but don't fail the operation
+                output::format_warning(&format!(
+                    "Could not set modification time for {}: {}",
+                    output_path.display(),
+                    e
+                ), true);
+            }
+        }
 
         // Output success message
         output::format_success(

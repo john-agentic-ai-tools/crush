@@ -33,3 +33,6 @@ test-results/
 # Environment
 .env*
 *.log
+
+# AI Assistants
+.gemini/

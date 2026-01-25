@@ -97,6 +97,13 @@ impl CrushHeader {
         self
     }
 
+    /// Create a header with metadata flag set
+    #[must_use]
+    pub fn with_metadata(mut self) -> Self {
+        self.flags |= flags::HAS_METADATA;
+        self
+    }
+
     /// Check if this header has a valid Crush magic number prefix
     #[must_use]
     pub fn has_valid_prefix(&self) -> bool {
@@ -119,6 +126,12 @@ impl CrushHeader {
     #[must_use]
     pub fn has_crc32(&self) -> bool {
         (self.flags & flags::HAS_CRC32) != 0
+    }
+
+    /// Check if metadata flag is set
+    #[must_use]
+    pub fn has_metadata(&self) -> bool {
+        (self.flags & flags::HAS_METADATA) != 0
     }
 
     /// Serialize header to bytes (little-endian)
@@ -194,6 +207,66 @@ impl CrushHeader {
         let mut bytes = [0u8; Self::SIZE];
         reader.read_exact(&mut bytes)?;
         Self::from_bytes(&bytes)
+    }
+}
+
+use serde::Serialize; // This one should stay
+
+/// Optional file metadata that can be stored in the compressed file
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize)]
+pub struct FileMetadata {
+    /// Modification time (seconds since Unix epoch)
+    pub mtime: Option<i64>,
+}
+
+impl FileMetadata {
+    /// Serialize metadata to a byte vector using TLV format
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        if let Some(mtime) = self.mtime {
+            // Type: 0x01 for mtime
+            bytes.push(0x01);
+            // Length: 8 bytes for i64
+            bytes.push(8);
+            // Value: mtime as i64
+            bytes.extend_from_slice(&mtime.to_le_bytes());
+        }
+        bytes
+    }
+
+    /// Deserialize metadata from bytes
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
+        let mut metadata = Self::default();
+        let mut i = 0;
+        while i < bytes.len() {
+            if i + 2 > bytes.len() {
+                return Err(ValidationError::InvalidMetadata("Incomplete TLV record".into()).into());
+            }
+            let type_ = bytes[i];
+            let length = bytes[i + 1] as usize;
+            i += 2;
+
+            if i + length > bytes.len() {
+                return Err(ValidationError::InvalidMetadata("Incomplete TLV value".into()).into());
+            }
+
+            let value = &bytes[i..i + length];
+            i += length;
+
+            match type_ {
+                0x01 => { // mtime
+                    if length == 8 {
+                        let mut mtime_bytes = [0u8; 8];
+                        mtime_bytes.copy_from_slice(value);
+                        metadata.mtime = Some(i64::from_le_bytes(mtime_bytes));
+                    } else {
+                        return Err(ValidationError::InvalidMetadata("Invalid mtime length".into()).into());
+                    }
+                }
+                _ => { /* Ignore unknown types for forward compatibility */ }
+            }
+        }
+        Ok(metadata)
     }
 }
 

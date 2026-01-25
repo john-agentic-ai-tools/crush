@@ -12,7 +12,7 @@ pub mod selector;
 pub mod timeout;
 
 pub use contract::CompressionAlgorithm;
-pub use metadata::{CrushHeader, PluginMetadata};
+pub use metadata::{CrushHeader, PluginMetadata, FileMetadata};
 pub use registry::{init_plugins, list_plugins};
 pub use selector::{calculate_plugin_score, PluginSelector, ScoringWeights};
 pub use timeout::{run_with_timeout_v2 as run_with_timeout, TimeoutGuard};
