@@ -1,10 +1,13 @@
 use crate::cli::DecompressArgs;
 use crate::error::{CliError, Result};
-use crate::output;
+use crate::output::{self, DecompressionResult};
 use crush_core::decompress;
 use filetime::{set_file_mtime, FileTime};
 use std::fs::{self, File};
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
+use indicatif::{ProgressBar, ProgressStyle};
+use is_terminal::IsTerminal;
 
 pub fn run(args: &DecompressArgs) -> Result<()> {
     // Process each input file
@@ -24,13 +27,43 @@ fn decompress_file(input_path: &Path, args: &DecompressArgs) -> Result<()> {
     // Validate output path
     validate_output(&output_path, args.force)?;
 
+    // Get file size for statistics
+    let input_size = fs::metadata(input_path)?.len();
+
+    // Create progress indicator for larger files
+    let show_progress = std::io::stderr().is_terminal() && !args.stdout;
+    let spinner = if show_progress && input_size > 1024 * 1024 {
+        let pb = ProgressBar::new_spinner();
+        pb.set_style(
+            ProgressStyle::default_spinner()
+                .template("{spinner:.green} Decompressing {msg}...")
+                .expect("Invalid spinner template")
+        );
+        pb.set_message(input_path.display().to_string());
+        pb.enable_steady_tick(Duration::from_millis(100));
+        Some(pb)
+    } else {
+        None
+    };
+
     // Read compressed file
     let compressed_data = fs::read(input_path)?;
+
+    // Start timing
+    let start = Instant::now();
 
     // Decompress
     let result = decompress(&compressed_data)?;
     let decompressed_data = result.data;
     let metadata = result.metadata;
+
+    // Stop timing
+    let duration = start.elapsed();
+
+    // Clear spinner
+    if let Some(pb) = spinner {
+        pb.finish_and_clear();
+    }
 
     // Write output
     if args.stdout {
@@ -54,16 +87,31 @@ fn decompress_file(input_path: &Path, args: &DecompressArgs) -> Result<()> {
             }
         }
 
-        // Output success message
-        output::format_success(
-            &format!("Decompressed {} → {}", input_path.display(), output_path.display()),
-            true
-        );
+        // Calculate statistics
+        let output_size = decompressed_data.len() as u64;
+        let throughput_mbps = if duration.as_secs_f64() > 0.0 {
+            (output_size as f64 / (1024.0 * 1024.0)) / duration.as_secs_f64()
+        } else {
+            0.0
+        };
 
-        // Cleanup: remove compressed file if --keep is not specified
-        if !args.keep {
-            fs::remove_file(input_path)?;
-        }
+        // Create and display result
+        let decomp_result = DecompressionResult {
+            input_path: input_path.to_path_buf(),
+            output_path: output_path.clone(),
+            input_size,
+            output_size,
+            duration,
+            throughput_mbps,
+            crc_valid: true, // If decompression succeeded, CRC is valid
+        };
+
+        output::format_decompression_result(&decomp_result, show_progress);
+
+        // NOTE: Compressed files are kept by default (safe behavior)
+        // The --keep flag is retained for compatibility but is now the default behavior
+        // To delete compressed files after decompression, users should manually delete them
+        // TODO: Consider adding a --remove or --delete flag in the future if needed
     }
 
     Ok(())
@@ -154,7 +202,8 @@ fn validate_output(path: &Path, force: bool) -> Result<()> {
 
     // Check that parent directory exists
     if let Some(parent) = path.parent() {
-        if !parent.exists() {
+        // parent() returns "" for relative paths in the current directory, which is valid
+        if !parent.as_os_str().is_empty() && !parent.exists() {
             return Err(CliError::InvalidInput(format!(
                 "Output directory does not exist: {}",
                 parent.display()

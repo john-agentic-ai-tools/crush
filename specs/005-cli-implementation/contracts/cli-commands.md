@@ -56,7 +56,6 @@ crush compress [OPTIONS] <FILE>...
 - `-p, --plugin <PLUGIN>`: Force specific compression plugin
 - `-l, --level <LEVEL>`: Compression level (fast | balanced | best)
 - `-f, --force`: Overwrite existing output files
-- `-k, --keep`: Keep input files after compression
 - `--timeout <SECONDS>`: Compression timeout
 
 ### Preconditions
@@ -72,8 +71,7 @@ crush compress [OPTIONS] <FILE>...
 1. For each input file, a compressed output file is created
 2. Output file has `.crush` extension (unless custom output specified)
 3. Output file contains valid Crush header + compressed data + CRC32
-4. If `--keep` not specified, input files are deleted
-5. Exit code is 0
+4. Exit code is 0
 
 ### Outputs
 
@@ -171,7 +169,6 @@ crush decompress [OPTIONS] <FILE>...
 **Optional**:
 - `-o, --output <PATH>`: Output file or directory
 - `-f, --force`: Overwrite existing output files
-- `-k, --keep`: Keep compressed files after decompression
 - `--stdout`: Write output to stdout (pipeline mode)
 
 ### Preconditions
@@ -186,9 +183,8 @@ crush decompress [OPTIONS] <FILE>...
 1. For each input, a decompressed output file is created
 2. Output file content matches original (pre-compression) data
 3. CRC32 validation passes
-4. If `--keep` not specified, compressed files are deleted
-5. File timestamps/permissions restored (best effort)
-6. Exit code is 0
+4. File timestamps/permissions restored (best effort)
+5. Exit code is 0
 
 ### Outputs
 

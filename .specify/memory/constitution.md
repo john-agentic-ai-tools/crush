@@ -1,18 +1,16 @@
 <!--
 Sync Impact Report:
-- Version change: 1.1.0 → 1.2.0
-- Modified principles: N/A
+- Version change: 1.2.0 → 1.3.0
+- Modified principles: AI Agent Behavior Guidance - added Specification Adherence
 - Added sections:
-  * Branching & Merge Governance (Git Flow model, PR requirements)
-  * CI Enforcement (mandatory CI gates, blocking behavior)
-  * Release & Compatibility Policy (release workflow, breaking change boundaries)
-  * AI Agent Behavior Guidance (explicit agent constraints)
+  * Specification Adherence (CRITICAL) - agents must implement only what is in spec.md
 - Removed sections: N/A
 - Templates requiring updates:
   ✅ constitution.md - updated
-  ⚠ plan-template.md - should reference branching model in constitution checks
-  ⚠ tasks-template.md - should include CI setup and branch protection tasks
+  ⚠ plan-template.md - should validate implementation against spec.md
+  ⚠ tasks-template.md - should reference spec.md for feature scope
 - Follow-up TODOs: None
+- Rationale: Prevents scope creep by requiring agents to implement exactly what's specified, not what they assume based on conventions from other tools
 -->
 
 # Crush Constitution
@@ -333,7 +331,15 @@ Automated agents, including Claude Code and similar AI-assisted development tool
 - Agents MAY introduce breaking changes during feature development
 - Agents MUST NOT hesitate to improve code due to compatibility fears
 
-**Rationale**: AI agents often err on the side of caution, introducing defensive code and compatibility layers unnecessarily. By explicitly instructing agents that feature branches are unstable and CI is the enforcement mechanism, we prevent bloat and enable confident refactoring.
+**Specification Adherence** (CRITICAL):
+- Agents MUST implement ONLY features explicitly specified in `specs/*/spec.md`
+- Agents MUST NOT add features, flags, or behavior not documented in specifications
+- Agents MUST NOT make assumptions about "expected" features from other tools
+- Agents MUST ask for clarification if specifications are ambiguous or incomplete
+- When in doubt, implement less rather than more - ship the minimal viable implementation
+- Agents MUST NOT introduce "standard" or "common" features without specification approval
+
+**Rationale**: AI agents often err on the side of caution, introducing defensive code and compatibility layers unnecessarily. By explicitly instructing agents that feature branches are unstable and CI is the enforcement mechanism, we prevent bloat and enable confident refactoring. Specification adherence prevents scope creep - agents must build exactly what was designed, not what they assume users want based on conventions from other tools.
 
 ## Governance
 

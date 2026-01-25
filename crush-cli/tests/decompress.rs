@@ -11,10 +11,9 @@ fn test_decompress_basic_file() {
     let compressed = dir.path().join("original.txt.crush");
     let decompressed = dir.path().join("original.txt");
 
-    // First compress the file (use --keep to preserve original, then we manually delete it)
+    // First compress the file (files are kept by default)
     crush_cmd()
         .arg("compress")
-        .arg("--keep")
         .arg(&original)
         .assert()
         .success();
@@ -49,10 +48,9 @@ fn test_decompress_crc32_failure() {
     let original = create_test_file(dir.path(), "test.txt", b"Test data for CRC validation");
     let compressed = dir.path().join("test.txt.crush");
 
-    // Compress the file first (keep original for now)
+    // Compress the file first (files are kept by default)
     crush_cmd()
         .arg("compress")
-        .arg("--keep")
         .arg(&original)
         .assert()
         .success();

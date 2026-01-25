@@ -28,7 +28,7 @@ fn test_inspect_basic() {
         .stdout(
             predicate::str::contains("Original size:")
                 .and(predicate::str::contains("Compressed size:"))
-                .and(predicate::str::contains("Compression ratio:"))
+                .and(predicate::str::contains("Size reduction:"))
                 .and(predicate::str::contains("Plugin:"))
                 .and(predicate::str::contains("CRC32: VALID")),
         );
@@ -106,7 +106,7 @@ fn test_inspect_multiple_files_summary() {
                 .and(predicate::str::contains("Total Files: 2"))
                 .and(predicate::str::contains("Total Original Size:"))
                 .and(predicate::str::contains("Total Compressed Size:"))
-                .and(predicate::str::contains("Overall Ratio:"))
+                .and(predicate::str::contains("Overall Size Reduction:"))
                 .and(predicate::str::contains("All CRC Valid: true")),
         );
 }

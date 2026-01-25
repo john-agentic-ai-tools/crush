@@ -1,12 +1,14 @@
 use crate::cli::CompressArgs;
 use crate::error::{CliError, Result};
-use crate::output;
+use crate::output::{self, CompressionResult};
 use crush_core::{compress_with_options, CompressionOptions};
 use crush_core::plugin::FileMetadata;
 use filetime::FileTime;
 use std::fs::{self, File};
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, Instant};
+use indicatif::{ProgressBar, ProgressStyle};
+use is_terminal::IsTerminal;
 
 pub fn run(args: &CompressArgs) -> Result<()> {
     // Process each input file
@@ -26,10 +28,26 @@ fn compress_file(input_path: &Path, args: &CompressArgs) -> Result<()> {
     // Validate output path
     validate_output(&output_path, args.force)?;
 
-    // Get file metadata for mtime
+    // Get file metadata for mtime and size
     let file_metadata = fs::metadata(input_path)?;
     let mtime = FileTime::from_last_modification_time(&file_metadata);
+    let input_size = file_metadata.len();
 
+    // Create progress indicator for larger files
+    let show_progress = std::io::stderr().is_terminal();
+    let spinner = if show_progress && input_size > 1024 * 1024 {
+        let pb = ProgressBar::new_spinner();
+        pb.set_style(
+            ProgressStyle::default_spinner()
+                .template("{spinner:.green} Compressing {msg}...")
+                .expect("Invalid spinner template")
+        );
+        pb.set_message(input_path.display().to_string());
+        pb.enable_steady_tick(Duration::from_millis(100));
+        Some(pb)
+    } else {
+        None
+    };
 
     // Prepare compression options
     let mut options = CompressionOptions::default()
@@ -47,22 +65,58 @@ fn compress_file(input_path: &Path, args: &CompressArgs) -> Result<()> {
     // Read input file
     let input_data = fs::read(input_path)?;
 
+    // Start timing
+    let start = Instant::now();
+
     // Compress
     let compressed_data = compress_with_options(&input_data, &options)?;
+
+    // Stop timing
+    let duration = start.elapsed();
+
+    // Clear spinner
+    if let Some(pb) = spinner {
+        pb.finish_and_clear();
+    }
 
     // Write output file
     fs::write(&output_path, &compressed_data)?;
 
-    // Output success message
-    output::format_success(
-        &format!("Compressed {} → {}", input_path.display(), output_path.display()),
-        true
-    );
+    // Calculate statistics
+    let output_size = compressed_data.len() as u64;
+    let compression_ratio = if input_size > 0 {
+        (output_size as f64 / input_size as f64) * 100.0
+    } else {
+        0.0
+    };
 
-    // Cleanup: remove input file if --keep is not specified
-    if !args.keep {
-        fs::remove_file(input_path)?;
-    }
+    let throughput_mbps = if duration.as_secs_f64() > 0.0 {
+        (input_size as f64 / (1024.0 * 1024.0)) / duration.as_secs_f64()
+    } else {
+        0.0
+    };
+
+    // Get plugin name from options (default to "auto" if not specified)
+    let plugin_used = args.plugin.clone().unwrap_or_else(|| "auto".to_string());
+
+    // Create and display result
+    let result = CompressionResult {
+        input_path: input_path.to_path_buf(),
+        output_path: output_path.clone(),
+        input_size,
+        output_size,
+        compression_ratio,
+        duration,
+        throughput_mbps,
+        plugin_used,
+    };
+
+    output::format_compression_result(&result, show_progress);
+
+    // NOTE: Original files are kept by default (safe behavior)
+    // The --keep flag is retained for compatibility but is now the default behavior
+    // To delete originals after compression, users should manually delete them
+    // TODO: Consider adding a --remove or --delete flag in the future if needed
 
     Ok(())
 }
@@ -135,7 +189,8 @@ fn validate_output(path: &Path, force: bool) -> Result<()> {
 
     // Check that parent directory exists
     if let Some(parent) = path.parent() {
-        if !parent.exists() {
+        // parent() returns "" for relative paths in the current directory, which is valid
+        if !parent.as_os_str().is_empty() && !parent.exists() {
             return Err(CliError::InvalidInput(format!(
                 "Output directory does not exist: {}",
                 parent.display()

@@ -186,14 +186,14 @@ After foundational tasks, different developers can work on different user storie
 - [ ] T075 [P] [US3] Write interrupt test: Ctrl+C cleanup in tests/integration/compress_tests.rs (using Command::kill)
 
 ### Implementation
-- [ ] T076 [US3] Add indicatif dependency usage in src/output.rs (ProgressBar, ProgressStyle)
-- [ ] T077 [US3] Implement progress bar creation in src/output.rs (detect TTY, set draw target to 10Hz)
-- [ ] T078 [US3] Implement progress callback for compression in src/commands/compress.rs (update bytes processed)
-- [ ] T079 [US3] Implement progress callback for decompression in src/commands/decompress.rs
-- [ ] T080 [US3] Implement progress bar hiding for small files (<1MB) in src/output.rs
-- [ ] T081 [US3] Implement CompressionResult struct in src/output.rs (sizes, ratio, duration, throughput, plugin)
-- [ ] T082 [US3] Implement DecompressionResult struct in src/output.rs
-- [ ] T083 [US3] Implement final statistics formatting in src/output.rs (time, throughput, ratio)
+- [X] T076 [US3] Add indicatif dependency usage in src/output.rs (ProgressBar, ProgressStyle)
+- [X] T077 [US3] Implement progress bar creation in src/output.rs (detect TTY, set draw target to 10Hz)
+- [X] T078 [US3] Implement progress callback for compression in src/commands/compress.rs (update bytes processed)
+- [X] T079 [US3] Implement progress callback for decompression in src/commands/decompress.rs
+- [X] T080 [US3] Implement progress bar hiding for small files (<1MB) in src/output.rs
+- [X] T081 [US3] Implement CompressionResult struct in src/output.rs (sizes, ratio, duration, throughput, plugin)
+- [X] T082 [US3] Implement DecompressionResult struct in src/output.rs
+- [X] T083 [US3] Implement final statistics formatting in src/output.rs (time, throughput, ratio)
 - [ ] T084 [US3] Integrate interrupt check into compression loop in src/commands/compress.rs (check AtomicBool)
 - [ ] T085 [US3] Implement partial file cleanup on interrupt in src/commands/compress.rs
 - [ ] T086 [US3] Handle interrupted error (exit code 130) in src/main.rs

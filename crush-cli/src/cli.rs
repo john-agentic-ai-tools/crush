@@ -67,10 +67,6 @@ pub struct CompressArgs {
     /// Compression timeout in seconds
     #[arg(long, value_name = "SECONDS")]
     pub timeout: Option<u64>,
-
-    /// Keep input files after compression
-    #[arg(short, long)]
-    pub keep: bool,
 }
 
 /// Decompress command arguments
@@ -87,10 +83,6 @@ pub struct DecompressArgs {
     /// Force overwrite of existing files
     #[arg(short, long)]
     pub force: bool,
-
-    /// Keep compressed files after decompression
-    #[arg(short, long)]
-    pub keep: bool,
 
     /// Write output to stdout (for piping)
     #[arg(long, conflicts_with = "output")]

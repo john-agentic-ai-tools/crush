@@ -13,10 +13,9 @@ fn test_compress_basic_file() {
     let input = create_test_file(dir.path(), "test.txt", &test_data);
     let output = dir.path().join("test.txt.crush");
 
-    // Run compress command with --keep to preserve input file for testing
+    // Run compress command (files are kept by default)
     crush_cmd()
         .arg("compress")
-        .arg("--keep")
         .arg(&input)
         .assert()
         .success()
@@ -96,10 +95,9 @@ fn test_compress_keep_input() {
     let input = create_test_file(dir.path(), "test.txt", b"Data to compress");
     let output = dir.path().join("test.txt.crush");
 
-    // Compress with --keep flag
+    // Compress (files are kept by default)
     crush_cmd()
         .arg("compress")
-        .arg("--keep")
         .arg(&input)
         .assert()
         .success();
@@ -122,10 +120,9 @@ fn test_compress_preserves_mtime_windows() {
     let original_mtime = filetime::FileTime::from_unix_time(1_500_000_000, 0); // A known past date
     filetime::set_file_mtime(&input, original_mtime).unwrap();
 
-    // 2. Run compress command. We use --keep to have the original file for comparison.
+    // 2. Run compress command (files are kept by default)
     crush_cmd()
         .arg("compress")
-        .arg("--keep") // Keep original file
         .arg(&input)
         .assert()
         .success();

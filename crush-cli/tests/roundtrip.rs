@@ -12,10 +12,9 @@ fn test_compress_decompress_roundtrip() {
     let compressed = dir.path().join("original.txt.crush");
     let decompressed = dir.path().join("original.txt");
 
-    // Step 1: Compress (keep original to verify compression ratio)
+    // Step 1: Compress (files are kept by default)
     crush_cmd()
         .arg("compress")
-        .arg("--keep")
         .arg(&original)
         .assert()
         .success();
@@ -55,7 +54,7 @@ fn test_roundtrip_large_random_file() {
     let compressed = dir.path().join("large.bin.crush");
     let decompressed = dir.path().join("large.bin");
 
-    // Compress (no need to keep original, we already have original_content saved)
+    // Compress (files are kept by default now)
     crush_cmd()
         .arg("compress")
         .arg(&original)
@@ -63,6 +62,10 @@ fn test_roundtrip_large_random_file() {
         .success();
 
     assert_file_exists(&compressed);
+
+    // Remove original to avoid conflict during decompression
+    // (we already have original_content saved for verification)
+    std::fs::remove_file(&original).unwrap();
 
     // Decompress
     crush_cmd()
