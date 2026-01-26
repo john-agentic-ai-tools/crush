@@ -33,8 +33,7 @@ pub fn run(args: &InspectArgs) -> Result<()> {
             output::format_inspect_json(&results, use_colors);
         },
         OutputFormat::Csv => {
-            // TODO: Implement CSV formatting
-            unimplemented!("CSV format not yet implemented");
+            output::format_inspect_csv(&results, use_colors);
         }
     }
     Ok(())

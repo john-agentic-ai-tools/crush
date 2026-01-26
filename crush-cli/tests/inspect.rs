@@ -148,3 +148,51 @@ fn test_inspect_json_output() {
     assert!(item["metadata"]["mtime"].is_number()); // mtime might be null if not set
 }
 
+/// T063: Test CSV output format
+#[test]
+fn test_inspect_csv_output() {
+    let dir = test_dir();
+    let test_data = b"csv test data";
+    let input = create_test_file(dir.path(), "test.txt", test_data);
+    let output = dir.path().join("test.txt.crush");
+
+    // Compress the file first
+    crush_cmd()
+        .arg("compress")
+        .arg(&input)
+        .assert()
+        .success();
+
+    // Now inspect it with CSV format
+    let output_assert = crush_cmd()
+        .arg("inspect")
+        .arg("--format")
+        .arg("csv")
+        .arg(&output)
+        .assert()
+        .success();
+
+    // Check if the output is valid CSV
+    let stdout = String::from_utf8(output_assert.get_output().stdout.clone()).unwrap();
+    let lines: Vec<&str> = stdout.trim().lines().collect();
+
+    // Verify CSV structure
+    assert_eq!(lines.len(), 2, "CSV should have header + 1 data row");
+
+    // Check header
+    assert_eq!(
+        lines[0],
+        "file_path,original_size,compressed_size,compression_ratio,plugin,crc_valid"
+    );
+
+    // Check data row contains expected fields
+    let data_row = lines[1];
+    assert!(data_row.contains("test.txt.crush"), "Should contain file path");
+    assert!(data_row.contains("deflate"), "Should contain plugin name");
+    assert!(data_row.contains("true"), "Should contain crc_valid=true");
+
+    // Verify it's parseable as CSV
+    let fields: Vec<&str> = data_row.split(',').collect();
+    assert_eq!(fields.len(), 6, "Should have 6 CSV fields");
+}
+

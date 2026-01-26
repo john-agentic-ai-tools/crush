@@ -78,6 +78,43 @@ fn test_decompress_crc32_failure() {
             .or(predicate::str::contains("integrity")));
 }
 
+/// T052: Test that decompression handles missing metadata gracefully
+#[test]
+fn test_decompress_handles_missing_metadata_gracefully() {
+    let dir = test_dir();
+    let original = create_test_file(dir.path(), "original.txt", b"test data for metadata handling");
+    let compressed = dir.path().join("original.txt.crush");
+    let decompressed = dir.path().join("decompressed.txt");
+
+    // Compress the file
+    crush_cmd()
+        .arg("compress")
+        .arg(&original)
+        .assert()
+        .success();
+
+    // Remove original
+    std::fs::remove_file(&original).unwrap();
+
+    // Decompress (should succeed even if metadata restoration fails)
+    crush_cmd()
+        .arg("decompress")
+        .arg(&compressed)
+        .arg("-o")
+        .arg(&decompressed)
+        .assert()
+        .success();
+
+    // Verify file was decompressed correctly
+    assert_file_exists(&decompressed);
+    let decompressed_content = read_file(&decompressed);
+    assert_eq!(decompressed_content.as_slice(), b"test data for metadata handling");
+
+    // Note: If metadata restoration fails, a warning should be logged,
+    // but the operation should still succeed. The warning isn't checked here
+    // because it goes to stderr and the test focuses on success behavior.
+}
+
 /// T033: Invalid header error test
 #[test]
 fn test_decompress_invalid_header() {

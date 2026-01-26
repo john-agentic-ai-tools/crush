@@ -87,6 +87,21 @@ fn decompress_file(input_path: &Path, args: &DecompressArgs) -> Result<()> {
             }
         }
 
+        // Restore Unix permissions if available (T056)
+        #[cfg(unix)]
+        if let Some(permissions_mode) = metadata.permissions {
+            use std::os::unix::fs::PermissionsExt;
+            let permissions = std::fs::Permissions::from_mode(permissions_mode);
+            if let Err(e) = std::fs::set_permissions(&output_path, permissions) {
+                // Log a warning, but don't fail the operation
+                output::format_warning(&format!(
+                    "Could not restore Unix permissions for {}: {}",
+                    output_path.display(),
+                    e
+                ), true);
+            }
+        }
+
         // Calculate statistics
         let output_size = decompressed_data.len() as u64;
         let throughput_mbps = if duration.as_secs_f64() > 0.0 {

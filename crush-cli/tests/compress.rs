@@ -142,3 +142,116 @@ fn test_compress_preserves_mtime_windows() {
     // 5. Assert that the modification times are equal
     assert_eq!(original_mtime, restored_mtime, "Modification time should be preserved after roundtrip");
 }
+
+/// T048: Test mtime preservation on Linux
+#[test]
+#[cfg(target_os = "linux")]
+fn test_compress_preserves_mtime_linux() {
+    let dir = test_dir();
+    let input = create_test_file(dir.path(), "test.txt", b"mtime test data for Linux");
+    let output = dir.path().join("test.txt.crush");
+    let restored_path = dir.path().join("restored.txt");
+
+    // Set a specific modification time
+    let original_mtime = filetime::FileTime::from_unix_time(1_600_000_000, 0);
+    filetime::set_file_mtime(&input, original_mtime).unwrap();
+
+    // Compress
+    crush_cmd()
+        .arg("compress")
+        .arg(&input)
+        .assert()
+        .success();
+
+    // Decompress
+    crush_cmd()
+        .arg("decompress")
+        .arg(&output)
+        .arg("-o")
+        .arg(&restored_path)
+        .assert()
+        .success();
+
+    // Verify mtime is preserved
+    let restored_mtime = filetime::FileTime::from_last_modification_time(&std::fs::metadata(&restored_path).unwrap());
+    assert_eq!(original_mtime, restored_mtime, "Modification time should be preserved on Linux");
+}
+
+/// T049: Test mtime preservation on macOS
+#[test]
+#[cfg(target_os = "macos")]
+fn test_compress_preserves_mtime_macos() {
+    let dir = test_dir();
+    let input = create_test_file(dir.path(), "test.txt", b"mtime test data for macOS");
+    let output = dir.path().join("test.txt.crush");
+    let restored_path = dir.path().join("restored.txt");
+
+    // Set a specific modification time
+    let original_mtime = filetime::FileTime::from_unix_time(1_600_000_000, 0);
+    filetime::set_file_mtime(&input, original_mtime).unwrap();
+
+    // Compress
+    crush_cmd()
+        .arg("compress")
+        .arg(&input)
+        .assert()
+        .success();
+
+    // Decompress
+    crush_cmd()
+        .arg("decompress")
+        .arg(&output)
+        .arg("-o")
+        .arg(&restored_path)
+        .assert()
+        .success();
+
+    // Verify mtime is preserved
+    let restored_mtime = filetime::FileTime::from_last_modification_time(&std::fs::metadata(&restored_path).unwrap());
+    assert_eq!(original_mtime, restored_mtime, "Modification time should be preserved on macOS");
+}
+
+/// T051: Test Unix permissions preservation
+#[test]
+#[cfg(unix)]
+fn test_compress_preserves_unix_permissions() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = test_dir();
+    let input = create_test_file(dir.path(), "test.txt", b"permissions test data");
+    let output = dir.path().join("test.txt.crush");
+    let restored_path = dir.path().join("restored.txt");
+
+    // Set specific permissions (rwxr-xr-x = 0o755)
+    let original_perms = std::fs::Permissions::from_mode(0o755);
+    std::fs::set_permissions(&input, original_perms.clone()).unwrap();
+
+    // Compress
+    crush_cmd()
+        .arg("compress")
+        .arg(&input)
+        .assert()
+        .success();
+
+    // Remove original
+    std::fs::remove_file(&input).unwrap();
+
+    // Decompress
+    crush_cmd()
+        .arg("decompress")
+        .arg(&output)
+        .arg("-o")
+        .arg(&restored_path)
+        .assert()
+        .success();
+
+    // Verify permissions are preserved
+    let restored_perms = std::fs::metadata(&restored_path).unwrap().permissions();
+    assert_eq!(
+        original_perms.mode() & 0o777,
+        restored_perms.mode() & 0o777,
+        "Unix permissions should be preserved (expected: {:o}, got: {:o})",
+        original_perms.mode() & 0o777,
+        restored_perms.mode() & 0o777
+    );
+}

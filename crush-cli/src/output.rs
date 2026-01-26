@@ -156,6 +156,30 @@ pub fn format_inspect_json(results: &[(std::path::PathBuf, InspectResult)], _use
     println!("{}", serialized);
 }
 
+pub fn format_inspect_csv(results: &[(std::path::PathBuf, InspectResult)], _use_colors: bool) {
+    // Print CSV header
+    println!("file_path,original_size,compressed_size,compression_ratio,plugin,crc_valid");
+
+    // Print each result as a CSV row
+    for (path, result) in results {
+        let ratio = if result.original_size > 0 {
+            (result.compressed_size as f64 / result.original_size as f64) * 100.0
+        } else {
+            0.0
+        };
+
+        println!(
+            "{},{},{},{:.1},{},{}",
+            path.display(),
+            result.original_size,
+            result.compressed_size,
+            ratio,
+            result.plugin_name,
+            result.crc_valid
+        );
+    }
+}
+
 /// Result of a compression operation
 #[derive(Debug, Clone)]
 pub struct CompressionResult {

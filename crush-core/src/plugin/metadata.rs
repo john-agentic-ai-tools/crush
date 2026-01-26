@@ -217,6 +217,11 @@ use serde::Serialize; // This one should stay
 pub struct FileMetadata {
     /// Modification time (seconds since Unix epoch)
     pub mtime: Option<i64>,
+
+    /// Unix file permissions (mode bits)
+    /// Only stored and restored on Unix platforms
+    #[cfg(unix)]
+    pub permissions: Option<u32>,
 }
 
 impl FileMetadata {
@@ -230,6 +235,15 @@ impl FileMetadata {
             bytes.push(8);
             // Value: mtime as i64
             bytes.extend_from_slice(&mtime.to_le_bytes());
+        }
+        #[cfg(unix)]
+        if let Some(permissions) = self.permissions {
+            // Type: 0x02 for Unix permissions
+            bytes.push(0x02);
+            // Length: 4 bytes for u32
+            bytes.push(4);
+            // Value: permissions as u32
+            bytes.extend_from_slice(&permissions.to_le_bytes());
         }
         bytes
     }
@@ -261,6 +275,16 @@ impl FileMetadata {
                         metadata.mtime = Some(i64::from_le_bytes(mtime_bytes));
                     } else {
                         return Err(ValidationError::InvalidMetadata("Invalid mtime length".into()).into());
+                    }
+                }
+                #[cfg(unix)]
+                0x02 => { // Unix permissions
+                    if length == 4 {
+                        let mut perm_bytes = [0u8; 4];
+                        perm_bytes.copy_from_slice(value);
+                        metadata.permissions = Some(u32::from_le_bytes(perm_bytes));
+                    } else {
+                        return Err(ValidationError::InvalidMetadata("Invalid permissions length".into()).into());
                     }
                 }
                 _ => { /* Ignore unknown types for forward compatibility */ }

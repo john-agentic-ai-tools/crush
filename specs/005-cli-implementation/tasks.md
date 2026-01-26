@@ -120,15 +120,15 @@ After foundational tasks, different developers can work on different user storie
 - [X] T047 [US1] Wire decompress command to main dispatcher in src/main.rs
 
 ### File Metadata Preservation
-- [ ] T048 [P] [US1] Write test: compressed file preserves mtime on Linux in tests/integration/compress_tests.rs
-- [ ] T049 [P] [US1] Write test: compressed file preserves mtime on macOS in tests/integration/compress_tests.rs
+- [X] T048 [P] [US1] Write test: compressed file preserves mtime on Linux in tests/integration/compress_tests.rs
+- [X] T049 [P] [US1] Write test: compressed file preserves mtime on macOS in tests/integration/compress_tests.rs
 - [X] T050 [P] [US1] Write test: compressed file preserves mtime on Windows in tests/integration/compress_tests.rs
-- [ ] T051 [P] [US1] Write test: compressed file preserves Unix permissions in tests/integration/compress_tests.rs (cfg(unix) only)
-- [ ] T052 [P] [US1] Write test: decompression handles missing metadata gracefully in tests/integration/decompress_tests.rs
+- [X] T051 [P] [US1] Write test: compressed file preserves Unix permissions in tests/integration/compress_tests.rs (cfg(unix) only)
+- [X] T052 [P] [US1] Write test: decompression handles missing metadata gracefully in tests/integration/decompress_tests.rs
 - [X] T053 [US1] Store original mtime in compression metadata in src/commands/compress.rs (extend metadata struct)
-- [ ] T054 [US1] Store Unix permissions in metadata on Unix platforms in src/commands/compress.rs (cfg(unix))
+- [X] T054 [US1] Store Unix permissions in metadata on Unix platforms in src/commands/compress.rs (cfg(unix))
 - [X] T055 [US1] Restore mtime after decompression in src/commands/decompress.rs (using filetime::set_file_mtime)
-- [ ] T056 [US1] Restore Unix permissions after decompression in src/commands/decompress.rs (cfg(unix))
+- [X] T056 [US1] Restore Unix permissions after decompression in src/commands/decompress.rs (cfg(unix))
 - [X] T057 [US1] Add warning log when metadata restoration fails in src/commands/decompress.rs (warn, don't fail)
 
 **Validation**: All US1 integration tests pass, manual compress/decompress roundtrip succeeds
@@ -152,7 +152,7 @@ After foundational tasks, different developers can work on different user storie
 - [X] T060 [P] [US2] Write inspect integration test: invalid header error in tests/integration/inspect_tests.rs
 - [X] T061 [P] [US2] Write inspect integration test: multiple files with summary in tests/integration/inspect_tests.rs
 - [X] T062 [P] [US2] Write inspect integration test: JSON output format in tests/integration/inspect_tests.rs
-- [ ] T063 [P] [US2] Write inspect integration test: CSV output format in tests/integration/inspect_tests.rs
+- [X] T063 [P] [US2] Write inspect integration test: CSV output format in tests/integration/inspect_tests.rs
 
 ### Implementation
 - [X] T064 [US2] Implement InspectArgs parsing in src/cli.rs (with OutputFormat enum)
@@ -160,7 +160,7 @@ After foundational tasks, different developers can work on different user storie
 - [X] T066 [US2] Implement inspect command handler in src/commands/inspect.rs (read header, extract metadata, validate CRC)
 - [X] T067 [US2] Implement human-readable formatting for InspectResult in src/output.rs
 - [X] T068 [US2] Implement JSON formatting for InspectResult in src/output.rs (using serde_json)
-- [ ] T069 [US2] Implement CSV formatting for InspectResult in src/output.rs
+- [X] T069 [US2] Implement CSV formatting for InspectResult in src/output.rs
 - [X] T070 [US2] Implement summary statistics aggregation in src/commands/inspect.rs (total sizes, average ratio)
 - [X] T071 [US2] Implement batch inspection loop for multiple files in src/commands/inspect.rs
 - [X] T072 [US2] Wire inspect command to main dispatcher in src/main.rs

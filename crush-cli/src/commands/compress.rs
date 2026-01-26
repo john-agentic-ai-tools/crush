@@ -49,10 +49,19 @@ fn compress_file(input_path: &Path, args: &CompressArgs) -> Result<()> {
         None
     };
 
-    // Prepare compression options
+    // Prepare compression options with metadata
+    let mut file_meta = FileMetadata {
+        mtime: Some(mtime.unix_seconds()),
+        #[cfg(unix)]
+        permissions: {
+            use std::os::unix::fs::PermissionsExt;
+            Some(file_metadata.permissions().mode())
+        },
+    };
+
     let mut options = CompressionOptions::default()
         .with_weights(args.level.to_weights())
-        .with_file_metadata(FileMetadata { mtime: Some(mtime.unix_seconds()) });
+        .with_file_metadata(file_meta);
 
     if let Some(ref plugin) = args.plugin {
         options = options.with_plugin(plugin);
