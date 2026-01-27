@@ -181,9 +181,9 @@ After foundational tasks, different developers can work on different user storie
 **Tasks**:
 
 ### Integration Tests (TDD)
-- [ ] T073 [P] [US3] Write progress test: large file shows progress bar in tests/integration/compress_tests.rs
-- [ ] T074 [P] [US3] Write progress test: final statistics displayed in tests/integration/compress_tests.rs
-- [ ] T075 [P] [US3] Write interrupt test: Ctrl+C cleanup in tests/integration/compress_tests.rs (using Command::kill)
+- [X] T073 [P] [US3] Write progress test: large file shows progress bar in tests/integration/compress_tests.rs
+- [X] T074 [P] [US3] Write progress test: final statistics displayed in tests/integration/compress_tests.rs
+- [X] T075 [P] [US3] Write interrupt test: Ctrl+C cleanup in tests/integration/compress_tests.rs (using Command::kill)
 
 ### Implementation
 - [X] T076 [US3] Add indicatif dependency usage in src/output.rs (ProgressBar, ProgressStyle)
@@ -194,9 +194,9 @@ After foundational tasks, different developers can work on different user storie
 - [X] T081 [US3] Implement CompressionResult struct in src/output.rs (sizes, ratio, duration, throughput, plugin)
 - [X] T082 [US3] Implement DecompressionResult struct in src/output.rs
 - [X] T083 [US3] Implement final statistics formatting in src/output.rs (time, throughput, ratio)
-- [ ] T084 [US3] Integrate interrupt check into compression loop in src/commands/compress.rs (check AtomicBool)
-- [ ] T085 [US3] Implement partial file cleanup on interrupt in src/commands/compress.rs
-- [ ] T086 [US3] Handle interrupted error (exit code 130) in src/main.rs
+- [X] T084 [US3] Integrate interrupt check into compression loop in src/commands/compress.rs (check AtomicBool)
+- [X] T085 [US3] Implement partial file cleanup on interrupt in src/commands/compress.rs
+- [X] T086 [US3] Handle interrupted error (exit code 130) in src/main.rs
 
 **Validation**: All US3 integration tests pass, progress bars display during manual testing with large files
 

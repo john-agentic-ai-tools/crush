@@ -47,6 +47,7 @@ cargo test -p crush-cli
 ## Architecture
 
 The CLI is a thin wrapper that:
+
 - Parses command-line arguments (via clap - to be added)
 - Calls `crush-core` library functions
 - Handles I/O and user interaction

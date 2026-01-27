@@ -6,19 +6,26 @@ use crush_core::plugin::FileMetadata;
 use filetime::FileTime;
 use std::fs::{self, File};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 use indicatif::{ProgressBar, ProgressStyle};
 use is_terminal::IsTerminal;
 
-pub fn run(args: &CompressArgs) -> Result<()> {
+pub fn run(args: &CompressArgs, interrupted: Arc<AtomicBool>) -> Result<()> {
     // Process each input file
     for input_path in &args.input {
-        compress_file(input_path, args)?;
+        compress_file(input_path, args, interrupted.clone())?;
     }
     Ok(())
 }
 
-fn compress_file(input_path: &Path, args: &CompressArgs) -> Result<()> {
+fn compress_file(input_path: &Path, args: &CompressArgs, interrupted: Arc<AtomicBool>) -> Result<()> {
+    // Check for interrupt before starting
+    if interrupted.load(Ordering::SeqCst) {
+        return Err(CliError::Interrupted);
+    }
+
     // Validate input file
     validate_input(input_path)?;
 
@@ -74,6 +81,11 @@ fn compress_file(input_path: &Path, args: &CompressArgs) -> Result<()> {
     // Read input file
     let input_data = fs::read(input_path)?;
 
+    // Check for interrupt after reading
+    if interrupted.load(Ordering::SeqCst) {
+        return Err(CliError::Interrupted);
+    }
+
     // Start timing
     let start = Instant::now();
 
@@ -88,8 +100,24 @@ fn compress_file(input_path: &Path, args: &CompressArgs) -> Result<()> {
         pb.finish_and_clear();
     }
 
-    // Write output file
-    fs::write(&output_path, &compressed_data)?;
+    // Check for interrupt before writing
+    if interrupted.load(Ordering::SeqCst) {
+        return Err(CliError::Interrupted);
+    }
+
+    // Write output file (T085: cleanup on failure/interrupt)
+    if let Err(e) = fs::write(&output_path, &compressed_data) {
+        // If write failed, ensure no partial file remains
+        let _ = fs::remove_file(&output_path);
+        return Err(e.into());
+    }
+
+    // Check for interrupt after writing (cleanup partial file if interrupted)
+    if interrupted.load(Ordering::SeqCst) {
+        // Remove the output file we just wrote
+        let _ = fs::remove_file(&output_path);
+        return Err(CliError::Interrupted);
+    }
 
     // Calculate statistics
     let output_size = compressed_data.len() as u64;
@@ -123,7 +151,6 @@ fn compress_file(input_path: &Path, args: &CompressArgs) -> Result<()> {
     output::format_compression_result(&result, show_progress);
 
     // NOTE: Original files are kept by default (safe behavior)
-    // The --keep flag is retained for compatibility but is now the default behavior
     // To delete originals after compression, users should manually delete them
     // TODO: Consider adding a --remove or --delete flag in the future if needed
 

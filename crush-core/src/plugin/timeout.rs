@@ -128,9 +128,13 @@ where
     F: FnOnce(Arc<AtomicBool>) -> Result<T> + Send + 'static,
     T: Send + 'static,
 {
-    if timeout == Duration::from_secs(0) {
-        return Err(TimeoutError::Timeout(timeout).into());
-    }
+    // Timeout of 0 means no timeout - use Duration::MAX for effectively infinite wait
+    let effective_timeout = if timeout == Duration::from_secs(0) {
+        Duration::MAX
+    } else {
+        timeout
+    };
+
     let cancel_flag = Arc::new(AtomicBool::new(false));
     let cancel_flag_thread = Arc::clone(&cancel_flag);
     let cancel_flag_guard = Arc::clone(&cancel_flag);
@@ -149,7 +153,7 @@ where
     });
 
     // Wait for completion or timeout
-    match rx.recv_timeout(timeout) {
+    match rx.recv_timeout(effective_timeout) {
         Ok(result) => result,
         Err(channel::RecvTimeoutError::Timeout) => {
             eprintln!("Warning: Plugin operation timed out after {timeout:?}");
@@ -202,12 +206,13 @@ mod tests {
 
     #[test]
     #[allow(clippy::unwrap_used)]
-    fn test_zero_timeout_handling() {
+    fn test_zero_timeout_means_no_timeout() {
         let timeout = Duration::from_secs(0);
 
         let result = run_with_timeout_v2(timeout, |_cancel| Ok(42));
 
-        // Zero timeout should immediately timeout
-        assert!(result.is_err());
+        // Zero timeout means no timeout - operation should succeed
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 42);
     }
 }

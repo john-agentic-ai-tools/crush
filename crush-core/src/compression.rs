@@ -9,8 +9,8 @@ use crate::plugin::{run_with_timeout, CrushHeader, FileMetadata, PluginSelector,
 use crc32fast::Hasher;
 use std::time::Duration;
 
-/// Default timeout for compression operations (30 seconds)
-pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
+/// Default timeout for compression operations (0 = no timeout)
+pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(0);
 
 /// Compression options for plugin selection and scoring
 #[derive(Debug, Clone)]
@@ -88,7 +88,6 @@ impl Default for CompressionOptions {
 /// Returns an error if:
 /// - No default plugin is available (should never happen - DEFLATE is always registered)
 /// - Compression operation fails
-/// - Operation exceeds the default timeout (30 seconds)
 ///
 /// # Examples
 ///
@@ -147,7 +146,7 @@ pub fn compress(input: &[u8]) -> Result<Vec<u8>> {
 /// - Specified plugin is not found (manual override)
 /// - No plugins are available (automatic selection)
 /// - Compression operation fails
-/// - Operation exceeds the specified timeout
+/// - Operation exceeds the specified timeout (0 = no timeout)
 ///
 /// # Examples
 ///

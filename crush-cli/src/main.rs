@@ -44,13 +44,13 @@ fn run() -> Result<()> {
     logging::init_logging(&config.logging.level, &config.logging.format, log_file_path);
 
     // Setup signal handler
-    let _interrupted = signal::setup_handler()
+    let interrupted = signal::setup_handler()
         .map_err(|e| error::CliError::Config(format!("Failed to set up signal handler: {}", e)))?;
 
     // Dispatch to appropriate command
     match &cli.command {
-        Commands::Compress(args) => commands::compress::run(args),
-        Commands::Decompress(args) => commands::decompress::run(args),
+        Commands::Compress(args) => commands::compress::run(args, interrupted),
+        Commands::Decompress(args) => commands::decompress::run(args, interrupted),
         Commands::Inspect(args) => commands::inspect::run(args),
         Commands::Config(args) => commands::config::run(args),
         Commands::Plugins(args) => commands::plugins::run(args),

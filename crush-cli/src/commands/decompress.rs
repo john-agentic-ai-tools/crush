@@ -5,19 +5,26 @@ use crush_core::decompress;
 use filetime::{set_file_mtime, FileTime};
 use std::fs::{self, File};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 use indicatif::{ProgressBar, ProgressStyle};
 use is_terminal::IsTerminal;
 
-pub fn run(args: &DecompressArgs) -> Result<()> {
+pub fn run(args: &DecompressArgs, interrupted: Arc<AtomicBool>) -> Result<()> {
     // Process each input file
     for input_path in &args.input {
-        decompress_file(input_path, args)?;
+        decompress_file(input_path, args, interrupted.clone())?;
     }
     Ok(())
 }
 
-fn decompress_file(input_path: &Path, args: &DecompressArgs) -> Result<()> {
+fn decompress_file(input_path: &Path, args: &DecompressArgs, interrupted: Arc<AtomicBool>) -> Result<()> {
+    // Check for interrupt before starting
+    if interrupted.load(Ordering::SeqCst) {
+        return Err(CliError::Interrupted);
+    }
+
     // Validate input file
     validate_input(input_path)?;
 
@@ -49,6 +56,11 @@ fn decompress_file(input_path: &Path, args: &DecompressArgs) -> Result<()> {
     // Read compressed file
     let compressed_data = fs::read(input_path)?;
 
+    // Check for interrupt after reading
+    if interrupted.load(Ordering::SeqCst) {
+        return Err(CliError::Interrupted);
+    }
+
     // Start timing
     let start = Instant::now();
 
@@ -65,14 +77,30 @@ fn decompress_file(input_path: &Path, args: &DecompressArgs) -> Result<()> {
         pb.finish_and_clear();
     }
 
+    // Check for interrupt before writing
+    if interrupted.load(Ordering::SeqCst) {
+        return Err(CliError::Interrupted);
+    }
+
     // Write output
     if args.stdout {
         // Write to stdout
         use std::io::Write;
         std::io::stdout().write_all(&decompressed_data)?;
     } else {
-        // Write to file
-        fs::write(&output_path, &decompressed_data)?;
+        // Write to file (with cleanup on failure/interrupt)
+        if let Err(e) = fs::write(&output_path, &decompressed_data) {
+            // If write failed, ensure no partial file remains
+            let _ = fs::remove_file(&output_path);
+            return Err(e.into());
+        }
+
+        // Check for interrupt after writing (cleanup partial file if interrupted)
+        if interrupted.load(Ordering::SeqCst) {
+            // Remove the output file we just wrote
+            let _ = fs::remove_file(&output_path);
+            return Err(CliError::Interrupted);
+        }
 
         // Restore mtime if available
         if let Some(mtime_secs) = metadata.mtime {
