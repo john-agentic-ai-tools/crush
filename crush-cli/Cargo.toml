@@ -32,3 +32,12 @@ assert_cmd = "2.0"
 predicates = "3.1"
 tempfile = "3.10"
 serde_json = "1.0"
+criterion = "0.5"
+
+[[bench]]
+name = "cli_startup"
+harness = false
+
+[[bench]]
+name = "help_command"
+harness = false
