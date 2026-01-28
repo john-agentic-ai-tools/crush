@@ -3,23 +3,120 @@ use crate::error::{CliError, Result};
 use crate::output::{self, DecompressionResult};
 use crush_core::decompress;
 use filetime::{set_file_mtime, FileTime};
+use indicatif::{ProgressBar, ProgressStyle};
+use is_terminal::IsTerminal;
 use std::fs::{self, File};
+use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use indicatif::{ProgressBar, ProgressStyle};
-use is_terminal::IsTerminal;
+use tracing::{debug, info, instrument, trace};
 
 pub fn run(args: &DecompressArgs, interrupted: Arc<AtomicBool>) -> Result<()> {
-    // Process each input file
-    for input_path in &args.input {
-        decompress_file(input_path, args, interrupted.clone())?;
+    // Check if reading from stdin (no input files and stdout mode)
+    if args.input.is_empty() {
+        if args.stdout {
+            decompress_stdin(args, interrupted)?;
+        } else {
+            return Err(CliError::InvalidInput(
+                "No input files specified. Use --stdout with stdin, or provide file paths."
+                    .to_string(),
+            ));
+        }
+    } else {
+        // Process each input file
+        for input_path in &args.input {
+            decompress_file(input_path, args, interrupted.clone())?;
+        }
     }
     Ok(())
 }
 
-fn decompress_file(input_path: &Path, args: &DecompressArgs, interrupted: Arc<AtomicBool>) -> Result<()> {
+/// Decompress data from stdin
+#[instrument(skip(_args, interrupted))]
+fn decompress_stdin(_args: &DecompressArgs, interrupted: Arc<AtomicBool>) -> Result<()> {
+    info!("Decompressing from stdin");
+
+    // Check for interrupt before starting
+    if interrupted.load(Ordering::SeqCst) {
+        return Err(CliError::Interrupted);
+    }
+
+    // Read all data from stdin
+    trace!("Reading from stdin");
+    let mut compressed_data = Vec::new();
+    io::stdin().read_to_end(&mut compressed_data)?;
+    let input_size = compressed_data.len() as u64;
+    debug!("Read {} bytes from stdin", input_size);
+
+    // Check for interrupt after reading
+    if interrupted.load(Ordering::SeqCst) {
+        return Err(CliError::Interrupted);
+    }
+
+    // Start timing
+    let start = Instant::now();
+
+    // Decompress
+    trace!("Starting decompression operation");
+    let result = decompress(&compressed_data)?;
+    let decompressed_data = result.data;
+
+    // Stop timing
+    let duration = start.elapsed();
+    debug!(
+        "Decompression completed in {:.3}s, output size: {} bytes",
+        duration.as_secs_f64(),
+        decompressed_data.len()
+    );
+
+    // Check for interrupt before writing
+    if interrupted.load(Ordering::SeqCst) {
+        return Err(CliError::Interrupted);
+    }
+
+    // Write to stdout
+    trace!("Writing decompressed data to stdout");
+    io::stdout().write_all(&decompressed_data)?;
+    io::stdout().flush()?;
+
+    // Calculate statistics
+    let output_size = decompressed_data.len() as u64;
+    let throughput_mbps = if duration.as_secs_f64() > 0.0 {
+        (output_size as f64 / (1024.0 * 1024.0)) / duration.as_secs_f64()
+    } else {
+        0.0
+    };
+
+    // Log performance metrics
+    debug!(
+        input_size,
+        output_size, throughput_mbps, "Stdin decompression: throughput {:.2} MB/s", throughput_mbps
+    );
+
+    info!(
+        input_size,
+        output_size,
+        throughput_mbps,
+        duration_secs = duration.as_secs_f64(),
+        "Decompressed stdin: {} bytes -> {} bytes in {:.3}s at {:.2} MB/s",
+        input_size,
+        output_size,
+        duration.as_secs_f64(),
+        throughput_mbps
+    );
+
+    Ok(())
+}
+
+#[instrument(skip(args, interrupted), fields(file = %input_path.display()))]
+fn decompress_file(
+    input_path: &Path,
+    args: &DecompressArgs,
+    interrupted: Arc<AtomicBool>,
+) -> Result<()> {
+    info!("Starting decompression of {}", input_path.display());
     // Check for interrupt before starting
     if interrupted.load(Ordering::SeqCst) {
         return Err(CliError::Interrupted);
@@ -28,11 +125,15 @@ fn decompress_file(input_path: &Path, args: &DecompressArgs, interrupted: Arc<At
     // Validate input file
     validate_input(input_path)?;
 
-    // Determine output path
-    let output_path = determine_output_path(input_path, &args.output)?;
-
-    // Validate output path
-    validate_output(&output_path, args.force)?;
+    // Determine and validate output path (only if not writing to stdout)
+    let output_path = if !args.stdout {
+        let path = determine_output_path(input_path, &args.output)?;
+        validate_output(&path, args.force)?;
+        path
+    } else {
+        // Dummy path when writing to stdout (won't be used)
+        PathBuf::new()
+    };
 
     // Get file size for statistics
     let input_size = fs::metadata(input_path)?.len();
@@ -44,7 +145,7 @@ fn decompress_file(input_path: &Path, args: &DecompressArgs, interrupted: Arc<At
         pb.set_style(
             ProgressStyle::default_spinner()
                 .template("{spinner:.green} Decompressing {msg}...")
-                .expect("Invalid spinner template")
+                .expect("Invalid spinner template"),
         );
         pb.set_message(input_path.display().to_string());
         pb.enable_steady_tick(Duration::from_millis(100));
@@ -54,7 +155,9 @@ fn decompress_file(input_path: &Path, args: &DecompressArgs, interrupted: Arc<At
     };
 
     // Read compressed file
+    trace!("Reading compressed file: {}", input_path.display());
     let compressed_data = fs::read(input_path)?;
+    debug!("Read {} bytes from compressed file", compressed_data.len());
 
     // Check for interrupt after reading
     if interrupted.load(Ordering::SeqCst) {
@@ -65,12 +168,18 @@ fn decompress_file(input_path: &Path, args: &DecompressArgs, interrupted: Arc<At
     let start = Instant::now();
 
     // Decompress
+    trace!("Starting decompression operation");
     let result = decompress(&compressed_data)?;
     let decompressed_data = result.data;
     let metadata = result.metadata;
 
     // Stop timing
     let duration = start.elapsed();
+    debug!(
+        "Decompression completed in {:.3}s, output size: {} bytes",
+        duration.as_secs_f64(),
+        decompressed_data.len()
+    );
 
     // Clear spinner
     if let Some(pb) = spinner {
@@ -104,29 +213,46 @@ fn decompress_file(input_path: &Path, args: &DecompressArgs, interrupted: Arc<At
 
         // Restore mtime if available
         if let Some(mtime_secs) = metadata.mtime {
+            trace!("Restoring modification time: {}", mtime_secs);
             let mtime = FileTime::from_unix_time(mtime_secs, 0);
             if let Err(e) = set_file_mtime(&output_path, mtime) {
                 // Log a warning, but don't fail the operation
-                output::format_warning(&format!(
-                    "Could not set modification time for {}: {}",
-                    output_path.display(),
-                    e
-                ), true);
+                debug!("Could not set modification time: {}", e);
+                output::format_warning(
+                    &format!(
+                        "Could not set modification time for {}: {}",
+                        output_path.display(),
+                        e
+                    ),
+                    true,
+                );
+            } else {
+                debug!("Successfully restored modification time");
             }
         }
 
         // Restore Unix permissions if available (T056)
         #[cfg(unix)]
         if let Some(permissions_mode) = metadata.permissions {
+            trace!("Restoring Unix permissions: {:o}", permissions_mode);
             use std::os::unix::fs::PermissionsExt;
             let permissions = std::fs::Permissions::from_mode(permissions_mode);
             if let Err(e) = std::fs::set_permissions(&output_path, permissions) {
                 // Log a warning, but don't fail the operation
-                output::format_warning(&format!(
-                    "Could not restore Unix permissions for {}: {}",
-                    output_path.display(),
-                    e
-                ), true);
+                debug!("Could not restore Unix permissions: {}", e);
+                output::format_warning(
+                    &format!(
+                        "Could not restore Unix permissions for {}: {}",
+                        output_path.display(),
+                        e
+                    ),
+                    true,
+                );
+            } else {
+                debug!(
+                    "Successfully restored Unix permissions: {:o}",
+                    permissions_mode
+                );
             }
         }
 
@@ -137,6 +263,30 @@ fn decompress_file(input_path: &Path, args: &DecompressArgs, interrupted: Arc<At
         } else {
             0.0
         };
+
+        // Log performance metrics with structured fields
+        debug!(
+            input_size,
+            output_size,
+            throughput_mbps,
+            "Performance metrics - throughput: {:.2} MB/s",
+            throughput_mbps
+        );
+
+        info!(
+            input_path = %input_path.display(),
+            output_path = %output_path.display(),
+            input_size,
+            output_size,
+            throughput_mbps,
+            duration_secs = duration.as_secs_f64(),
+            crc_valid = true,
+            "Decompressed {} -> {} in {:.3}s at {:.2} MB/s",
+            input_path.display(),
+            output_path.display(),
+            duration.as_secs_f64(),
+            throughput_mbps
+        );
 
         // Create and display result
         let decomp_result = DecompressionResult {
@@ -206,7 +356,7 @@ fn determine_output_path(input: &Path, output_arg: &Option<PathBuf>) -> Result<P
         if let Some(parent) = input.parent() {
             Ok(parent.join(output_filename))
         } else {
-            Ok(PathBuf::from(output_filename))
+            Ok(output_filename)
         }
     }
 }
@@ -219,17 +369,16 @@ fn strip_crush_extension(path: &Path) -> Result<PathBuf> {
         .ok_or_else(|| CliError::InvalidInput("Invalid filename".to_string()))?;
 
     // Check if filename ends with .crush
-    if filename.ends_with(".crush") {
-        let base_name = &filename[..filename.len() - 6]; // Remove ".crush"
+    if let Some(base_name) = filename.strip_suffix(".crush") {
         Ok(PathBuf::from(base_name))
     } else {
         // If it doesn't end with .crush, just remove the last extension
-        path.file_stem()
-            .map(PathBuf::from)
-            .ok_or_else(|| CliError::InvalidInput(format!(
+        path.file_stem().map(PathBuf::from).ok_or_else(|| {
+            CliError::InvalidInput(format!(
                 "Cannot determine output filename for {}",
                 path.display()
-            )))
+            ))
+        })
     }
 }
 

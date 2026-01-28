@@ -31,7 +31,8 @@ pub fn assert_files_equal(path1: &Path, path2: &Path) {
     let content1 = read_file(path1);
     let content2 = read_file(path2);
     assert_eq!(
-        content1, content2,
+        content1,
+        content2,
         "Files differ: {} vs {}",
         path1.display(),
         path2.display()
@@ -58,20 +59,12 @@ pub fn create_random_file(dir: &Path, name: &str, size: usize) -> PathBuf {
 
 /// Assert that a file exists
 pub fn assert_file_exists(path: &Path) {
-    assert!(
-        path.exists(),
-        "File does not exist: {}",
-        path.display()
-    );
+    assert!(path.exists(), "File does not exist: {}", path.display());
 }
 
 /// Assert that a file does not exist
 pub fn assert_file_not_exists(path: &Path) {
-    assert!(
-        !path.exists(),
-        "File should not exist: {}",
-        path.display()
-    );
+    assert!(!path.exists(), "File should not exist: {}", path.display());
 }
 
 /// Get file size in bytes

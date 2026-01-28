@@ -88,11 +88,11 @@ fn user_friendly_message(error: &crush_core::CrushError) -> String {
 impl CliError {
     pub fn exit_code(&self) -> i32 {
         match self {
-            CliError::Core(_) => 1,           // Operational error
-            CliError::Config(_) => 2,         // Configuration error
-            CliError::Io(_) => 1,             // Operational error
-            CliError::InvalidInput(_) => 2,   // Usage error
-            CliError::Interrupted => 130,     // 128 + SIGINT (2)
+            CliError::Core(_) => 1,         // Operational error
+            CliError::Config(_) => 2,       // Configuration error
+            CliError::Io(_) => 1,           // Operational error
+            CliError::InvalidInput(_) => 2, // Usage error
+            CliError::Interrupted => 130,   // 128 + SIGINT (2)
         }
     }
 }

@@ -1,10 +1,32 @@
-use clap::{Parser, Subcommand, Args, ValueEnum};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
 
 /// High-performance parallel compression
 #[derive(Parser, Debug)]
 #[command(name = "crush")]
-#[command(version, about, long_about = None)]
+#[command(version)]
+#[command(about = "High-performance parallel compression")]
+#[command(long_about = "Crush - High-performance parallel compression library
+
+Crush provides fast, reliable file compression with automatic plugin selection,
+metadata preservation, and comprehensive error handling. It supports multiple
+compression algorithms through a plugin system and can be configured globally
+or via environment variables.")]
+#[command(after_help = "EXAMPLES:
+    # Compress a file
+    crush compress file.txt
+
+    # Decompress a file
+    crush decompress file.txt.crush
+
+    # List available plugins
+    crush plugins list
+
+    # Configure default compression level
+    crush config set compression.level fast
+
+For more information about a specific command, run:
+    crush <COMMAND> --help")]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Commands,
@@ -43,14 +65,42 @@ pub enum Commands {
 
 /// Compress command arguments
 #[derive(Args, Debug)]
+#[command(after_help = "EXAMPLES:
+    # Compress a single file
+    crush compress document.txt
+
+    # Compress multiple files
+    crush compress file1.txt file2.txt file3.txt
+
+    # Compress with specific plugin
+    crush compress --plugin deflate data.bin
+
+    # Compress with fast preset
+    crush compress --level fast largefile.dat
+
+    # Compress to specific output
+    crush compress input.txt --output /backup/input.txt.crush
+
+    # Force overwrite existing compressed file
+    crush compress --force document.txt
+
+    # Pipeline: read from stdin, write to file
+    cat file.txt | crush compress --output file.txt.crush
+
+    # Pipeline: read from stdin, write to stdout
+    cat file.txt | crush compress --stdout > file.txt.crush")]
 pub struct CompressArgs {
-    /// Input files to compress
-    #[arg(required = true, value_name = "FILE")]
+    /// Input files to compress (reads from stdin if not provided)
+    #[arg(value_name = "FILE")]
     pub input: Vec<PathBuf>,
 
-    /// Output file or directory (default: <input>.crush)
-    #[arg(short, long, value_name = "PATH")]
+    /// Output file or directory (default: <input>.crush or stdout)
+    #[arg(short, long, value_name = "PATH", conflicts_with = "stdout")]
     pub output: Option<PathBuf>,
+
+    /// Write output to stdout (for piping)
+    #[arg(long, conflicts_with = "output")]
+    pub stdout: bool,
 
     /// Compression plugin to use (default: auto-select)
     #[arg(short, long, value_name = "PLUGIN")]
@@ -64,16 +114,34 @@ pub struct CompressArgs {
     #[arg(short, long)]
     pub force: bool,
 
-    /// Compression timeout in seconds
+    /// Compression timeout in seconds (0 = no timeout)
     #[arg(long, value_name = "SECONDS")]
     pub timeout: Option<u64>,
 }
 
 /// Decompress command arguments
 #[derive(Args, Debug)]
+#[command(after_help = "EXAMPLES:
+    # Decompress a file
+    crush decompress file.txt.crush
+
+    # Decompress multiple files
+    crush decompress file1.crush file2.crush
+
+    # Decompress to specific output
+    crush decompress archive.crush --output /tmp/restored.txt
+
+    # Decompress to stdout for piping
+    crush decompress data.crush --stdout | grep pattern
+
+    # Decompress from stdin to stdout
+    cat data.crush | crush decompress --stdout
+
+    # Force overwrite existing file
+    crush decompress --force document.txt.crush")]
 pub struct DecompressArgs {
-    /// Compressed files to decompress
-    #[arg(required = true, value_name = "FILE")]
+    /// Compressed files to decompress (reads from stdin if not provided with --stdout)
+    #[arg(value_name = "FILE")]
     pub input: Vec<PathBuf>,
 
     /// Output file or directory (default: strip .crush extension)
@@ -91,6 +159,18 @@ pub struct DecompressArgs {
 
 /// Inspect command arguments
 #[derive(Args, Debug)]
+#[command(after_help = "EXAMPLES:
+    # Inspect a compressed file
+    crush inspect file.txt.crush
+
+    # Inspect multiple files with summary
+    crush inspect --summary *.crush
+
+    # Inspect with JSON output
+    crush inspect --format json archive.crush
+
+    # Inspect with CSV output (for importing to spreadsheet)
+    crush inspect --format csv *.crush > report.csv")]
 pub struct InspectArgs {
     /// Compressed files to inspect
     #[arg(required = true, value_name = "FILE")]
@@ -107,6 +187,29 @@ pub struct InspectArgs {
 
 /// Config subcommand arguments
 #[derive(Args, Debug)]
+#[command(after_help = "EXAMPLES:
+    # Set compression level to fast
+    crush config set compression.level fast
+
+    # Get current compression level
+    crush config get compression.level
+
+    # List all configuration
+    crush config list
+
+    # Reset configuration to defaults
+    crush config reset --yes
+
+AVAILABLE KEYS:
+    compression.default-plugin    Default plugin name (auto)
+    compression.level             fast | balanced | best
+    compression.timeout-seconds   Timeout in seconds (0 = no timeout)
+    output.progress-bars          true | false
+    output.color                  auto | always | never
+    output.quiet                  true | false
+    logging.format                human | json
+    logging.level                 error | warn | info | debug | trace
+    logging.file                  Log file path (empty = stderr)")]
 pub struct ConfigArgs {
     #[command(subcommand)]
     pub action: ConfigAction,
@@ -138,6 +241,18 @@ pub enum ConfigAction {
 
 /// Plugins subcommand arguments
 #[derive(Args, Debug)]
+#[command(after_help = "EXAMPLES:
+    # List all available plugins
+    crush plugins list
+
+    # List plugins in JSON format
+    crush plugins list --format json
+
+    # Show detailed information about a plugin
+    crush plugins info deflate
+
+    # Test a plugin's functionality
+    crush plugins test deflate")]
 pub struct PluginsArgs {
     #[command(subcommand)]
     pub action: PluginsAction,

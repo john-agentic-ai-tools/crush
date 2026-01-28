@@ -1,11 +1,11 @@
-use serde::{Deserialize, Serialize};
 use crate::cli::{Cli, LogFormat};
 use crate::error::{CliError, Result};
+use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 
 /// Root configuration structure
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Config {
     #[serde(default)]
     pub compression: CompressionConfig,
@@ -15,16 +15,6 @@ pub struct Config {
 
     #[serde(default)]
     pub logging: LoggingConfig,
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            compression: CompressionConfig::default(),
-            output: OutputConfig::default(),
-            logging: LoggingConfig::default(),
-        }
-    }
 }
 
 impl Config {
@@ -37,7 +27,7 @@ impl Config {
                 self.compression.level
             )));
         }
-        
+
         // Validate color setting
         if !["auto", "always", "never"].contains(&self.output.color.as_str()) {
             return Err(CliError::Config(format!(
@@ -45,7 +35,7 @@ impl Config {
                 self.output.color
             )));
         }
-        
+
         // Validate log format
         if !["human", "json"].contains(&self.logging.format.as_str()) {
             return Err(CliError::Config(format!(
@@ -53,7 +43,7 @@ impl Config {
                 self.logging.format
             )));
         }
-        
+
         // Validate log level
         if !["error", "warn", "info", "debug", "trace"].contains(&self.logging.level.as_str()) {
             return Err(CliError::Config(format!(
@@ -61,7 +51,7 @@ impl Config {
                 self.logging.level
             )));
         }
-        
+
         Ok(())
     }
 }
@@ -164,17 +154,17 @@ fn default_info() -> String {
 /// Merge environment variables into config
 pub fn merge_env_vars(mut config: Config) -> Result<Config> {
     use std::env;
-    
+
     for (key, value) in env::vars() {
         if !key.starts_with("CRUSH_") {
             continue;
         }
-        
+
         // Convert CRUSH_COMPRESSION_DEFAULT_PLUGIN to compression.default.plugin
         let config_key = key[6..] // Remove CRUSH_ prefix
             .to_lowercase()
             .replace('_', ".");
-        
+
         match config_key.as_str() {
             "compression.default.plugin" | "compression.defaultplugin" => {
                 config.compression.default_plugin = value;
@@ -183,18 +173,21 @@ pub fn merge_env_vars(mut config: Config) -> Result<Config> {
                 config.compression.level = value;
             }
             "compression.timeout.seconds" | "compression.timeoutseconds" => {
-                config.compression.timeout_seconds = value.parse()
+                config.compression.timeout_seconds = value
+                    .parse()
                     .map_err(|_| CliError::Config(format!("Invalid timeout value: {}", value)))?;
             }
             "output.progress.bars" | "output.progressbars" => {
-                config.output.progress_bars = value.parse()
+                config.output.progress_bars = value
+                    .parse()
                     .map_err(|_| CliError::Config(format!("Invalid boolean value: {}", value)))?;
             }
             "output.color" => {
                 config.output.color = value;
             }
             "output.quiet" => {
-                config.output.quiet = value.parse()
+                config.output.quiet = value
+                    .parse()
                     .map_err(|_| CliError::Config(format!("Invalid boolean value: {}", value)))?;
             }
             "logging.format" => {
@@ -209,7 +202,7 @@ pub fn merge_env_vars(mut config: Config) -> Result<Config> {
             _ => {} // Ignore unknown env vars
         }
     }
-    
+
     Ok(config)
 }
 
@@ -222,49 +215,205 @@ pub fn merge_cli_args(mut config: Config, args: &Cli) -> Result<Config> {
             _ => "trace".to_string(), // 2 or more = trace
         };
     }
-    
+
     // Quiet flag overrides output setting
     if args.quiet {
         config.output.quiet = true;
     }
-    
+
     // Log format
     config.logging.format = match args.log_format {
         LogFormat::Human => "human".to_string(),
         LogFormat::Json => "json".to_string(),
     };
-    
+
     // Log file
     if let Some(ref log_file) = args.log_file {
         config.logging.file = log_file.to_string_lossy().to_string();
     }
-    
+
     Ok(config)
 }
 
 /// Get the config file path for the current OS
+///
+/// For testing, set `CRUSH_TEST_CONFIG_FILE` environment variable to use a custom path.
+/// This allows tests to run in isolation without interfering with each other.
 pub fn config_file_path() -> Result<PathBuf> {
+    // Allow tests to override config path via environment variable
+    if let Ok(test_path) = std::env::var("CRUSH_TEST_CONFIG_FILE") {
+        let path = PathBuf::from(test_path);
+        // Create parent directory if needed
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)
+                .map_err(|e| CliError::Config(format!("Could not create test config directory: {}", e)))?;
+        }
+        return Ok(path);
+    }
+
     let config_dir = dirs::config_dir()
         .ok_or_else(|| CliError::Config("Could not determine config directory".to_string()))?;
-    
+
     let crush_dir = config_dir.join("crush");
     fs::create_dir_all(&crush_dir)
         .map_err(|e| CliError::Config(format!("Could not create config directory: {}", e)))?;
-    
+
     Ok(crush_dir.join("config.toml"))
 }
 
 /// Load configuration from file, or return defaults if file doesn't exist
 pub fn load_config() -> Result<Config> {
     let path = config_file_path()?;
-    
+
     if !path.exists() {
         return Ok(Config::default());
     }
-    
+
     let contents = fs::read_to_string(&path)
         .map_err(|e| CliError::Config(format!("Could not read config file: {}", e)))?;
-    
+
     toml::from_str(&contents)
         .map_err(|e| CliError::Config(format!("Invalid config file format: {}", e)))
+}
+
+/// Save configuration to file
+pub fn save_config(config: &Config) -> Result<()> {
+    let path = config_file_path()?;
+
+    let toml_string = toml::to_string_pretty(config)
+        .map_err(|e| CliError::Config(format!("Could not serialize config: {}", e)))?;
+
+    fs::write(&path, toml_string)
+        .map_err(|e| CliError::Config(format!("Could not write config file: {}", e)))?;
+
+    Ok(())
+}
+
+/// Get a config value by key path (e.g., "compression.level")
+pub fn get_config_value(config: &Config, key: &str) -> Result<String> {
+    let parts: Vec<&str> = key.split('.').collect();
+
+    if parts.len() != 2 {
+        return Err(CliError::Config(format!(
+            "Invalid config key: '{}' (must be section.key format)",
+            key
+        )));
+    }
+
+    let section = parts[0];
+    let field = parts[1];
+
+    match (section, field) {
+        ("compression", "default-plugin") | ("compression", "default_plugin") => {
+            Ok(config.compression.default_plugin.clone())
+        }
+        ("compression", "level") => Ok(config.compression.level.clone()),
+        ("compression", "timeout-seconds") | ("compression", "timeout_seconds") => {
+            Ok(config.compression.timeout_seconds.to_string())
+        }
+        ("output", "progress-bars") | ("output", "progress_bars") => {
+            Ok(config.output.progress_bars.to_string())
+        }
+        ("output", "color") => Ok(config.output.color.clone()),
+        ("output", "quiet") => Ok(config.output.quiet.to_string()),
+        ("logging", "format") => Ok(config.logging.format.clone()),
+        ("logging", "level") => Ok(config.logging.level.clone()),
+        ("logging", "file") => Ok(config.logging.file.clone()),
+        _ => Err(CliError::Config(format!(
+            "Invalid config key: '{}.{}' (unknown key)",
+            section, field
+        ))),
+    }
+}
+
+/// Set a config value by key path
+pub fn set_config_value(config: &mut Config, key: &str, value: &str) -> Result<()> {
+    let parts: Vec<&str> = key.split('.').collect();
+
+    if parts.len() != 2 {
+        return Err(CliError::Config(format!(
+            "Invalid config key: '{}' (must be section.key format)",
+            key
+        )));
+    }
+
+    let section = parts[0];
+    let field = parts[1];
+
+    match (section, field) {
+        ("compression", "default-plugin") | ("compression", "default_plugin") => {
+            config.compression.default_plugin = value.to_string();
+        }
+        ("compression", "level") => {
+            if !["fast", "balanced", "best"].contains(&value) {
+                return Err(CliError::Config(format!(
+                    "Invalid compression level: '{}' (must be fast, balanced, or best)",
+                    value
+                )));
+            }
+            config.compression.level = value.to_string();
+        }
+        ("compression", "timeout-seconds") | ("compression", "timeout_seconds") => {
+            config.compression.timeout_seconds = value.parse().map_err(|_| {
+                CliError::Config(format!(
+                    "Invalid timeout value: '{}' (must be a number)",
+                    value
+                ))
+            })?;
+        }
+        ("output", "progress-bars") | ("output", "progress_bars") => {
+            config.output.progress_bars = value.parse().map_err(|_| {
+                CliError::Config(format!(
+                    "Invalid boolean value: '{}' (must be true or false)",
+                    value
+                ))
+            })?;
+        }
+        ("output", "color") => {
+            if !["auto", "always", "never"].contains(&value) {
+                return Err(CliError::Config(format!(
+                    "Invalid color setting: '{}' (must be auto, always, or never)",
+                    value
+                )));
+            }
+            config.output.color = value.to_string();
+        }
+        ("output", "quiet") => {
+            config.output.quiet = value.parse().map_err(|_| {
+                CliError::Config(format!(
+                    "Invalid boolean value: '{}' (must be true or false)",
+                    value
+                ))
+            })?;
+        }
+        ("logging", "format") => {
+            if !["human", "json"].contains(&value) {
+                return Err(CliError::Config(format!(
+                    "Invalid log format: '{}' (must be human or json)",
+                    value
+                )));
+            }
+            config.logging.format = value.to_string();
+        }
+        ("logging", "level") => {
+            if !["error", "warn", "info", "debug", "trace"].contains(&value) {
+                return Err(CliError::Config(format!(
+                    "Invalid log level: '{}' (must be error, warn, info, debug, or trace)",
+                    value
+                )));
+            }
+            config.logging.level = value.to_string();
+        }
+        ("logging", "file") => {
+            config.logging.file = value.to_string();
+        }
+        _ => {
+            return Err(CliError::Config(format!(
+                "Invalid config key: '{}.{}' (unknown key)",
+                section, field
+            )))
+        }
+    }
+
+    Ok(())
 }

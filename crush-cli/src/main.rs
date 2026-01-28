@@ -5,7 +5,6 @@ mod error;
 mod logging;
 mod output;
 mod signal;
-mod state;
 
 use clap::Parser;
 use cli::{Cli, Commands};
@@ -36,12 +35,19 @@ fn run() -> Result<()> {
     config.validate()?;
 
     // Initialize logging with config
+    // If verbose flag is set, it overrides config log level
+    let log_level = if cli.verbose > 0 {
+        logging::verbose_to_level(cli.verbose)
+    } else {
+        &config.logging.level
+    };
+
     let log_file_path = if !config.logging.file.is_empty() {
         Some(std::path::Path::new(&config.logging.file))
     } else {
         None
     };
-    logging::init_logging(&config.logging.level, &config.logging.format, log_file_path);
+    logging::init_logging(log_level, &config.logging.format, log_file_path);
 
     // Setup signal handler
     let interrupted = signal::setup_handler()

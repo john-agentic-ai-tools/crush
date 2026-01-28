@@ -13,6 +13,15 @@ pub struct InspectResult {
     pub metadata: FileMetadata,
 }
 
+/// Inspects a compressed file and returns metadata about its contents.
+///
+/// # Errors
+///
+/// Returns an error if:
+/// - The input is too short to contain a valid header
+/// - The header is invalid or corrupted
+/// - The CRC checksum validation fails
+/// - The plugin specified in the header is not found
 pub fn inspect(input: &[u8]) -> Result<InspectResult> {
     if input.len() < CrushHeader::SIZE {
         return Err(ValidationError::InvalidHeader(format!(

@@ -7,7 +7,9 @@ use common::*;
 fn test_compress_decompress_roundtrip() {
     let dir = test_dir();
     // Use larger data to ensure compression reduces size
-    let original_content = b"This is test data that should survive a compression/decompression roundtrip perfectly. ".repeat(10);
+    let original_content =
+        b"This is test data that should survive a compression/decompression roundtrip perfectly. "
+            .repeat(10);
     let original = create_test_file(dir.path(), "original.txt", &original_content);
     let compressed = dir.path().join("original.txt.crush");
     let decompressed = dir.path().join("original.txt");
@@ -77,8 +79,7 @@ fn test_roundtrip_large_random_file() {
     // Verify exact match
     let decompressed_content = read_file(&decompressed);
     assert_eq!(
-        decompressed_content,
-        original_content,
+        decompressed_content, original_content,
         "Large file roundtrip should preserve all bytes"
     );
 }

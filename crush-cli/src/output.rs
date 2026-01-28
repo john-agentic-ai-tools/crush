@@ -1,26 +1,8 @@
-use termcolor::{Color, ColorChoice, ColorSpec, StandardStream, WriteColor};
-use std::io::Write;
-use std::time::Duration;
-use std::path::PathBuf;
 use crush_core::InspectResult;
-use indicatif::{ProgressBar, ProgressStyle};
-use is_terminal::IsTerminal;
-
-/// Format and print a success message
-pub fn format_success(message: &str, use_colors: bool) {
-    let mut stdout = if use_colors {
-        StandardStream::stdout(ColorChoice::Auto)
-    } else {
-        StandardStream::stdout(ColorChoice::Never)
-    };
-
-    let mut color_spec = ColorSpec::new();
-    color_spec.set_fg(Some(Color::Green));
-
-    let _ = stdout.set_color(&color_spec);
-    let _ = writeln!(&mut stdout, "{}", message);
-    let _ = stdout.reset();
-}
+use std::io::Write;
+use std::path::PathBuf;
+use std::time::Duration;
+use termcolor::{Color, ColorChoice, ColorSpec, StandardStream, WriteColor};
 
 /// Format and print a warning message
 pub fn format_warning(message: &str, use_colors: bool) {
@@ -67,9 +49,17 @@ pub fn format_inspect_result(path: &std::path::Path, result: &InspectResult, use
     let _ = write!(&mut stdout, "  Size reduction: ");
     let _ = stdout.reset();
     if size_reduction > 0.0 {
-        let _ = writeln!(&mut stdout, "{:.1}% (compressed to {:.1}% of original)", size_reduction, ratio);
+        let _ = writeln!(
+            &mut stdout,
+            "{:.1}% (compressed to {:.1}% of original)",
+            size_reduction, ratio
+        );
     } else if size_reduction < 0.0 {
-        let _ = writeln!(&mut stdout, "{:.1}% (expanded to {:.1}% of original)", size_reduction, ratio);
+        let _ = writeln!(
+            &mut stdout,
+            "{:.1}% (expanded to {:.1}% of original)",
+            size_reduction, ratio
+        );
     } else {
         let _ = writeln!(&mut stdout, "0.0% (same size)");
     }
@@ -79,11 +69,19 @@ pub fn format_inspect_result(path: &std::path::Path, result: &InspectResult, use
     let _ = stdout.reset();
     let _ = writeln!(&mut stdout, "{}", result.plugin_name);
 
-    let crc_status_color = if result.crc_valid { Color::Green } else { Color::Red };
+    let crc_status_color = if result.crc_valid {
+        Color::Green
+    } else {
+        Color::Red
+    };
     let _ = stdout.set_color(ColorSpec::new().set_fg(Some(Color::Cyan)));
     let _ = write!(&mut stdout, "  CRC32: ");
     let _ = stdout.set_color(ColorSpec::new().set_fg(Some(crc_status_color)));
-    let _ = writeln!(&mut stdout, "{}", if result.crc_valid { "VALID" } else { "INVALID" });
+    let _ = writeln!(
+        &mut stdout,
+        "{}",
+        if result.crc_valid { "VALID" } else { "INVALID" }
+    );
     let _ = stdout.reset();
 
     if let Some(mtime) = result.metadata.mtime {
@@ -138,10 +136,26 @@ pub fn format_inspect_summary(results: &[(std::path::PathBuf, InspectResult)], u
     let _ = writeln!(&mut stdout, "-----------------");
     let _ = stdout.set_color(ColorSpec::new().set_fg(Some(Color::Green)));
     let _ = writeln!(&mut stdout, "  Total Files: {}", results.len());
-    let _ = writeln!(&mut stdout, "  Total Original Size: {}", total_original_size);
-    let _ = writeln!(&mut stdout, "  Total Compressed Size: {}", total_compressed_size);
-    let _ = writeln!(&mut stdout, "  Overall Size Reduction: {:.1}%", overall_reduction);
-    let _ = stdout.set_color(ColorSpec::new().set_fg(Some(if all_crc_valid { Color::Green } else { Color::Red })));
+    let _ = writeln!(
+        &mut stdout,
+        "  Total Original Size: {}",
+        total_original_size
+    );
+    let _ = writeln!(
+        &mut stdout,
+        "  Total Compressed Size: {}",
+        total_compressed_size
+    );
+    let _ = writeln!(
+        &mut stdout,
+        "  Overall Size Reduction: {:.1}%",
+        overall_reduction
+    );
+    let _ = stdout.set_color(ColorSpec::new().set_fg(Some(if all_crc_valid {
+        Color::Green
+    } else {
+        Color::Red
+    })));
     let _ = writeln!(&mut stdout, "  All CRC Valid: {}", all_crc_valid);
     let _ = stdout.reset();
 }
@@ -185,9 +199,12 @@ pub fn format_inspect_csv(results: &[(std::path::PathBuf, InspectResult)], _use_
 pub struct CompressionResult {
     pub input_path: PathBuf,
     pub output_path: PathBuf,
+    #[allow(dead_code)]
     pub input_size: u64,
+    #[allow(dead_code)]
     pub output_size: u64,
     pub compression_ratio: f64,
+    #[allow(dead_code)]
     pub duration: Duration,
     pub throughput_mbps: f64,
     pub plugin_used: String,
@@ -198,37 +215,15 @@ pub struct CompressionResult {
 pub struct DecompressionResult {
     pub input_path: PathBuf,
     pub output_path: PathBuf,
+    #[allow(dead_code)]
     pub input_size: u64,
+    #[allow(dead_code)]
     pub output_size: u64,
+    #[allow(dead_code)]
     pub duration: Duration,
     pub throughput_mbps: f64,
+    #[allow(dead_code)]
     pub crc_valid: bool,
-}
-
-/// Create a progress bar for file operations
-/// Returns None if:
-/// - File size is less than 1MB (to avoid flicker)
-/// - Not running in a TTY
-/// - Progress bars are disabled
-pub fn create_progress_bar(file_size: u64, show_progress: bool) -> Option<ProgressBar> {
-    const MIN_SIZE_FOR_PROGRESS: u64 = 1024 * 1024; // 1MB
-
-    if !show_progress || file_size < MIN_SIZE_FOR_PROGRESS || !std::io::stderr().is_terminal() {
-        return None;
-    }
-
-    let pb = ProgressBar::new(file_size);
-    pb.set_style(
-        ProgressStyle::default_bar()
-            .template("{spinner:.green} [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({eta})")
-            .expect("Invalid progress bar template")
-            .progress_chars("#>-"),
-    );
-
-    // Update at 10Hz (every 100ms)
-    pb.set_draw_target(indicatif::ProgressDrawTarget::stderr_with_hz(10));
-
-    Some(pb)
 }
 
 /// Format and display compression results
@@ -242,7 +237,12 @@ pub fn format_compression_result(result: &CompressionResult, use_colors: bool) {
     let _ = stdout.set_color(ColorSpec::new().set_fg(Some(Color::Green)));
     let _ = write!(&mut stdout, "Compressed ");
     let _ = stdout.reset();
-    let _ = write!(&mut stdout, "{} -> {} ", result.input_path.display(), result.output_path.display());
+    let _ = write!(
+        &mut stdout,
+        "{} -> {} ",
+        result.input_path.display(),
+        result.output_path.display()
+    );
 
     // Calculate actual size reduction (negative means file grew)
     let size_reduction = 100.0 - result.compression_ratio;
@@ -255,10 +255,10 @@ pub fn format_compression_result(result: &CompressionResult, use_colors: bool) {
     };
 
     let _ = stdout.set_color(ColorSpec::new().set_fg(Some(Color::Cyan)));
-    let _ = write!(&mut stdout, "({}, {:.1} MB/s, {})",
-        reduction_text,
-        result.throughput_mbps,
-        result.plugin_used
+    let _ = write!(
+        &mut stdout,
+        "({}, {:.1} MB/s, {})",
+        reduction_text, result.throughput_mbps, result.plugin_used
     );
     let _ = stdout.reset();
     let _ = writeln!(&mut stdout);
@@ -275,10 +275,98 @@ pub fn format_decompression_result(result: &DecompressionResult, use_colors: boo
     let _ = stdout.set_color(ColorSpec::new().set_fg(Some(Color::Green)));
     let _ = write!(&mut stdout, "Decompressed ");
     let _ = stdout.reset();
-    let _ = write!(&mut stdout, "{} -> {} ", result.input_path.display(), result.output_path.display());
+    let _ = write!(
+        &mut stdout,
+        "{} -> {} ",
+        result.input_path.display(),
+        result.output_path.display()
+    );
 
     let _ = stdout.set_color(ColorSpec::new().set_fg(Some(Color::Cyan)));
     let _ = write!(&mut stdout, "({:.1} MB/s)", result.throughput_mbps);
     let _ = stdout.reset();
     let _ = writeln!(&mut stdout);
+}
+
+/// Format and print plugin list in human-readable format
+pub fn format_plugin_list_human(plugins: &[crush_core::plugin::PluginMetadata]) {
+    if plugins.is_empty() {
+        println!("No plugins registered");
+        return;
+    }
+
+    println!(
+        "{:<15} {:<10} {:<15} {:<15} Description",
+        "Name", "Version", "Throughput", "Compression"
+    );
+    println!("{}", "-".repeat(80));
+
+    for plugin in plugins {
+        let compression_pct = plugin.compression_ratio * 100.0;
+        println!(
+            "{:<15} {:<10} {:<13.1} MB/s {:<13.1}% {}",
+            plugin.name, plugin.version, plugin.throughput, compression_pct, plugin.description
+        );
+    }
+
+    println!("\nTotal plugins: {}", plugins.len());
+}
+
+/// Format and print plugin list in JSON format
+pub fn format_plugin_list_json(
+    plugins: &[crush_core::plugin::PluginMetadata],
+) -> crate::error::Result<()> {
+    // Create a serializable version of plugin data
+    let json_plugins: Vec<serde_json::Value> = plugins
+        .iter()
+        .map(|p| {
+            serde_json::json!({
+                "name": p.name,
+                "version": p.version,
+                "magic_number": format!("0x{:02X}{:02X}{:02X}{:02X}",
+                    p.magic_number[0], p.magic_number[1],
+                    p.magic_number[2], p.magic_number[3]),
+                "throughput_mbps": p.throughput,
+                "compression_ratio": p.compression_ratio,
+                "description": p.description,
+            })
+        })
+        .collect();
+
+    let json_output = serde_json::json!({
+        "plugins": json_plugins,
+        "count": plugins.len(),
+    });
+
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&json_output).map_err(|e| {
+            crate::error::CliError::InvalidInput(format!("JSON serialization failed: {}", e))
+        })?
+    );
+
+    Ok(())
+}
+
+/// Format and print detailed plugin information
+pub fn format_plugin_info(plugin: &crush_core::plugin::PluginMetadata) {
+    println!("Plugin: {}", plugin.name);
+    println!("Version: {}", plugin.version);
+    println!(
+        "Magic Number: 0x{:02X}{:02X}{:02X}{:02X}",
+        plugin.magic_number[0],
+        plugin.magic_number[1],
+        plugin.magic_number[2],
+        plugin.magic_number[3]
+    );
+    println!();
+    println!("Performance Characteristics:");
+    println!("  Throughput: {:.1} MB/s", plugin.throughput);
+    println!(
+        "  Compression Ratio: {:.1}%",
+        plugin.compression_ratio * 100.0
+    );
+    println!();
+    println!("Description:");
+    println!("  {}", plugin.description);
 }

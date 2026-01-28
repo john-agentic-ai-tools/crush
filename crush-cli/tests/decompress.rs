@@ -7,7 +7,11 @@ use predicates::prelude::*;
 #[test]
 fn test_decompress_basic_file() {
     let dir = test_dir();
-    let original = create_test_file(dir.path(), "original.txt", b"Hello, world! This is test data.");
+    let original = create_test_file(
+        dir.path(),
+        "original.txt",
+        b"Hello, world! This is test data.",
+    );
     let compressed = dir.path().join("original.txt.crush");
     let decompressed = dir.path().join("original.txt");
 
@@ -35,8 +39,7 @@ fn test_decompress_basic_file() {
     // Verify content matches original
     let decompressed_content = read_file(&decompressed);
     assert_eq!(
-        decompressed_content,
-        b"Hello, world! This is test data.",
+        decompressed_content, b"Hello, world! This is test data.",
         "Decompressed content should match original"
     );
 }
@@ -72,17 +75,23 @@ fn test_decompress_crc32_failure() {
         .arg(&compressed)
         .assert()
         .failure()
-        .stderr(predicate::str::contains("CRC")
-            .or(predicate::str::contains("checksum"))
-            .or(predicate::str::contains("corrupt"))
-            .or(predicate::str::contains("integrity")));
+        .stderr(
+            predicate::str::contains("CRC")
+                .or(predicate::str::contains("checksum"))
+                .or(predicate::str::contains("corrupt"))
+                .or(predicate::str::contains("integrity")),
+        );
 }
 
 /// T052: Test that decompression handles missing metadata gracefully
 #[test]
 fn test_decompress_handles_missing_metadata_gracefully() {
     let dir = test_dir();
-    let original = create_test_file(dir.path(), "original.txt", b"test data for metadata handling");
+    let original = create_test_file(
+        dir.path(),
+        "original.txt",
+        b"test data for metadata handling",
+    );
     let compressed = dir.path().join("original.txt.crush");
     let decompressed = dir.path().join("decompressed.txt");
 
@@ -108,7 +117,10 @@ fn test_decompress_handles_missing_metadata_gracefully() {
     // Verify file was decompressed correctly
     assert_file_exists(&decompressed);
     let decompressed_content = read_file(&decompressed);
-    assert_eq!(decompressed_content.as_slice(), b"test data for metadata handling");
+    assert_eq!(
+        decompressed_content.as_slice(),
+        b"test data for metadata handling"
+    );
 
     // Note: If metadata restoration fails, a warning should be logged,
     // but the operation should still succeed. The warning isn't checked here
@@ -119,14 +131,20 @@ fn test_decompress_handles_missing_metadata_gracefully() {
 #[test]
 fn test_decompress_invalid_header() {
     let dir = test_dir();
-    let invalid = create_test_file(dir.path(), "invalid.crush", b"Not a valid crush file header");
+    let invalid = create_test_file(
+        dir.path(),
+        "invalid.crush",
+        b"Not a valid crush file header",
+    );
 
     crush_cmd()
         .arg("decompress")
         .arg(&invalid)
         .assert()
         .failure()
-        .stderr(predicate::str::contains("invalid")
-            .or(predicate::str::contains("header"))
-            .or(predicate::str::contains("format")));
+        .stderr(
+            predicate::str::contains("invalid")
+                .or(predicate::str::contains("header"))
+                .or(predicate::str::contains("format")),
+        );
 }

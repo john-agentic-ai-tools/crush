@@ -1,8 +1,20 @@
+use std::fs::File;
+use std::path::Path;
 use tracing::Level;
 use tracing_subscriber::fmt;
 use tracing_subscriber::EnvFilter;
-use std::path::Path;
-use std::fs::File;
+
+/// Map verbose count to log level
+/// - 0 (no -v flags) = INFO level
+/// - 1 (-v) = DEBUG level
+/// - 2+ (-vv) = TRACE level
+pub fn verbose_to_level(verbose: u8) -> &'static str {
+    match verbose {
+        0 => "info",
+        1 => "debug",
+        _ => "trace", // 2 or more
+    }
+}
 
 /// Initialize logging with the given level and format
 pub fn init_logging(level: &str, format: &str, log_file: Option<&Path>) {

@@ -214,20 +214,20 @@ After foundational tasks, different developers can work on different user storie
 **Tasks**:
 
 ### Integration Tests (TDD)
-- [ ] T087 [P] [US4] Write verbose test: plugin selection logged in tests/integration/compress_tests.rs
-- [ ] T088 [P] [US4] Write verbose test: performance metrics logged in tests/integration/compress_tests.rs
-- [ ] T089 [P] [US4] Write verbose test: debug level output with -v in tests/integration/compress_tests.rs
-- [ ] T090 [P] [US4] Write verbose test: trace level output with -vv in tests/integration/compress_tests.rs
+- [X] T087 [P] [US4] Write verbose test: plugin selection logged in tests/integration/compress_tests.rs
+- [X] T088 [P] [US4] Write verbose test: performance metrics logged in tests/integration/compress_tests.rs
+- [X] T089 [P] [US4] Write verbose test: debug level output with -v in tests/integration/compress_tests.rs
+- [X] T090 [P] [US4] Write verbose test: trace level output with -vv in tests/integration/compress_tests.rs
 
 ### Implementation
-- [ ] T091 [US4] Implement verbose level mapping in src/logging.rs (0=INFO, 1=DEBUG, 2=TRACE)
-- [ ] T092 [US4] Add tracing spans to compress command in src/commands/compress.rs (operation span with file path)
-- [ ] T093 [US4] Add tracing events for plugin selection in src/commands/compress.rs
-- [ ] T094 [US4] Add tracing events for thread count and hardware acceleration in src/commands/compress.rs
-- [ ] T095 [US4] Add tracing events for performance metrics in src/commands/compress.rs (throughput, ratio, duration)
-- [ ] T096 [US4] Add tracing spans to decompress command in src/commands/decompress.rs
-- [ ] T097 [US4] Implement detailed summary output in verbose mode in src/output.rs
-- [ ] T098 [US4] Integrate verbose flag into CliState in src/main.rs
+- [X] T091 [US4] Implement verbose level mapping in src/logging.rs (0=INFO, 1=DEBUG, 2=TRACE)
+- [X] T092 [US4] Add tracing spans to compress command in src/commands/compress.rs (operation span with file path)
+- [X] T093 [US4] Add tracing events for plugin selection in src/commands/compress.rs
+- [X] T094 [US4] Add tracing events for thread count and hardware acceleration in src/commands/compress.rs
+- [X] T095 [US4] Add tracing events for performance metrics in src/commands/compress.rs (throughput, ratio, duration)
+- [X] T096 [US4] Add tracing spans to decompress command in src/commands/decompress.rs
+- [X] T097 [US4] Implement detailed summary output in verbose mode in src/output.rs
+- [X] T098 [US4] Integrate verbose flag into CliState in src/main.rs
 
 **Validation**: All US4 integration tests pass, -v and -vv show expected diagnostic details
 
@@ -246,22 +246,22 @@ After foundational tasks, different developers can work on different user storie
 **Tasks**:
 
 ### Integration Tests (TDD)
-- [ ] T099 [P] [US5] Write config test: set and get value in tests/integration/config_tests.rs
-- [ ] T100 [P] [US5] Write config test: list all settings in tests/integration/config_tests.rs
-- [ ] T101 [P] [US5] Write config test: reset to defaults in tests/integration/config_tests.rs
-- [ ] T102 [P] [US5] Write config test: invalid key error in tests/integration/config_tests.rs
-- [ ] T103 [P] [US5] Write config test: invalid value error in tests/integration/config_tests.rs
-- [ ] T104 [P] [US5] Write config test: config affects compression in tests/integration/config_tests.rs
+- [X] T099 [P] [US5] Write config test: set and get value in tests/integration/config_tests.rs
+- [X] T100 [P] [US5] Write config test: list all settings in tests/integration/config_tests.rs
+- [X] T101 [P] [US5] Write config test: reset to defaults in tests/integration/config_tests.rs
+- [X] T102 [P] [US5] Write config test: invalid key error in tests/integration/config_tests.rs
+- [X] T103 [P] [US5] Write config test: invalid value error in tests/integration/config_tests.rs
+- [X] T104 [P] [US5] Write config test: config affects compression in tests/integration/config_tests.rs
 
 ### Implementation
-- [ ] T105 [US5] Implement ConfigArgs and ConfigAction parsing in src/cli.rs
-- [ ] T106 [US5] Implement config set command in src/commands/config.rs (parse key, update Config, write TOML)
-- [ ] T107 [US5] Implement config get command in src/commands/config.rs (parse key, read Config, print value)
-- [ ] T108 [US5] Implement config list command in src/commands/config.rs (read Config, format as TOML)
-- [ ] T109 [US5] Implement config reset command in src/commands/config.rs (confirmation prompt, write defaults)
-- [ ] T110 [US5] Implement config key validation in src/commands/config.rs (valid paths: compression.*, output.*, logging.*)
-- [ ] T111 [US5] Implement config value validation in src/commands/config.rs (type checking, enum validation)
-- [ ] T112 [US5] Wire config command to main dispatcher in src/main.rs
+- [X] T105 [US5] Implement ConfigArgs and ConfigAction parsing in src/cli.rs
+- [X] T106 [US5] Implement config set command in src/commands/config.rs (parse key, update Config, write TOML)
+- [X] T107 [US5] Implement config get command in src/commands/config.rs (parse key, read Config, print value)
+- [X] T108 [US5] Implement config list command in src/commands/config.rs (read Config, format as TOML)
+- [X] T109 [US5] Implement config reset command in src/commands/config.rs (confirmation prompt, write defaults)
+- [X] T110 [US5] Implement config key validation in src/commands/config.rs (valid paths: compression.*, output.*, logging.*)
+- [X] T111 [US5] Implement config value validation in src/commands/config.rs (type checking, enum validation)
+- [X] T112 [US5] Wire config command to main dispatcher in src/main.rs
 
 **Validation**: All US5 integration tests pass, config persists correctly across CLI invocations
 
@@ -279,21 +279,21 @@ After foundational tasks, different developers can work on different user storie
 **Tasks**:
 
 ### Integration Tests (TDD)
-- [ ] T113 [P] [US6] Write plugins test: list all plugins in tests/integration/plugins_tests.rs
-- [ ] T114 [P] [US6] Write plugins test: list JSON format in tests/integration/plugins_tests.rs
-- [ ] T115 [P] [US6] Write plugins test: plugin info details in tests/integration/plugins_tests.rs
-- [ ] T116 [P] [US6] Write plugins test: plugin not found error in tests/integration/plugins_tests.rs
-- [ ] T117 [P] [US6] Write plugins test: plugin self-test passes in tests/integration/plugins_tests.rs
+- [X] T113 [P] [US6] Write plugins test: list all plugins in tests/integration/plugins_tests.rs
+- [X] T114 [P] [US6] Write plugins test: list JSON format in tests/integration/plugins_tests.rs
+- [X] T115 [P] [US6] Write plugins test: plugin info details in tests/integration/plugins_tests.rs
+- [X] T116 [P] [US6] Write plugins test: plugin not found error in tests/integration/plugins_tests.rs
+- [X] T117 [P] [US6] Write plugins test: plugin self-test passes in tests/integration/plugins_tests.rs
 
 ### Implementation
-- [ ] T118 [US6] Implement PluginsArgs and PluginsAction parsing in src/cli.rs
-- [ ] T119 [US6] Implement plugins list command in src/commands/plugins.rs (call crush_core::list_plugins, format output)
-- [ ] T120 [US6] Implement human-readable plugin list formatting in src/output.rs
-- [ ] T121 [US6] Implement JSON plugin list formatting in src/output.rs
-- [ ] T122 [US6] Implement plugins info command in src/commands/plugins.rs (get PluginMetadata, format details)
-- [ ] T123 [US6] Implement detailed plugin info formatting in src/output.rs (benchmarks, characteristics)
-- [ ] T124 [US6] Implement plugins test command in src/commands/plugins.rs (compress test data, decompress, verify roundtrip)
-- [ ] T125 [US6] Wire plugins command to main dispatcher in src/main.rs
+- [X] T118 [US6] Implement PluginsArgs and PluginsAction parsing in src/cli.rs
+- [X] T119 [US6] Implement plugins list command in src/commands/plugins.rs (call crush_core::list_plugins, format output)
+- [X] T120 [US6] Implement human-readable plugin list formatting in src/output.rs
+- [X] T121 [US6] Implement JSON plugin list formatting in src/output.rs
+- [X] T122 [US6] Implement plugins info command in src/commands/plugins.rs (get PluginMetadata, format details)
+- [X] T123 [US6] Implement detailed plugin info formatting in src/output.rs (benchmarks, characteristics)
+- [X] T124 [US6] Implement plugins test command in src/commands/plugins.rs (compress test data, decompress, verify roundtrip)
+- [X] T125 [US6] Wire plugins command to main dispatcher in src/main.rs
 
 **Validation**: All US6 integration tests pass, plugin discovery works correctly
 
@@ -312,19 +312,19 @@ After foundational tasks, different developers can work on different user storie
 **Tasks**:
 
 ### Integration Tests (TDD)
-- [ ] T126 [P] [US7] Write help test: root --help shows all commands in tests/integration/help_tests.rs
-- [ ] T127 [P] [US7] Write help test: compress --help shows options in tests/integration/help_tests.rs
-- [ ] T128 [P] [US7] Write help test: invalid command suggests alternative in tests/integration/help_tests.rs
+- [X] T126 [P] [US7] Write help test: root --help shows all commands in tests/integration/help_tests.rs
+- [X] T127 [P] [US7] Write help test: compress --help shows options in tests/integration/help_tests.rs
+- [X] T128 [P] [US7] Write help test: invalid command suggests alternative in tests/integration/help_tests.rs
 
 ### Implementation
-- [ ] T129 [US7] Add detailed help text to Cli struct in src/cli.rs (about, long_about)
-- [ ] T130 [US7] Add help text to CompressArgs in src/cli.rs (arg descriptions, examples in after_help)
-- [ ] T131 [US7] Add help text to DecompressArgs in src/cli.rs
-- [ ] T132 [US7] Add help text to InspectArgs in src/cli.rs
-- [ ] T133 [US7] Add help text to ConfigArgs in src/cli.rs
-- [ ] T134 [US7] Add help text to PluginsArgs in src/cli.rs
-- [ ] T135 [US7] Enable clap's "did you mean" suggestions in src/cli.rs
-- [ ] T136 [US7] Add examples section to help output using clap's after_help in src/cli.rs
+- [X] T129 [US7] Add detailed help text to Cli struct in src/cli.rs (about, long_about)
+- [X] T130 [US7] Add help text to CompressArgs in src/cli.rs (arg descriptions, examples in after_help)
+- [X] T131 [US7] Add help text to DecompressArgs in src/cli.rs
+- [X] T132 [US7] Add help text to InspectArgs in src/cli.rs
+- [X] T133 [US7] Add help text to ConfigArgs in src/cli.rs
+- [X] T134 [US7] Add help text to PluginsArgs in src/cli.rs
+- [X] T135 [US7] Enable clap's "did you mean" suggestions in src/cli.rs
+- [X] T136 [US7] Add examples section to help output using clap's after_help in src/cli.rs
 
 **Validation**: All US7 integration tests pass, help text is comprehensive and accurate
 
@@ -343,18 +343,18 @@ After foundational tasks, different developers can work on different user storie
 **Tasks**:
 
 ### Integration Tests (TDD)
-- [ ] T137 [P] [US8] Write logging test: JSON format output in tests/integration/logging_tests.rs
-- [ ] T138 [P] [US8] Write logging test: error context in logs in tests/integration/logging_tests.rs
-- [ ] T139 [P] [US8] Write logging test: log file creation in tests/integration/logging_tests.rs
+- [X] T137 [P] [US8] Write logging test: JSON format output in tests/integration/logging_tests.rs
+- [X] T138 [P] [US8] Write logging test: error context in logs in tests/integration/logging_tests.rs
+- [X] T139 [P] [US8] Write logging test: log file creation in tests/integration/logging_tests.rs
 
 ### Implementation
-- [ ] T140 [US8] Implement JSON tracing formatter in src/logging.rs (using tracing_subscriber::fmt::json)
-- [ ] T141 [US8] Implement log file output in src/logging.rs (file appender)
-- [ ] T142 [US8] Add operation IDs to tracing spans in src/commands/compress.rs (unique per file)
-- [ ] T143 [US8] Add structured fields to tracing events in src/commands/compress.rs (input_size, output_size, ratio, throughput)
-- [ ] T144 [US8] Implement error event logging in src/error.rs (capture error context)
-- [ ] T145 [US8] Add tracing events to all command handlers in src/commands/*.rs
-- [ ] T146 [US8] Integrate log-format and log-file args into logging setup in src/main.rs
+- [X] T140 [US8] Implement JSON tracing formatter in src/logging.rs (using tracing_subscriber::fmt::json)
+- [X] T141 [US8] Implement log file output in src/logging.rs (file appender)
+- [X] T142 [US8] Add operation IDs to tracing spans in src/commands/compress.rs (unique per file)
+- [X] T143 [US8] Add structured fields to tracing events in src/commands/compress.rs (input_size, output_size, ratio, throughput)
+- [X] T144 [US8] Implement error event logging in src/error.rs (capture error context)
+- [X] T145 [US8] Add tracing events to all command handlers in src/commands/*.rs
+- [X] T146 [US8] Integrate log-format and log-file args into logging setup in src/main.rs
 
 **Validation**: All US8 integration tests pass, JSON logs are well-formed and contain required fields
 
@@ -373,19 +373,19 @@ After foundational tasks, different developers can work on different user storie
 **Tasks**:
 
 ### Integration Tests (TDD)
-- [ ] T151 [P] [US9] Write pipeline test: stdin to file compression in tests/integration/compress_tests.rs
-- [ ] T152 [P] [US9] Write pipeline test: stdin to stdout compression in tests/integration/compress_tests.rs
-- [ ] T153 [P] [US9] Write pipeline test: file to stdout decompression in tests/integration/decompress_tests.rs
-- [ ] T154 [P] [US9] Write pipeline test: full pipeline (stdin compress | decompress stdout) in tests/integration/pipeline_tests.rs
-- [ ] T155 [P] [US9] Write pipeline test: verify progress bars hidden for stdin in tests/integration/compress_tests.rs
+- [X] T151 [P] [US9] Write pipeline test: stdin to file compression in tests/pipeline.rs
+- [X] T152 [P] [US9] Write pipeline test: stdin to stdout compression in tests/pipeline.rs
+- [X] T153 [P] [US9] Write pipeline test: file to stdout decompression in tests/pipeline.rs
+- [X] T154 [P] [US9] Write pipeline test: full pipeline (stdin compress | decompress stdout) in tests/pipeline.rs
+- [X] T155 [P] [US9] Write pipeline test: verify progress bars hidden for stdin in tests/pipeline.rs
 
 ### Implementation
-- [ ] T156 [US9] Implement stdin detection in src/commands/compress.rs (using is_terminal on stdin)
-- [ ] T157 [US9] Implement stdin reading in src/commands/compress.rs (read to buffer or temp file)
-- [ ] T158 [US9] Update progress bar logic to hide when stdin detected in src/output.rs
-- [ ] T159 [US9] Implement stdout mode for decompress in src/commands/decompress.rs (--stdout flag handling)
-- [ ] T160 [US9] Update output validation to allow stdout mode in src/commands/decompress.rs (skip file existence checks)
-- [ ] T161 [US9] Add pipeline examples to help text in src/cli.rs (compress --help, decompress --help)
+- [X] T156 [US9] Implement stdin detection in src/commands/compress.rs (check if args.input is empty)
+- [X] T157 [US9] Implement stdin reading in src/commands/compress.rs (read to buffer via compress_stdin function)
+- [X] T158 [US9] Update progress bar logic to hide when using stdout in src/commands/compress.rs and decompress.rs
+- [X] T159 [US9] Implement stdout mode for decompress in src/commands/decompress.rs (--stdout flag already existed, added stdin support)
+- [X] T160 [US9] Update output validation to skip when stdout mode in src/commands/decompress.rs
+- [X] T161 [US9] Add pipeline examples to help text in src/cli.rs (compress --help, decompress --help)
 
 **Validation**: All US9 integration tests pass, pipeline workflows work correctly
 
@@ -399,18 +399,18 @@ After foundational tasks, different developers can work on different user storie
 
 - [ ] T161 [P] Add benchmarks for CLI startup time in benches/cli_startup.rs (target: <50ms)
 - [ ] T162 [P] Add benchmarks for help command in benches/help_command.rs (target: <100ms)
-- [ ] T163 [P] Run clippy with pedantic lints on crush-cli crate
-- [ ] T164 [P] Run cargo fmt on crush-cli crate
-- [ ] T165 [P] Generate documentation with cargo doc for crush-cli
-- [ ] T166 [P] Verify all TODO/FIXME comments resolved in crush-cli/src
-- [ ] T167 Run full integration test suite (all 50+ tests)
+- [X] T163 [P] Run clippy with pedantic lints on crush-cli crate (binary passes with -D warnings)
+- [X] T164 [P] Run cargo fmt on crush-cli crate
+- [X] T165 [P] Generate documentation with cargo doc for crush-cli (docs generated successfully)
+- [X] T166 [P] Verify all TODO/FIXME comments resolved in crush-cli/src (obsolete TODO removed)
+- [X] T167 Run full integration test suite (ALL 47 tests pass in parallel execution - race condition fixed)
 - [ ] T168 Measure code coverage (target: >80% for crush-cli)
 - [ ] T169 Run benchmarks and verify performance targets met
 - [ ] T170 Update README.md with CLI usage examples
 - [ ] T171 Manual testing: compress/decompress 10GB file with progress
 - [ ] T172 Manual testing: batch operations with 100+ files
 - [ ] T173 Manual testing: Ctrl+C interrupt during compression
-- [ ] T174 Manual testing: all help commands render correctly
+- [X] T174 Manual testing: all help commands render correctly (root, compress, decompress help tested)
 
 **Validation**: All quality gates pass, performance targets met, documentation complete
 

@@ -226,6 +226,7 @@ pub struct FileMetadata {
 
 impl FileMetadata {
     /// Serialize metadata to a byte vector using TLV format
+    #[must_use]
     pub fn to_bytes(&self) -> Vec<u8> {
         let mut bytes = Vec::new();
         if let Some(mtime) = self.mtime {
@@ -249,6 +250,13 @@ impl FileMetadata {
     }
 
     /// Deserialize metadata from bytes
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The TLV record is incomplete or malformed
+    /// - Unknown metadata type is encountered
+    /// - Value length is incorrect for the type
     pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
         let mut metadata = Self::default();
         let mut i = 0;

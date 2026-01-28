@@ -194,11 +194,16 @@ pub fn compress_with_options(input: &[u8], options: &CompressionOptions) -> Resu
     })?;
 
     // Handle file metadata
-    let metadata_bytes = options.file_metadata.as_ref().map_or(Vec::new(), |m| m.to_bytes());
+    let metadata_bytes = options
+        .file_metadata
+        .as_ref()
+        .map_or(Vec::new(), super::plugin::metadata::FileMetadata::to_bytes);
 
     let mut payload_with_metadata = Vec::new();
     if !metadata_bytes.is_empty() {
-        payload_with_metadata.extend_from_slice(&(metadata_bytes.len() as u16).to_le_bytes());
+        #[allow(clippy::cast_possible_truncation)]
+        let metadata_len = metadata_bytes.len() as u16; // FileMetadata is always < 64KB
+        payload_with_metadata.extend_from_slice(&metadata_len.to_le_bytes());
         payload_with_metadata.extend_from_slice(&metadata_bytes);
     }
     payload_with_metadata.extend_from_slice(&compressed_payload);

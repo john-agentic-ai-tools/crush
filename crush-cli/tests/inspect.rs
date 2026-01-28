@@ -13,11 +13,7 @@ fn test_inspect_basic() {
     let output = dir.path().join("test.txt.crush");
 
     // Compress the file first
-    crush_cmd()
-        .arg("compress")
-        .arg(&input)
-        .assert()
-        .success();
+    crush_cmd().arg("compress").arg(&input).assert().success();
 
     // Now inspect it
     crush_cmd()
@@ -42,11 +38,7 @@ fn test_inspect_crc_invalid() {
     let output = dir.path().join("test.txt.crush");
 
     // Compress the file first
-    crush_cmd()
-        .arg("compress")
-        .arg(&input)
-        .assert()
-        .success();
+    crush_cmd().arg("compress").arg(&input).assert().success();
 
     // Corrupt the file
     let mut compressed_data = std::fs::read(&output).unwrap();
@@ -119,11 +111,7 @@ fn test_inspect_json_output() {
     let output = dir.path().join("test.txt.crush");
 
     // Compress the file first
-    crush_cmd()
-        .arg("compress")
-        .arg(&input)
-        .assert()
-        .success();
+    crush_cmd().arg("compress").arg(&input).assert().success();
 
     // Now inspect it with JSON format
     let output_assert = crush_cmd()
@@ -136,7 +124,8 @@ fn test_inspect_json_output() {
 
     // Check if the output is valid JSON and contains expected fields
     let stdout = String::from_utf8(output_assert.get_output().stdout.clone()).unwrap();
-    let json_output: Vec<serde_json::Value> = serde_json::from_str(&stdout).expect("Invalid JSON output");
+    let json_output: Vec<serde_json::Value> =
+        serde_json::from_str(&stdout).expect("Invalid JSON output");
 
     assert_eq!(json_output.len(), 1);
     let item = &json_output[0];
@@ -157,11 +146,7 @@ fn test_inspect_csv_output() {
     let output = dir.path().join("test.txt.crush");
 
     // Compress the file first
-    crush_cmd()
-        .arg("compress")
-        .arg(&input)
-        .assert()
-        .success();
+    crush_cmd().arg("compress").arg(&input).assert().success();
 
     // Now inspect it with CSV format
     let output_assert = crush_cmd()
@@ -187,7 +172,10 @@ fn test_inspect_csv_output() {
 
     // Check data row contains expected fields
     let data_row = lines[1];
-    assert!(data_row.contains("test.txt.crush"), "Should contain file path");
+    assert!(
+        data_row.contains("test.txt.crush"),
+        "Should contain file path"
+    );
     assert!(data_row.contains("deflate"), "Should contain plugin name");
     assert!(data_row.contains("true"), "Should contain crc_valid=true");
 
@@ -195,4 +183,3 @@ fn test_inspect_csv_output() {
     let fields: Vec<&str> = data_row.split(',').collect();
     assert_eq!(fields.len(), 6, "Should have 6 CSV fields");
 }
-
