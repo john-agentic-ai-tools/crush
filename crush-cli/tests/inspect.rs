@@ -2,7 +2,6 @@ mod common;
 
 use common::*;
 use predicates::prelude::*;
-use serde_json;
 
 /// T058: Basic file inspection
 #[test]

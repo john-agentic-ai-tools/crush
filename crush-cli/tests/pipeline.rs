@@ -5,6 +5,7 @@ use std::io::Write;
 use std::process::{Command, Stdio};
 
 /// Helper to get the crush binary path for std::process::Command
+#[allow(deprecated)]
 fn crush_bin_path() -> std::path::PathBuf {
     assert_cmd::cargo::cargo_bin("crush")
 }

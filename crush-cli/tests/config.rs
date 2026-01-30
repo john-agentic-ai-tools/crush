@@ -2,7 +2,6 @@ mod common;
 
 use common::*;
 use predicates::prelude::*;
-use std::fs;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 // Global counter for unique test config files

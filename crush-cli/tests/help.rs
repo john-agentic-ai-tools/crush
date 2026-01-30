@@ -1,7 +1,6 @@
 mod common;
 
 use common::*;
-use predicates::prelude::*;
 
 /// T126: Test root --help shows all commands
 #[test]

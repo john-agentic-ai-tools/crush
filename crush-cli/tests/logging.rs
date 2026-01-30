@@ -12,7 +12,7 @@ fn test_logging_json_format() {
     let log_file = dir.path().join("test.log");
 
     // Compress with JSON logging
-    let assert = crush_cmd()
+    let _assert = crush_cmd()
         .arg("--log-format")
         .arg("json")
         .arg("--log-file")

@@ -1,20 +1,22 @@
 use assert_cmd::Command;
-use predicates::prelude::*;
 use std::fs;
 use std::path::{Path, PathBuf};
 use tempfile::TempDir;
 
 /// Helper to create a Command for the crush binary
+#[allow(deprecated)]
 pub fn crush_cmd() -> Command {
     Command::cargo_bin("crush").expect("Failed to find crush binary")
 }
 
 /// Create a temporary directory for test files
+#[allow(dead_code)]
 pub fn test_dir() -> TempDir {
     TempDir::new().expect("Failed to create temp directory")
 }
 
 /// Create a test file with given content
+#[allow(dead_code)]
 pub fn create_test_file(dir: &Path, name: &str, content: &[u8]) -> PathBuf {
     let path = dir.join(name);
     fs::write(&path, content).expect("Failed to write test file");
@@ -22,11 +24,13 @@ pub fn create_test_file(dir: &Path, name: &str, content: &[u8]) -> PathBuf {
 }
 
 /// Read file contents as bytes
+#[allow(dead_code)]
 pub fn read_file(path: &Path) -> Vec<u8> {
     fs::read(path).expect("Failed to read file")
 }
 
 /// Assert that two files have identical content
+#[allow(dead_code)]
 pub fn assert_files_equal(path1: &Path, path2: &Path) {
     let content1 = read_file(path1);
     let content2 = read_file(path2);
@@ -40,6 +44,7 @@ pub fn assert_files_equal(path1: &Path, path2: &Path) {
 }
 
 /// Create a test file with random data of given size
+#[allow(dead_code)]
 pub fn create_random_file(dir: &Path, name: &str, size: usize) -> PathBuf {
     use std::collections::hash_map::RandomState;
     use std::hash::{BuildHasher, Hash, Hasher};
@@ -58,16 +63,19 @@ pub fn create_random_file(dir: &Path, name: &str, size: usize) -> PathBuf {
 }
 
 /// Assert that a file exists
+#[allow(dead_code)]
 pub fn assert_file_exists(path: &Path) {
     assert!(path.exists(), "File does not exist: {}", path.display());
 }
 
 /// Assert that a file does not exist
+#[allow(dead_code)]
 pub fn assert_file_not_exists(path: &Path) {
     assert!(!path.exists(), "File should not exist: {}", path.display());
 }
 
 /// Get file size in bytes
+#[allow(dead_code)]
 pub fn file_size(path: &Path) -> u64 {
     fs::metadata(path)
         .expect("Failed to get file metadata")
@@ -75,6 +83,7 @@ pub fn file_size(path: &Path) -> u64 {
 }
 
 /// Assert that output file is smaller than input file
+#[allow(dead_code)]
 pub fn assert_compressed(input: &Path, output: &Path) {
     let input_size = file_size(input);
     let output_size = file_size(output);

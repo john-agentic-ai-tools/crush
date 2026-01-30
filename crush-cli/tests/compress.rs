@@ -1,7 +1,6 @@
 mod common;
 
 use common::*;
-use filetime;
 use predicates::prelude::*;
 
 /// T026: Basic file compression test
@@ -48,7 +47,7 @@ fn test_compress_file_not_found() {
 fn test_compress_output_exists() {
     let dir = test_dir();
     let input = create_test_file(dir.path(), "test.txt", b"Test data");
-    let output = dir.path().join("test.txt.crush");
+    let _output = dir.path().join("test.txt.crush");
 
     // Create output file first
     create_test_file(dir.path(), "test.txt.crush", b"existing data");
@@ -282,7 +281,7 @@ fn test_compress_displays_statistics() {
     let dir = test_dir();
     let test_data = b"statistics test data";
     let input = create_test_file(dir.path(), "test.txt", test_data);
-    let output = dir.path().join("test.txt.crush");
+    let _output = dir.path().join("test.txt.crush");
 
     // Compress and capture output
     let assert = crush_cmd().arg("compress").arg(&input).assert().success();
@@ -427,9 +426,10 @@ fn test_compress_interrupt_cleanup() {
     // Use 100MB to ensure it takes long enough to interrupt
     let large_data = vec![0u8; 100 * 1024 * 1024]; // 100MB
     let input = create_test_file(dir.path(), "interrupt_test.bin", &large_data);
-    let output = dir.path().join("interrupt_test.bin.crush");
+    let _output = dir.path().join("interrupt_test.bin.crush");
 
     // Get the path to the crush binary
+    #[allow(deprecated)]
     let crush_path = assert_cmd::cargo::cargo_bin("crush");
 
     // Start compression in a separate process

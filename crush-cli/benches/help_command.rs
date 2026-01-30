@@ -1,4 +1,5 @@
-use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId};
+use criterion::{criterion_group, criterion_main, Criterion, BenchmarkId};
+use std::hint::black_box;
 use std::process::Command;
 use std::time::Duration;
 
@@ -83,7 +84,7 @@ fn bench_subcommand_help(c: &mut Criterion) {
                         .arg(cmd)
                         .arg("--help")
                         .output()
-                        .expect(&format!("Failed to run crush {} --help", cmd));
+                        .unwrap_or_else(|_| panic!("Failed to run crush {} --help", cmd));
 
                     // Verify help was actually generated
                     assert!(!output.stdout.is_empty(), "Help output should not be empty");
@@ -118,7 +119,7 @@ fn bench_help_subcommand(c: &mut Criterion) {
                         .arg("help")
                         .arg(cmd)
                         .output()
-                        .expect(&format!("Failed to run crush help {}", cmd));
+                        .unwrap_or_else(|_| panic!("Failed to run crush help {}", cmd));
 
                     black_box(output)
                 })

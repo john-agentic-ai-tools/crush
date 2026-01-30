@@ -4,8 +4,9 @@
 
 #![allow(clippy::expect_used)]
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{criterion_group, criterion_main, Criterion};
 use crush_core::{init_plugins, CompressionOptions, ScoringWeights};
+use std::hint::black_box;
 
 fn benchmark_auto_selection(c: &mut Criterion) {
     // Initialize plugins once
