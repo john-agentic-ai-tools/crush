@@ -16,7 +16,6 @@ pub struct DecompressionResult {
     pub metadata: FileMetadata,
 }
 
-
 /// Decompress Crush-compressed data
 ///
 /// Reads the Crush header to identify the compression plugin, validates the CRC32
@@ -97,15 +96,18 @@ pub fn decompress(input: &[u8]) -> Result<DecompressionResult> {
         if input.len() < payload_start + 2 {
             return Err(ValidationError::InvalidHeader(
                 "Truncated: metadata flag set but no metadata length".to_string(),
-            ).into());
+            )
+            .into());
         }
-        let metadata_len = u16::from_le_bytes([input[payload_start], input[payload_start + 1]]) as usize;
+        let metadata_len =
+            u16::from_le_bytes([input[payload_start], input[payload_start + 1]]) as usize;
         payload_start += 2;
 
         if input.len() < payload_start + metadata_len {
             return Err(ValidationError::InvalidHeader(
                 "Truncated: metadata length exceeds payload size".to_string(),
-            ).into());
+            )
+            .into());
         }
         let metadata_bytes = &input[payload_start..payload_start + metadata_len];
         payload_start += metadata_len;

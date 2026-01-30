@@ -1,4 +1,4 @@
-use criterion::{criterion_group, criterion_main, Criterion, BenchmarkId};
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use std::hint::black_box;
 use std::process::Command;
 use std::time::Duration;
@@ -12,7 +12,10 @@ fn crush_binary() -> std::path::PathBuf {
         .expect("Failed to build crush binary");
 
     if !output.status.success() {
-        panic!("Failed to build crush: {}", String::from_utf8_lossy(&output.stderr));
+        panic!(
+            "Failed to build crush: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 
     // Find the target directory (could be in workspace root or current dir)

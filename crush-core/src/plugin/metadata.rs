@@ -262,7 +262,9 @@ impl FileMetadata {
         let mut i = 0;
         while i < bytes.len() {
             if i + 2 > bytes.len() {
-                return Err(ValidationError::InvalidMetadata("Incomplete TLV record".into()).into());
+                return Err(
+                    ValidationError::InvalidMetadata("Incomplete TLV record".into()).into(),
+                );
             }
             let type_ = bytes[i];
             let length = bytes[i + 1] as usize;
@@ -276,23 +278,31 @@ impl FileMetadata {
             i += length;
 
             match type_ {
-                0x01 => { // mtime
+                0x01 => {
+                    // mtime
                     if length == 8 {
                         let mut mtime_bytes = [0u8; 8];
                         mtime_bytes.copy_from_slice(value);
                         metadata.mtime = Some(i64::from_le_bytes(mtime_bytes));
                     } else {
-                        return Err(ValidationError::InvalidMetadata("Invalid mtime length".into()).into());
+                        return Err(ValidationError::InvalidMetadata(
+                            "Invalid mtime length".into(),
+                        )
+                        .into());
                     }
                 }
                 #[cfg(unix)]
-                0x02 => { // Unix permissions
+                0x02 => {
+                    // Unix permissions
                     if length == 4 {
                         let mut perm_bytes = [0u8; 4];
                         perm_bytes.copy_from_slice(value);
                         metadata.permissions = Some(u32::from_le_bytes(perm_bytes));
                     } else {
-                        return Err(ValidationError::InvalidMetadata("Invalid permissions length".into()).into());
+                        return Err(ValidationError::InvalidMetadata(
+                            "Invalid permissions length".into(),
+                        )
+                        .into());
                     }
                 }
                 _ => { /* Ignore unknown types for forward compatibility */ }

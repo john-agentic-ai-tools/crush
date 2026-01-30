@@ -245,8 +245,9 @@ pub fn config_file_path() -> Result<PathBuf> {
         let path = PathBuf::from(test_path);
         // Create parent directory if needed
         if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)
-                .map_err(|e| CliError::Config(format!("Could not create test config directory: {}", e)))?;
+            fs::create_dir_all(parent).map_err(|e| {
+                CliError::Config(format!("Could not create test config directory: {}", e))
+            })?;
         }
         return Ok(path);
     }

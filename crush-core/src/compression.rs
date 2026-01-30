@@ -214,15 +214,14 @@ pub fn compress_with_options(input: &[u8], options: &CompressionOptions) -> Resu
     let crc32 = hasher.finalize();
 
     // Create header with original size and CRC32
-    let mut header = CrushHeader::new(selected_metadata.magic_number, input.len() as u64).with_crc32();
+    let mut header =
+        CrushHeader::new(selected_metadata.magic_number, input.len() as u64).with_crc32();
     if !metadata_bytes.is_empty() {
         header = header.with_metadata();
     }
 
     // Build final output: header + CRC32 + payload_with_metadata
-    let mut output = Vec::with_capacity(
-        CrushHeader::SIZE + 4 + payload_with_metadata.len()
-    );
+    let mut output = Vec::with_capacity(CrushHeader::SIZE + 4 + payload_with_metadata.len());
     output.extend_from_slice(&header.to_bytes());
     output.extend_from_slice(&crc32.to_le_bytes());
     output.extend_from_slice(&payload_with_metadata);

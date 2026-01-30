@@ -1,6 +1,6 @@
 use crate::error::{PluginError, Result, ValidationError};
-use crate::plugin::{CrushHeader, FileMetadata};
 use crate::plugin::registry::get_plugin_by_magic;
+use crate::plugin::{CrushHeader, FileMetadata};
 use crc32fast::Hasher;
 use serde::Serialize;
 
@@ -67,18 +67,21 @@ pub fn inspect(input: &[u8]) -> Result<InspectResult> {
         if input.len() < payload_start + 2 {
             return Err(ValidationError::InvalidHeader(
                 "Truncated: metadata flag set but no metadata length".to_string(),
-            ).into());
+            )
+            .into());
         }
-        let metadata_len = u16::from_le_bytes([input[payload_start], input[payload_start + 1]]) as usize;
+        let metadata_len =
+            u16::from_le_bytes([input[payload_start], input[payload_start + 1]]) as usize;
         payload_start += 2;
 
         if input.len() < payload_start + metadata_len {
             return Err(ValidationError::InvalidHeader(
                 "Truncated: metadata length exceeds payload size".to_string(),
-            ).into());
+            )
+            .into());
         }
         let metadata_bytes = &input[payload_start..payload_start + metadata_len];
-        
+
         FileMetadata::from_bytes(metadata_bytes)?
     } else {
         FileMetadata::default()

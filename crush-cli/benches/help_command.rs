@@ -1,4 +1,4 @@
-use criterion::{criterion_group, criterion_main, Criterion, BenchmarkId};
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use std::hint::black_box;
 use std::process::Command;
 use std::time::Duration;
@@ -12,7 +12,10 @@ fn crush_binary() -> std::path::PathBuf {
         .expect("Failed to build crush binary");
 
     if !output.status.success() {
-        panic!("Failed to build crush: {}", String::from_utf8_lossy(&output.stderr));
+        panic!(
+            "Failed to build crush: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 
     // Find the target directory (could be in workspace root or current dir)
@@ -110,21 +113,17 @@ fn bench_help_subcommand(c: &mut Criterion) {
     let commands = ["compress", "decompress", "inspect"];
 
     for command in commands.iter() {
-        group.bench_with_input(
-            BenchmarkId::new("help_cmd", command),
-            command,
-            |b, &cmd| {
-                b.iter(|| {
-                    let output = Command::new(&binary)
-                        .arg("help")
-                        .arg(cmd)
-                        .output()
-                        .unwrap_or_else(|_| panic!("Failed to run crush help {}", cmd));
+        group.bench_with_input(BenchmarkId::new("help_cmd", command), command, |b, &cmd| {
+            b.iter(|| {
+                let output = Command::new(&binary)
+                    .arg("help")
+                    .arg(cmd)
+                    .output()
+                    .unwrap_or_else(|_| panic!("Failed to run crush help {}", cmd));
 
-                    black_box(output)
-                })
-            },
-        );
+                black_box(output)
+            })
+        });
     }
 
     group.finish();
