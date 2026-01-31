@@ -162,6 +162,9 @@ pub fn decompress(input: &[u8]) -> Result<DecompressionResult> {
 }
 
 #[cfg(test)]
+#[allow(clippy::expect_used)]
+#[allow(clippy::unwrap_used)]
+#[allow(clippy::unreadable_literal)]
 mod tests {
     use super::*;
     use crate::{compress, init_plugins};
@@ -208,6 +211,131 @@ mod tests {
 
         let result = decompress(&compressed);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_decompress_with_metadata() {
+        use crate::plugin::FileMetadata;
+        use crate::{compress_with_options, CompressionOptions};
+
+        init_plugins().expect("Failed to init");
+        let original = b"Data with metadata";
+        let metadata = FileMetadata {
+            mtime: Some(1234567890),
+            #[cfg(unix)]
+            permissions: Some(0o644),
+        };
+        let options = CompressionOptions::default().with_file_metadata(metadata.clone());
+        let compressed = compress_with_options(original, &options).expect("Compression failed");
+
+        let result = decompress(&compressed).expect("Decompression failed");
+
+        assert_eq!(original.as_slice(), result.data.as_slice());
+        assert_eq!(result.metadata.mtime, metadata.mtime);
+        #[cfg(unix)]
+        assert_eq!(result.metadata.permissions, metadata.permissions);
+    }
+
+    #[test]
+    fn test_decompress_truncated_crc32() {
+        init_plugins().expect("Failed to init");
+        let original = b"Test";
+        let mut compressed = compress(original).expect("Compression failed");
+
+        // Truncate to remove CRC32 bytes
+        compressed.truncate(CrushHeader::SIZE); // Just header, no CRC32
+
+        let result = decompress(&compressed);
+        assert!(result.is_err()); // Should error about missing CRC32
+    }
+
+    #[test]
+    fn test_decompress_truncated_metadata_length() {
+        use crate::plugin::FileMetadata;
+        use crate::{compress_with_options, CompressionOptions};
+
+        init_plugins().expect("Failed to init");
+        let original = b"Test";
+        let metadata = FileMetadata {
+            mtime: Some(1234567890),
+            #[cfg(unix)]
+            permissions: Some(0o755),
+        };
+        let options = CompressionOptions::default().with_file_metadata(metadata);
+        let mut compressed = compress_with_options(original, &options).expect("Compression failed");
+
+        // Truncate after header + CRC32 to cut metadata length field
+        let truncate_pos = CrushHeader::SIZE + 4 + 1;
+        if compressed.len() > truncate_pos {
+            compressed.truncate(truncate_pos);
+        }
+
+        let result = decompress(&compressed);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_decompress_truncated_metadata_payload() {
+        use crate::plugin::FileMetadata;
+        use crate::{compress_with_options, CompressionOptions};
+
+        init_plugins().expect("Failed to init");
+        let original = b"Test";
+        let metadata = FileMetadata {
+            mtime: Some(1234567890),
+            #[cfg(unix)]
+            permissions: Some(0o755),
+        };
+        let options = CompressionOptions::default().with_file_metadata(metadata);
+        let mut compressed = compress_with_options(original, &options).expect("Compression failed");
+
+        // Truncate in middle of metadata payload
+        let truncate_pos = CrushHeader::SIZE + 4 + 2 + 3;
+        if compressed.len() > truncate_pos {
+            compressed.truncate(truncate_pos);
+        }
+
+        let result = decompress(&compressed);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_decompress_plugin_not_found() {
+        // Create a valid header but with a magic number for a non-existent plugin
+        let mut fake_compressed = vec![
+            0x43, 0x52, 0x01, 0xFF, // Magic: CR01 but invalid plugin (0xFF)
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Original size: 0
+            0x00, // Flags: 0 (no CRC, no metadata)
+            0x00, 0x00, 0x00, // Reserved
+        ];
+        // Add some fake compressed data
+        fake_compressed.extend_from_slice(&[0x78, 0x9c, 0x03, 0x00, 0x00, 0x00, 0x00, 0x01]);
+
+        let result = decompress(&fake_compressed);
+        assert!(result.is_err());
+        // Error could be about plugin not found or invalid magic
+        // Just verify it fails, the exact error depends on implementation details
+    }
+
+    #[test]
+    fn test_decompress_empty_input() {
+        let result = decompress(&[]);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("too short"));
+    }
+
+    #[test]
+    fn test_decompress_default_metadata() {
+        init_plugins().expect("Failed to init");
+        let original = b"No metadata test";
+        let compressed = compress(original).expect("Compression failed");
+
+        let result = decompress(&compressed).expect("Decompression failed");
+
+        // Should have default (empty) metadata when none was provided
+        assert!(result.metadata.mtime.is_none());
+        #[cfg(unix)]
+        assert!(result.metadata.permissions.is_none());
     }
 
     #[test]
