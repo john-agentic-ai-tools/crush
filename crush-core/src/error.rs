@@ -83,6 +83,10 @@ pub enum ValidationError {
     /// Invalid plugin scoring weights
     #[error("Invalid scoring weights: {0}")]
     InvalidWeights(String),
+
+    /// Invalid file metadata format
+    #[error("Invalid metadata format: {0}")]
+    InvalidMetadata(String),
 }
 
 /// Type alias for Results using `CrushError`

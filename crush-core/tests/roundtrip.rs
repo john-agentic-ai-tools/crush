@@ -34,7 +34,7 @@ fn test_roundtrip_basic() {
     // Verify roundtrip produces identical data
     assert_eq!(
         original.as_slice(),
-        decompressed.as_slice(),
+        decompressed.data.as_slice(),
         "Decompressed data should match original"
     );
 }
@@ -48,7 +48,7 @@ fn test_roundtrip_empty() {
     let compressed = compress(original).expect("Compression should succeed on empty data");
     let decompressed = decompress(&compressed).expect("Decompression should succeed");
 
-    assert_eq!(original.as_slice(), decompressed.as_slice());
+    assert_eq!(original.as_slice(), decompressed.data.as_slice());
 }
 
 /// Test roundtrip with large data (>1MB)
@@ -70,7 +70,7 @@ fn test_roundtrip_large() {
 
     let decompressed = decompress(&compressed).expect("Decompression should succeed");
 
-    assert_eq!(original, decompressed);
+    assert_eq!(original, decompressed.data);
 }
 
 /// Test roundtrip with random data (incompressible)
@@ -85,7 +85,7 @@ fn test_roundtrip_random() {
     let compressed = compress(&original).expect("Compression should succeed");
     let decompressed = decompress(&compressed).expect("Decompression should succeed");
 
-    assert_eq!(original, decompressed);
+    assert_eq!(original, decompressed.data);
 }
 
 /// Test that corrupted compressed data produces an error
@@ -158,7 +158,7 @@ mod property_tests {
             let compressed = compress(&data).expect("Compression should always succeed");
             let decompressed = decompress(&compressed).expect("Decompression should always succeed");
 
-            prop_assert_eq!(data, decompressed, "Roundtrip failed for data");
+            prop_assert_eq!(data, decompressed.data, "Roundtrip failed for data");
         }
 
         /// Property-based test: Compression should be deterministic

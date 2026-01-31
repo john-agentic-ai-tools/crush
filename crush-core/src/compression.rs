@@ -5,12 +5,12 @@
 
 use crate::error::Result;
 use crate::plugin::registry::{get_default_plugin, get_plugin_by_magic};
-use crate::plugin::{run_with_timeout, CrushHeader, PluginSelector, ScoringWeights};
+use crate::plugin::{run_with_timeout, CrushHeader, FileMetadata, PluginSelector, ScoringWeights};
 use crc32fast::Hasher;
 use std::time::Duration;
 
-/// Default timeout for compression operations (30 seconds)
-pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
+/// Default timeout for compression operations (0 = no timeout)
+pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(0);
 
 /// Compression options for plugin selection and scoring
 #[derive(Debug, Clone)]
@@ -23,6 +23,9 @@ pub struct CompressionOptions {
 
     /// Timeout for compression operation
     timeout: Duration,
+
+    /// Optional file metadata
+    file_metadata: Option<FileMetadata>,
 }
 
 impl CompressionOptions {
@@ -33,6 +36,7 @@ impl CompressionOptions {
             plugin_name: None,
             weights: ScoringWeights::default(),
             timeout: DEFAULT_TIMEOUT,
+            file_metadata: None,
         }
     }
 
@@ -56,6 +60,13 @@ impl CompressionOptions {
         self.timeout = timeout;
         self
     }
+
+    /// Set file metadata
+    #[must_use]
+    pub fn with_file_metadata(mut self, metadata: FileMetadata) -> Self {
+        self.file_metadata = Some(metadata);
+        self
+    }
 }
 
 impl Default for CompressionOptions {
@@ -77,7 +88,6 @@ impl Default for CompressionOptions {
 /// Returns an error if:
 /// - No default plugin is available (should never happen - DEFLATE is always registered)
 /// - Compression operation fails
-/// - Operation exceeds the default timeout (30 seconds)
 ///
 /// # Examples
 ///
@@ -116,14 +126,9 @@ pub fn compress(input: &[u8]) -> Result<Vec<u8>> {
     let header = CrushHeader::new(default_magic, input.len() as u64).with_crc32();
 
     // Build final output: header + compressed payload
-    let mut output = Vec::with_capacity(CrushHeader::SIZE + compressed_payload.len());
+    let mut output = Vec::with_capacity(CrushHeader::SIZE + 4 + compressed_payload.len());
     output.extend_from_slice(&header.to_bytes());
-    output.extend_from_slice(&[
-        (crc32 & 0xFF) as u8,
-        ((crc32 >> 8) & 0xFF) as u8,
-        ((crc32 >> 16) & 0xFF) as u8,
-        ((crc32 >> 24) & 0xFF) as u8,
-    ]);
+    output.extend_from_slice(&crc32.to_le_bytes());
     output.extend_from_slice(&compressed_payload);
 
     Ok(output)
@@ -141,7 +146,7 @@ pub fn compress(input: &[u8]) -> Result<Vec<u8>> {
 /// - Specified plugin is not found (manual override)
 /// - No plugins are available (automatic selection)
 /// - Compression operation fails
-/// - Operation exceeds the specified timeout
+/// - Operation exceeds the specified timeout (0 = no timeout)
 ///
 /// # Examples
 ///
@@ -188,24 +193,38 @@ pub fn compress_with_options(input: &[u8], options: &CompressionOptions) -> Resu
         plugin.compress(&input_owned, cancel_flag)
     })?;
 
-    // Calculate CRC32 of compressed payload
+    // Handle file metadata
+    let metadata_bytes = options
+        .file_metadata
+        .as_ref()
+        .map_or(Vec::new(), super::plugin::metadata::FileMetadata::to_bytes);
+
+    let mut payload_with_metadata = Vec::new();
+    if !metadata_bytes.is_empty() {
+        #[allow(clippy::cast_possible_truncation)]
+        let metadata_len = metadata_bytes.len() as u16; // FileMetadata is always < 64KB
+        payload_with_metadata.extend_from_slice(&metadata_len.to_le_bytes());
+        payload_with_metadata.extend_from_slice(&metadata_bytes);
+    }
+    payload_with_metadata.extend_from_slice(&compressed_payload);
+
+    // Calculate CRC32 of compressed payload + metadata
     let mut hasher = Hasher::new();
-    hasher.update(&compressed_payload);
+    hasher.update(&payload_with_metadata);
     let crc32 = hasher.finalize();
 
     // Create header with original size and CRC32
-    let header = CrushHeader::new(selected_metadata.magic_number, input.len() as u64).with_crc32();
+    let mut header =
+        CrushHeader::new(selected_metadata.magic_number, input.len() as u64).with_crc32();
+    if !metadata_bytes.is_empty() {
+        header = header.with_metadata();
+    }
 
-    // Build final output: header + CRC32 + compressed payload
-    let mut output = Vec::with_capacity(CrushHeader::SIZE + 4 + compressed_payload.len());
+    // Build final output: header + CRC32 + payload_with_metadata
+    let mut output = Vec::with_capacity(CrushHeader::SIZE + 4 + payload_with_metadata.len());
     output.extend_from_slice(&header.to_bytes());
-    output.extend_from_slice(&[
-        (crc32 & 0xFF) as u8,
-        ((crc32 >> 8) & 0xFF) as u8,
-        ((crc32 >> 16) & 0xFF) as u8,
-        ((crc32 >> 24) & 0xFF) as u8,
-    ]);
-    output.extend_from_slice(&compressed_payload);
+    output.extend_from_slice(&crc32.to_le_bytes());
+    output.extend_from_slice(&payload_with_metadata);
 
     Ok(output)
 }

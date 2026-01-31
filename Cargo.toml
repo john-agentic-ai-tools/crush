@@ -21,8 +21,8 @@ crossbeam = "0.8"
 rayon = "1.10"
 flate2 = "1.0"
 crc32fast = "1.4"
-thiserror = "1.0"
-criterion = "0.5"
+thiserror = "2.0.0"
+criterion = "0.8"
 
 [profile.dev]
 opt-level = 0

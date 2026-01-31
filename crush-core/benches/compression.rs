@@ -5,8 +5,9 @@
 
 #![allow(clippy::expect_used)]
 
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use crush_core::{compress, decompress, init_plugins};
+use std::hint::black_box;
 
 fn benchmark_compress_small(c: &mut Criterion) {
     init_plugins().expect("Plugin initialization failed");

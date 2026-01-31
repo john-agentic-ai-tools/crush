@@ -5,8 +5,9 @@
 
 #![allow(clippy::expect_used)]
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{criterion_group, criterion_main, Criterion};
 use crush_core::{init_plugins, list_plugins};
+use std::hint::black_box;
 
 fn benchmark_plugin_discovery(c: &mut Criterion) {
     c.bench_function("plugin_discovery", |b| {

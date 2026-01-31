@@ -1,21 +1,64 @@
+mod cli;
+mod commands;
+mod config;
+mod error;
+mod logging;
+mod output;
+mod signal;
+
+use clap::Parser;
+use cli::{Cli, Commands};
+use error::Result;
+
 fn main() {
-    println!("Crush CLI v0.1.0 - High-performance parallel compression");
-    println!();
-    println!("This is a placeholder binary for the Crush compression library.");
-    println!("Full CLI functionality will be implemented in future phases.");
-    println!();
-    println!("For now, use crush-core library directly:");
-    println!("  use crush_core::{{init_plugins, compress, decompress}};");
+    let exit_code = match run() {
+        Ok(()) => 0,
+        Err(e) => {
+            eprintln!("Error: {}", e);
+            e.exit_code()
+        }
+    };
+    std::process::exit(exit_code);
 }
 
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn test_cli_can_be_invoked() {
-        // This test verifies that the CLI binary can be compiled and invoked
-        // The actual functionality test will happen via cargo run
-        // Using a simple operation instead of assert!(true) to avoid clippy warning
-        let result = 2 + 2;
-        assert_eq!(result, 4, "CLI test infrastructure works");
+fn run() -> Result<()> {
+    // Initialize plugin registry
+    crush_core::init_plugins()?;
+
+    // Parse CLI arguments
+    let cli = Cli::parse();
+
+    // Load and merge configuration
+    let mut config = config::load_config()?;
+    config = config::merge_env_vars(config)?;
+    config = config::merge_cli_args(config, &cli)?;
+    config.validate()?;
+
+    // Initialize logging with config
+    // If verbose flag is set, it overrides config log level
+    let log_level = if cli.verbose > 0 {
+        logging::verbose_to_level(cli.verbose)
+    } else {
+        &config.logging.level
+    };
+
+    let log_file_path = if !config.logging.file.is_empty() {
+        Some(std::path::Path::new(&config.logging.file))
+    } else {
+        None
+    };
+    logging::init_logging(log_level, &config.logging.format, log_file_path);
+
+    // Setup signal handler
+    let interrupted = signal::setup_handler()
+        .map_err(|e| error::CliError::Config(format!("Failed to set up signal handler: {}", e)))?;
+
+    // Dispatch to appropriate command
+    match &cli.command {
+        Commands::Compress(args) => commands::compress::run(args, interrupted),
+        Commands::Decompress(args) => commands::decompress::run(args, interrupted),
+        Commands::Inspect(args) => commands::inspect::run(args),
+        Commands::Config(args) => commands::config::run(args),
+        Commands::Plugins(args) => commands::plugins::run(args),
     }
 }

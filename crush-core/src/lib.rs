@@ -24,7 +24,7 @@
 //!
 //! // Decompress data
 //! let decompressed = decompress(&compressed).expect("Decompression failed");
-//! assert_eq!(data.as_slice(), decompressed.as_slice());
+//! assert_eq!(data.as_slice(), decompressed.data.as_slice());
 //! ```
 //!
 //! # Advanced Usage
@@ -70,11 +70,13 @@
 pub mod compression;
 pub mod decompression;
 pub mod error;
+pub mod inspection;
 pub mod plugin;
 
 pub use compression::{compress, compress_with_options, CompressionOptions};
 pub use decompression::decompress;
 pub use error::{CrushError, PluginError, Result, TimeoutError, ValidationError};
+pub use inspection::{inspect, InspectResult};
 pub use plugin::{
     calculate_plugin_score, init_plugins, list_plugins, CompressionAlgorithm, CrushHeader,
     PluginMetadata, PluginSelector, ScoringWeights, COMPRESSION_ALGORITHMS,

@@ -29,7 +29,12 @@ coverage/
 *.profraw
 *.profdata
 test-results/
+lcov.info
+*.lcov
 
 # Environment
 .env*
 *.log
+
+# AI Assistants
+.gemini/

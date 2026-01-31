@@ -97,6 +97,13 @@ impl CrushHeader {
         self
     }
 
+    /// Create a header with metadata flag set
+    #[must_use]
+    pub fn with_metadata(mut self) -> Self {
+        self.flags |= flags::HAS_METADATA;
+        self
+    }
+
     /// Check if this header has a valid Crush magic number prefix
     #[must_use]
     pub fn has_valid_prefix(&self) -> bool {
@@ -119,6 +126,12 @@ impl CrushHeader {
     #[must_use]
     pub fn has_crc32(&self) -> bool {
         (self.flags & flags::HAS_CRC32) != 0
+    }
+
+    /// Check if metadata flag is set
+    #[must_use]
+    pub fn has_metadata(&self) -> bool {
+        (self.flags & flags::HAS_METADATA) != 0
     }
 
     /// Serialize header to bytes (little-endian)
@@ -197,6 +210,108 @@ impl CrushHeader {
     }
 }
 
+use serde::Serialize; // This one should stay
+
+/// Optional file metadata that can be stored in the compressed file
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize)]
+pub struct FileMetadata {
+    /// Modification time (seconds since Unix epoch)
+    pub mtime: Option<i64>,
+
+    /// Unix file permissions (mode bits)
+    /// Only stored and restored on Unix platforms
+    #[cfg(unix)]
+    pub permissions: Option<u32>,
+}
+
+impl FileMetadata {
+    /// Serialize metadata to a byte vector using TLV format
+    #[must_use]
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        if let Some(mtime) = self.mtime {
+            // Type: 0x01 for mtime
+            bytes.push(0x01);
+            // Length: 8 bytes for i64
+            bytes.push(8);
+            // Value: mtime as i64
+            bytes.extend_from_slice(&mtime.to_le_bytes());
+        }
+        #[cfg(unix)]
+        if let Some(permissions) = self.permissions {
+            // Type: 0x02 for Unix permissions
+            bytes.push(0x02);
+            // Length: 4 bytes for u32
+            bytes.push(4);
+            // Value: permissions as u32
+            bytes.extend_from_slice(&permissions.to_le_bytes());
+        }
+        bytes
+    }
+
+    /// Deserialize metadata from bytes
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The TLV record is incomplete or malformed
+    /// - Unknown metadata type is encountered
+    /// - Value length is incorrect for the type
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
+        let mut metadata = Self::default();
+        let mut i = 0;
+        while i < bytes.len() {
+            if i + 2 > bytes.len() {
+                return Err(
+                    ValidationError::InvalidMetadata("Incomplete TLV record".into()).into(),
+                );
+            }
+            let type_ = bytes[i];
+            let length = bytes[i + 1] as usize;
+            i += 2;
+
+            if i + length > bytes.len() {
+                return Err(ValidationError::InvalidMetadata("Incomplete TLV value".into()).into());
+            }
+
+            let value = &bytes[i..i + length];
+            i += length;
+
+            match type_ {
+                0x01 => {
+                    // mtime
+                    if length == 8 {
+                        let mut mtime_bytes = [0u8; 8];
+                        mtime_bytes.copy_from_slice(value);
+                        metadata.mtime = Some(i64::from_le_bytes(mtime_bytes));
+                    } else {
+                        return Err(ValidationError::InvalidMetadata(
+                            "Invalid mtime length".into(),
+                        )
+                        .into());
+                    }
+                }
+                #[cfg(unix)]
+                0x02 => {
+                    // Unix permissions
+                    if length == 4 {
+                        let mut perm_bytes = [0u8; 4];
+                        perm_bytes.copy_from_slice(value);
+                        metadata.permissions = Some(u32::from_le_bytes(perm_bytes));
+                    } else {
+                        return Err(ValidationError::InvalidMetadata(
+                            "Invalid permissions length".into(),
+                        )
+                        .into());
+                    }
+                }
+                _ => { /* Ignore unknown types for forward compatibility */ }
+            }
+        }
+        Ok(metadata)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -240,5 +355,75 @@ mod tests {
 
         let bytes = header.to_bytes();
         assert_eq!(bytes[12] & flags::HAS_CRC32, flags::HAS_CRC32);
+    }
+
+    #[test]
+    fn test_plugin_id() {
+        let header1 = CrushHeader::new([0x43, 0x52, 0x01, 0x00], 100);
+        assert_eq!(header1.plugin_id(), 0x00);
+
+        let header2 = CrushHeader::new([0x43, 0x52, 0x01, 0xFF], 200);
+        assert_eq!(header2.plugin_id(), 0xFF);
+
+        let header3 = CrushHeader::new([0x43, 0x52, 0x01, 0x42], 300);
+        assert_eq!(header3.plugin_id(), 0x42);
+    }
+
+    #[test]
+    fn test_has_valid_prefix() {
+        let valid = CrushHeader::new([0x43, 0x52, 0x01, 0x00], 100);
+        assert!(valid.has_valid_prefix());
+
+        // Invalid prefix
+        let invalid = CrushHeader {
+            magic: [0xFF, 0xFF, 0x01, 0x00],
+            original_size: 100,
+            flags: 0,
+            reserved: [0; 3],
+        };
+        assert!(!invalid.has_valid_prefix());
+    }
+
+    #[test]
+    fn test_has_valid_version() {
+        let valid = CrushHeader::new([0x43, 0x52, 0x01, 0x00], 100);
+        assert!(valid.has_valid_version());
+
+        // Invalid version
+        let invalid = CrushHeader {
+            magic: [0x43, 0x52, 0x99, 0x00],
+            original_size: 100,
+            flags: 0,
+            reserved: [0; 3],
+        };
+        assert!(!invalid.has_valid_version());
+    }
+
+    #[test]
+    fn test_has_metadata_flag() {
+        let without = CrushHeader::new([0x43, 0x52, 0x01, 0x00], 100);
+        assert!(!without.has_metadata());
+
+        let with = CrushHeader::new([0x43, 0x52, 0x01, 0x00], 100).with_metadata();
+        assert!(with.has_metadata());
+
+        let bytes = with.to_bytes();
+        assert_eq!(bytes[12] & flags::HAS_METADATA, flags::HAS_METADATA);
+    }
+
+    #[test]
+    fn test_combined_flags() {
+        let header = CrushHeader::new([0x43, 0x52, 0x01, 0x00], 100)
+            .with_crc32()
+            .with_metadata();
+
+        assert!(header.has_crc32());
+        assert!(header.has_metadata());
+
+        let bytes = header.to_bytes();
+        assert_eq!(
+            bytes[12] & (flags::HAS_CRC32 | flags::HAS_METADATA),
+            flags::HAS_CRC32 | flags::HAS_METADATA
+        );
     }
 }
