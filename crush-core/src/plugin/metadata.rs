@@ -356,4 +356,72 @@ mod tests {
         let bytes = header.to_bytes();
         assert_eq!(bytes[12] & flags::HAS_CRC32, flags::HAS_CRC32);
     }
+
+    #[test]
+    fn test_plugin_id() {
+        let header1 = CrushHeader::new([0x43, 0x52, 0x01, 0x00], 100);
+        assert_eq!(header1.plugin_id(), 0x00);
+
+        let header2 = CrushHeader::new([0x43, 0x52, 0x01, 0xFF], 200);
+        assert_eq!(header2.plugin_id(), 0xFF);
+
+        let header3 = CrushHeader::new([0x43, 0x52, 0x01, 0x42], 300);
+        assert_eq!(header3.plugin_id(), 0x42);
+    }
+
+    #[test]
+    fn test_has_valid_prefix() {
+        let valid = CrushHeader::new([0x43, 0x52, 0x01, 0x00], 100);
+        assert!(valid.has_valid_prefix());
+
+        // Invalid prefix
+        let invalid = CrushHeader {
+            magic: [0xFF, 0xFF, 0x01, 0x00],
+            original_size: 100,
+            flags: 0,
+            reserved: [0; 3],
+        };
+        assert!(!invalid.has_valid_prefix());
+    }
+
+    #[test]
+    fn test_has_valid_version() {
+        let valid = CrushHeader::new([0x43, 0x52, 0x01, 0x00], 100);
+        assert!(valid.has_valid_version());
+
+        // Invalid version
+        let invalid = CrushHeader {
+            magic: [0x43, 0x52, 0x99, 0x00],
+            original_size: 100,
+            flags: 0,
+            reserved: [0; 3],
+        };
+        assert!(!invalid.has_valid_version());
+    }
+
+    #[test]
+    fn test_has_metadata_flag() {
+        let without = CrushHeader::new([0x43, 0x52, 0x01, 0x00], 100);
+        assert!(!without.has_metadata());
+
+        let with = CrushHeader::new([0x43, 0x52, 0x01, 0x00], 100).with_metadata();
+        assert!(with.has_metadata());
+
+        let bytes = with.to_bytes();
+        assert_eq!(bytes[12] & flags::HAS_METADATA, flags::HAS_METADATA);
+    }
+
+    #[test]
+    fn test_combined_flags() {
+        let header = CrushHeader::new([0x43, 0x52, 0x01, 0x00], 100)
+            .with_crc32()
+            .with_metadata();
+
+        assert!(header.has_crc32());
+        assert!(header.has_metadata());
+
+        let bytes = header.to_bytes();
+        assert_eq!(bytes[12] & (flags::HAS_CRC32 | flags::HAS_METADATA),
+                   flags::HAS_CRC32 | flags::HAS_METADATA);
+    }
 }

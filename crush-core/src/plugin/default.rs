@@ -170,4 +170,81 @@ mod tests {
             "Expected PluginError::Cancelled, got: {err:?}"
         );
     }
+
+    #[test]
+    fn test_deflate_decompress_invalid_data() {
+        let plugin = DeflatePlugin;
+        let cancel_flag = Arc::new(AtomicBool::new(false));
+
+        // Invalid DEFLATE data
+        let invalid_data = b"This is not compressed data!";
+        let result = plugin.decompress(invalid_data, cancel_flag);
+
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("DEFLATE decompression failed"));
+    }
+
+    #[test]
+    fn test_deflate_decompress_cancellation() {
+        let plugin = DeflatePlugin;
+        let cancel_flag = Arc::new(AtomicBool::new(true)); // Pre-cancelled
+
+        let data = b"Some data";
+        let result = plugin.decompress(data, cancel_flag);
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            matches!(
+                err,
+                crate::error::CrushError::Plugin(crate::error::PluginError::Cancelled)
+            ),
+            "Expected PluginError::Cancelled, got: {err:?}"
+        );
+    }
+
+    #[test]
+    fn test_deflate_detect() {
+        let plugin = DeflatePlugin;
+
+        // DEFLATE plugin accepts all data (it's the default fallback)
+        assert!(plugin.detect(b"any data"));
+        assert!(plugin.detect(&[]));
+        assert!(plugin.detect(b"\x00\x01\x02\x03"));
+    }
+
+    #[test]
+    fn test_deflate_name() {
+        let plugin = DeflatePlugin;
+        assert_eq!(plugin.name(), "deflate");
+    }
+
+    #[test]
+    #[allow(clippy::unwrap_used)]
+    fn test_deflate_large_data() {
+        let plugin = DeflatePlugin;
+        let cancel_flag = Arc::new(AtomicBool::new(false));
+
+        // Test with data larger than 64KB buffer to ensure loop iteration
+        let original = vec![0x42u8; 128 * 1024]; // 128KB
+        let compressed = plugin.compress(&original, Arc::clone(&cancel_flag)).unwrap();
+        let decompressed = plugin.decompress(&compressed, cancel_flag).unwrap();
+
+        assert_eq!(original, decompressed);
+        // Verify compression actually happened
+        assert!(compressed.len() < original.len());
+    }
+
+    #[test]
+    fn test_deflate_metadata_values() {
+        let plugin = DeflatePlugin;
+        let metadata = plugin.metadata();
+
+        assert_eq!(metadata.version, "1.0.0");
+        assert!(metadata.throughput > 0.0);
+        assert!(metadata.compression_ratio > 0.0 && metadata.compression_ratio <= 1.0);
+        assert!(!metadata.description.is_empty());
+    }
+
 }

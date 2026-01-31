@@ -215,4 +215,80 @@ mod tests {
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), 42);
     }
+
+    #[test]
+    fn test_timeout_guard_sets_flag_on_drop() {
+        let cancel_flag = Arc::new(AtomicBool::new(false));
+        {
+            let _guard = TimeoutGuard {
+                cancel_flag: Arc::clone(&cancel_flag),
+            };
+            assert!(!cancel_flag.load(Ordering::Acquire));
+        }
+        // Flag should be set after guard is dropped
+        assert!(cancel_flag.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn test_run_with_timeout_v1_disconnected() {
+        // run_with_timeout v1 has a bug where it doesn't send through the channel
+        // This means it always goes to the Disconnected branch
+        let timeout = Duration::from_secs(1);
+
+        let result = run_with_timeout(timeout, |_cancel| Ok(100));
+
+        // The v1 function will go through Disconnected path and return the result
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 100);
+    }
+
+    #[test]
+    fn test_run_with_timeout_v1_operation_error() {
+        let timeout = Duration::from_secs(1);
+
+        let result: Result<i32> = run_with_timeout(timeout, |_cancel| {
+            Err(PluginError::OperationFailed("test error".to_string()).into())
+        });
+
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("test error"));
+    }
+
+    #[test]
+    fn test_timeout_error_display() {
+        let timeout_err = TimeoutError::Timeout(Duration::from_secs(30));
+        assert!(timeout_err.to_string().contains("30"));
+
+        let panic_err = TimeoutError::PluginPanic;
+        assert!(panic_err.to_string().contains("panicked"));
+    }
+
+    #[test]
+    fn test_run_with_timeout_v2_error_propagation() {
+        let timeout = Duration::from_secs(1);
+
+        let result: Result<i32> = run_with_timeout_v2(timeout, |_cancel| {
+            Err(PluginError::OperationFailed("custom error".to_string()).into())
+        });
+
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("custom error"));
+    }
+
+    #[test]
+    fn test_effective_timeout_conversion() {
+        // Test that 0 timeout becomes Duration::MAX internally
+        let timeout = Duration::from_secs(0);
+
+        // This should complete successfully even with "infinite" effective timeout
+        let result = run_with_timeout_v2(timeout, |_cancel| {
+            std::thread::sleep(Duration::from_millis(10));
+            Ok("done".to_string())
+        });
+
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "done");
+    }
 }

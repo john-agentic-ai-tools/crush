@@ -98,3 +98,133 @@ impl CliError {
 }
 
 pub type Result<T> = std::result::Result<T, CliError>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crush_core::{CrushError, PluginError, TimeoutError, ValidationError};
+    use std::error::Error;
+
+    #[test]
+    fn test_error_display() {
+        let config_err = CliError::Config("test config error".to_string());
+        assert!(config_err.to_string().contains("Configuration error"));
+        assert!(config_err.to_string().contains("test config error"));
+
+        let io_err = CliError::Io(io::Error::new(io::ErrorKind::NotFound, "file not found"));
+        assert!(io_err.to_string().contains("I/O error"));
+
+        let invalid_input = CliError::InvalidInput("bad value".to_string());
+        assert!(invalid_input.to_string().contains("Invalid input"));
+
+        let interrupted = CliError::Interrupted;
+        assert_eq!(interrupted.to_string(), "Operation interrupted");
+    }
+
+    #[test]
+    fn test_exit_codes() {
+        assert_eq!(CliError::Core(CrushError::Plugin(PluginError::NotFound("test".to_string()))).exit_code(), 1);
+        assert_eq!(CliError::Config("test".to_string()).exit_code(), 2);
+        assert_eq!(CliError::Io(io::Error::new(io::ErrorKind::NotFound, "test")).exit_code(), 1);
+        assert_eq!(CliError::InvalidInput("test".to_string()).exit_code(), 2);
+        assert_eq!(CliError::Interrupted.exit_code(), 130);
+    }
+
+    #[test]
+    fn test_from_crush_error() {
+        let core_err: CrushError = PluginError::NotFound("test".to_string()).into();
+        let cli_err: CliError = core_err.into();
+        assert!(matches!(cli_err, CliError::Core(_)));
+    }
+
+    #[test]
+    fn test_from_io_error() {
+        let io_err = io::Error::new(io::ErrorKind::NotFound, "test");
+        let cli_err: CliError = io_err.into();
+        assert!(matches!(cli_err, CliError::Io(_)));
+    }
+
+    #[test]
+    fn test_error_source() {
+        let core_err: CrushError = PluginError::NotFound("test".to_string()).into();
+        let cli_err = CliError::Core(core_err);
+        assert!(cli_err.source().is_some());
+
+        let io_err = CliError::Io(io::Error::new(io::ErrorKind::NotFound, "test"));
+        assert!(io_err.source().is_some());
+
+        let config_err = CliError::Config("test".to_string());
+        assert!(config_err.source().is_none());
+
+        let interrupted = CliError::Interrupted;
+        assert!(interrupted.source().is_none());
+    }
+
+    #[test]
+    fn test_user_friendly_plugin_not_found() {
+        let err = CrushError::Plugin(PluginError::NotFound("my_plugin".to_string()));
+        let cli_err = CliError::Core(err);
+        let msg = cli_err.to_string();
+        assert!(msg.contains("my_plugin"));
+        assert!(msg.contains("not found"));
+        assert!(msg.contains("plugins list"));
+    }
+
+    #[test]
+    fn test_user_friendly_crc_mismatch() {
+        let err = CrushError::Validation(ValidationError::CrcMismatch {
+            expected: 0x12345678,
+            actual: 0x87654321,
+        });
+        let cli_err = CliError::Core(err);
+        let msg = cli_err.to_string();
+        assert!(msg.contains("corrupted"));
+        assert!(msg.contains("CRC32"));
+        assert!(msg.contains("12345678"));
+        assert!(msg.contains("87654321"));
+    }
+
+    #[test]
+    fn test_user_friendly_invalid_header() {
+        let err = CrushError::Validation(ValidationError::InvalidHeader("bad header".to_string()));
+        let cli_err = CliError::Core(err);
+        let msg = cli_err.to_string();
+        assert!(msg.contains("Not a valid Crush archive"));
+        assert!(msg.contains("invalid file header"));
+    }
+
+    #[test]
+    fn test_user_friendly_invalid_magic() {
+        let err = CrushError::Validation(ValidationError::InvalidMagic([0xFF, 0xFF, 0xFF, 0xFF]));
+        let cli_err = CliError::Core(err);
+        let msg = cli_err.to_string();
+        assert!(msg.contains("Not a valid Crush archive"));
+        assert!(msg.contains("invalid magic number"));
+    }
+
+    #[test]
+    fn test_user_friendly_timeout() {
+        let err = CrushError::Timeout(TimeoutError::Timeout(std::time::Duration::from_secs(30)));
+        let cli_err = CliError::Core(err);
+        let msg = cli_err.to_string();
+        assert!(msg.contains("timeout"));
+        assert!(msg.contains("30s"));
+    }
+
+    #[test]
+    fn test_user_friendly_plugin_panic() {
+        let err = CrushError::Timeout(TimeoutError::PluginPanic);
+        let cli_err = CliError::Core(err);
+        let msg = cli_err.to_string();
+        assert!(msg.contains("Plugin panicked"));
+    }
+
+    #[test]
+    fn test_user_friendly_other_errors() {
+        // Test that other error types fall through to default formatting
+        let err = CrushError::Validation(ValidationError::CorruptedData("test".to_string()));
+        let cli_err = CliError::Core(err);
+        let msg = cli_err.to_string();
+        assert!(msg.contains("Corrupted") || msg.contains("test"));
+    }
+}

@@ -418,3 +418,242 @@ pub fn set_config_value(config: &mut Config, key: &str, value: &str) -> Result<(
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_config_validate_valid() {
+        let config = Config::default();
+        assert!(config.validate().is_ok());
+
+        let custom_config = Config {
+            compression: CompressionConfig {
+                default_plugin: "deflate".to_string(),
+                level: "fast".to_string(),
+                timeout_seconds: 30,
+            },
+            output: OutputConfig {
+                progress_bars: false,
+                color: "always".to_string(),
+                quiet: true,
+            },
+            logging: LoggingConfig {
+                format: "json".to_string(),
+                level: "debug".to_string(),
+                file: "/tmp/crush.log".to_string(),
+            },
+        };
+        assert!(custom_config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_config_validate_invalid_compression_level() {
+        let config = Config {
+            compression: CompressionConfig {
+                default_plugin: "auto".to_string(),
+                level: "invalid".to_string(),
+                timeout_seconds: 0,
+            },
+            ..Default::default()
+        };
+        let result = config.validate();
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("Invalid compression level"));
+        assert!(err_msg.contains("invalid"));
+    }
+
+    #[test]
+    fn test_config_validate_invalid_color() {
+        let config = Config {
+            output: OutputConfig {
+                progress_bars: true,
+                color: "invalid".to_string(),
+                quiet: false,
+            },
+            ..Default::default()
+        };
+        let result = config.validate();
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("Invalid color setting"));
+        assert!(err_msg.contains("invalid"));
+    }
+
+    #[test]
+    fn test_config_validate_invalid_log_format() {
+        let config = Config {
+            logging: LoggingConfig {
+                format: "invalid".to_string(),
+                level: "info".to_string(),
+                file: String::new(),
+            },
+            ..Default::default()
+        };
+        let result = config.validate();
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("Invalid log format"));
+        assert!(err_msg.contains("invalid"));
+    }
+
+    #[test]
+    fn test_config_validate_invalid_log_level() {
+        let config = Config {
+            logging: LoggingConfig {
+                format: "human".to_string(),
+                level: "invalid".to_string(),
+                file: String::new(),
+            },
+            ..Default::default()
+        };
+        let result = config.validate();
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("Invalid log level"));
+        assert!(err_msg.contains("invalid"));
+    }
+
+    #[test]
+    fn test_config_defaults() {
+        let compression = CompressionConfig::default();
+        assert_eq!(compression.default_plugin, "auto");
+        assert_eq!(compression.level, "balanced");
+        assert_eq!(compression.timeout_seconds, 0);
+
+        let output = OutputConfig::default();
+        assert!(output.progress_bars);
+        assert_eq!(output.color, "auto");
+        assert!(!output.quiet);
+
+        let logging = LoggingConfig::default();
+        assert_eq!(logging.format, "human");
+        assert_eq!(logging.level, "info");
+        assert_eq!(logging.file, "");
+    }
+
+    #[test]
+    fn test_compression_level_values() {
+        for level in &["fast", "balanced", "best"] {
+            let config = Config {
+                compression: CompressionConfig {
+                    default_plugin: "auto".to_string(),
+                    level: level.to_string(),
+                    timeout_seconds: 0,
+                },
+                ..Default::default()
+            };
+            assert!(config.validate().is_ok());
+        }
+    }
+
+    #[test]
+    fn test_color_values() {
+        for color in &["auto", "always", "never"] {
+            let config = Config {
+                output: OutputConfig {
+                    progress_bars: true,
+                    color: color.to_string(),
+                    quiet: false,
+                },
+                ..Default::default()
+            };
+            assert!(config.validate().is_ok());
+        }
+    }
+
+    #[test]
+    fn test_log_format_values() {
+        for format in &["human", "json"] {
+            let config = Config {
+                logging: LoggingConfig {
+                    format: format.to_string(),
+                    level: "info".to_string(),
+                    file: String::new(),
+                },
+                ..Default::default()
+            };
+            assert!(config.validate().is_ok());
+        }
+    }
+
+    #[test]
+    fn test_log_level_values() {
+        for level in &["error", "warn", "info", "debug", "trace"] {
+            let config = Config {
+                logging: LoggingConfig {
+                    format: "human".to_string(),
+                    level: level.to_string(),
+                    file: String::new(),
+                },
+                ..Default::default()
+            };
+            assert!(config.validate().is_ok());
+        }
+    }
+
+    #[test]
+    fn test_get_config_value() {
+        let config = Config::default();
+
+        assert_eq!(get_config_value(&config, "compression.level").unwrap(), "balanced");
+        assert_eq!(get_config_value(&config, "compression.default-plugin").unwrap(), "auto");
+        assert_eq!(get_config_value(&config, "output.color").unwrap(), "auto");
+        assert_eq!(get_config_value(&config, "logging.format").unwrap(), "human");
+        assert_eq!(get_config_value(&config, "logging.level").unwrap(), "info");
+    }
+
+    #[test]
+    fn test_get_config_value_invalid_key() {
+        let config = Config::default();
+
+        assert!(get_config_value(&config, "invalid").is_err());
+        assert!(get_config_value(&config, "invalid.key.too.long").is_err());
+        assert!(get_config_value(&config, "compression.invalid_field").is_err());
+    }
+
+    #[test]
+    fn test_set_config_value() {
+        let mut config = Config::default();
+
+        assert!(set_config_value(&mut config, "compression.level", "fast").is_ok());
+        assert_eq!(config.compression.level, "fast");
+
+        assert!(set_config_value(&mut config, "output.color", "always").is_ok());
+        assert_eq!(config.output.color, "always");
+
+        assert!(set_config_value(&mut config, "logging.level", "debug").is_ok());
+        assert_eq!(config.logging.level, "debug");
+    }
+
+    #[test]
+    fn test_set_config_value_invalid() {
+        let mut config = Config::default();
+
+        assert!(set_config_value(&mut config, "compression.level", "invalid").is_err());
+        assert!(set_config_value(&mut config, "output.color", "invalid").is_err());
+        assert!(set_config_value(&mut config, "logging.format", "invalid").is_err());
+        assert!(set_config_value(&mut config, "logging.level", "invalid").is_err());
+    }
+
+    #[test]
+    fn test_set_config_value_invalid_key() {
+        let mut config = Config::default();
+
+        assert!(set_config_value(&mut config, "invalid", "value").is_err());
+        assert!(set_config_value(&mut config, "invalid.key.long", "value").is_err());
+        assert!(set_config_value(&mut config, "compression.unknown", "value").is_err());
+    }
+
+    #[test]
+    fn test_default_helpers() {
+        assert_eq!(default_plugin(), "auto");
+        assert_eq!(default_level(), "balanced");
+        assert!(default_true());
+        assert_eq!(default_auto(), "auto");
+        assert_eq!(default_human(), "human");
+        assert_eq!(default_info(), "info");
+    }
+}
