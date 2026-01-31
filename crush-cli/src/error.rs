@@ -123,9 +123,18 @@ mod tests {
 
     #[test]
     fn test_exit_codes() {
-        assert_eq!(CliError::Core(CrushError::Plugin(PluginError::NotFound("test".to_string()))).exit_code(), 1);
+        assert_eq!(
+            CliError::Core(CrushError::Plugin(PluginError::NotFound(
+                "test".to_string()
+            )))
+            .exit_code(),
+            1
+        );
         assert_eq!(CliError::Config("test".to_string()).exit_code(), 2);
-        assert_eq!(CliError::Io(io::Error::new(io::ErrorKind::NotFound, "test")).exit_code(), 1);
+        assert_eq!(
+            CliError::Io(io::Error::new(io::ErrorKind::NotFound, "test")).exit_code(),
+            1
+        );
         assert_eq!(CliError::InvalidInput("test".to_string()).exit_code(), 2);
         assert_eq!(CliError::Interrupted.exit_code(), 130);
     }

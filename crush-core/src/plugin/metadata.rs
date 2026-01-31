@@ -421,7 +421,9 @@ mod tests {
         assert!(header.has_metadata());
 
         let bytes = header.to_bytes();
-        assert_eq!(bytes[12] & (flags::HAS_CRC32 | flags::HAS_METADATA),
-                   flags::HAS_CRC32 | flags::HAS_METADATA);
+        assert_eq!(
+            bytes[12] & (flags::HAS_CRC32 | flags::HAS_METADATA),
+            flags::HAS_CRC32 | flags::HAS_METADATA
+        );
     }
 }

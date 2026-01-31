@@ -598,10 +598,19 @@ mod tests {
     fn test_get_config_value() {
         let config = Config::default();
 
-        assert_eq!(get_config_value(&config, "compression.level").unwrap(), "balanced");
-        assert_eq!(get_config_value(&config, "compression.default-plugin").unwrap(), "auto");
+        assert_eq!(
+            get_config_value(&config, "compression.level").unwrap(),
+            "balanced"
+        );
+        assert_eq!(
+            get_config_value(&config, "compression.default-plugin").unwrap(),
+            "auto"
+        );
         assert_eq!(get_config_value(&config, "output.color").unwrap(), "auto");
-        assert_eq!(get_config_value(&config, "logging.format").unwrap(), "human");
+        assert_eq!(
+            get_config_value(&config, "logging.format").unwrap(),
+            "human"
+        );
         assert_eq!(get_config_value(&config, "logging.level").unwrap(), "info");
     }
 

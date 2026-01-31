@@ -172,6 +172,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::unwrap_used)]
     fn test_deflate_decompress_invalid_data() {
         let plugin = DeflatePlugin;
         let cancel_flag = Arc::new(AtomicBool::new(false));
@@ -186,6 +187,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::unwrap_used)]
     fn test_deflate_decompress_cancellation() {
         let plugin = DeflatePlugin;
         let cancel_flag = Arc::new(AtomicBool::new(true)); // Pre-cancelled
@@ -228,7 +230,9 @@ mod tests {
 
         // Test with data larger than 64KB buffer to ensure loop iteration
         let original = vec![0x42u8; 128 * 1024]; // 128KB
-        let compressed = plugin.compress(&original, Arc::clone(&cancel_flag)).unwrap();
+        let compressed = plugin
+            .compress(&original, Arc::clone(&cancel_flag))
+            .unwrap();
         let decompressed = plugin.decompress(&compressed, cancel_flag).unwrap();
 
         assert_eq!(original, decompressed);
@@ -246,5 +250,4 @@ mod tests {
         assert!(metadata.compression_ratio > 0.0 && metadata.compression_ratio <= 1.0);
         assert!(!metadata.description.is_empty());
     }
-
 }

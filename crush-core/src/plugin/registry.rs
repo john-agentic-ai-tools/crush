@@ -248,6 +248,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::unwrap_used)]
     fn test_registry_validation_empty_name() {
         use crate::plugin::PluginMetadata;
 
@@ -299,6 +300,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::unwrap_used)]
     fn test_registry_validation_empty_version() {
         use crate::plugin::PluginMetadata;
 
@@ -350,6 +352,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::unwrap_used)]
     fn test_registry_validation_invalid_throughput() {
         use crate::plugin::PluginMetadata;
 
@@ -401,6 +404,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::unwrap_used)]
     fn test_registry_validation_invalid_compression_ratio() {
         use crate::plugin::PluginMetadata;
 

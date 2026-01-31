@@ -230,6 +230,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::unwrap_used)]
     fn test_run_with_timeout_v1_disconnected() {
         // run_with_timeout v1 has a bug where it doesn't send through the channel
         // This means it always goes to the Disconnected branch
@@ -243,6 +244,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::unwrap_used)]
     fn test_run_with_timeout_v1_operation_error() {
         let timeout = Duration::from_secs(1);
 
@@ -265,6 +267,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::unwrap_used)]
     fn test_run_with_timeout_v2_error_propagation() {
         let timeout = Duration::from_secs(1);
 
@@ -278,6 +281,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::unwrap_used)]
     fn test_effective_timeout_conversion() {
         // Test that 0 timeout becomes Duration::MAX internally
         let timeout = Duration::from_secs(0);
