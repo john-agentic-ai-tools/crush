@@ -4,7 +4,7 @@ use common::*;
 
 /// T034: Roundtrip test - compress then decompress preserves data exactly
 #[test]
-fn test_compress_decompress_roundtrip() {
+fn test_compress_decompress_roundtrip() -> std::io::Result<()> {
     let dir = test_dir();
     // Use larger data to ensure compression reduces size
     let original_content =
@@ -26,7 +26,7 @@ fn test_compress_decompress_roundtrip() {
     assert_compressed(&original, &compressed);
 
     // Now remove original to test decompression
-    std::fs::remove_file(&original).unwrap();
+    std::fs::remove_file(&original)?;
 
     // Step 2: Decompress
     crush_cmd()
@@ -45,11 +45,13 @@ fn test_compress_decompress_roundtrip() {
         original_content.as_slice(),
         "Roundtrip should preserve data exactly"
     );
+
+    Ok(())
 }
 
 /// Roundtrip test with larger random data
 #[test]
-fn test_roundtrip_large_random_file() {
+fn test_roundtrip_large_random_file() -> std::io::Result<()> {
     let dir = test_dir();
     let original = create_random_file(dir.path(), "large.bin", 10 * 1024); // 10KB
     let original_content = read_file(&original);
@@ -67,7 +69,7 @@ fn test_roundtrip_large_random_file() {
 
     // Remove original to avoid conflict during decompression
     // (we already have original_content saved for verification)
-    std::fs::remove_file(&original).unwrap();
+    std::fs::remove_file(&original)?;
 
     // Decompress
     crush_cmd()
@@ -82,4 +84,6 @@ fn test_roundtrip_large_random_file() {
         decompressed_content, original_content,
         "Large file roundtrip should preserve all bytes"
     );
+
+    Ok(())
 }

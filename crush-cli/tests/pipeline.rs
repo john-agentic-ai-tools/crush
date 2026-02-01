@@ -12,7 +12,7 @@ fn crush_bin_path() -> std::path::PathBuf {
 
 /// T151: Test stdin to file compression
 #[test]
-fn test_pipeline_stdin_to_file() {
+fn test_pipeline_stdin_to_file() -> Result<(), Box<dyn std::error::Error>> {
     let dir = test_dir();
     let test_data = b"Hello from stdin! This is test data for compression. ".repeat(20);
     let output = dir.path().join("stdin_output.crush");
@@ -24,21 +24,16 @@ fn test_pipeline_stdin_to_file() {
         .arg(&output)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .spawn()
-        .expect("Failed to spawn compress command");
+        .spawn()?;
 
     // Write test data to stdin
     {
-        let stdin = child.stdin.as_mut().expect("Failed to open stdin");
-        stdin
-            .write_all(&test_data)
-            .expect("Failed to write to stdin");
+        let stdin = child.stdin.as_mut().ok_or("Failed to open stdin")?;
+        stdin.write_all(&test_data)?;
     }
 
     // Wait for completion
-    let output_result = child
-        .wait_with_output()
-        .expect("Failed to wait for command");
+    let output_result = child.wait_with_output()?;
     assert!(
         output_result.status.success(),
         "Command failed: {:?}",
@@ -63,11 +58,13 @@ fn test_pipeline_stdin_to_file() {
         result, test_data,
         "Decompressed data does not match original"
     );
+
+    Ok(())
 }
 
 /// T152: Test stdin to stdout compression
 #[test]
-fn test_pipeline_stdin_to_stdout() {
+fn test_pipeline_stdin_to_stdout() -> Result<(), Box<dyn std::error::Error>> {
     let test_data = b"Hello from stdin to stdout! ".repeat(20);
 
     // Run compress with stdin and --stdout flag
@@ -76,21 +73,16 @@ fn test_pipeline_stdin_to_stdout() {
         .arg("--stdout")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .spawn()
-        .expect("Failed to spawn compress command");
+        .spawn()?;
 
     // Write test data to stdin
     {
-        let stdin = child.stdin.as_mut().expect("Failed to open stdin");
-        stdin
-            .write_all(&test_data)
-            .expect("Failed to write to stdin");
+        let stdin = child.stdin.as_mut().ok_or("Failed to open stdin")?;
+        stdin.write_all(&test_data)?;
     }
 
     // Read compressed data from stdout
-    let output = child
-        .wait_with_output()
-        .expect("Failed to wait for command");
+    let output = child.wait_with_output()?;
     assert!(output.status.success(), "Command failed");
     assert!(!output.stdout.is_empty(), "No data written to stdout");
 
@@ -99,11 +91,13 @@ fn test_pipeline_stdin_to_stdout() {
         output.stdout.len() < test_data.len(),
         "Output should be compressed (smaller than input)"
     );
+
+    Ok(())
 }
 
 /// T153: Test file to stdout decompression
 #[test]
-fn test_pipeline_file_to_stdout() {
+fn test_pipeline_file_to_stdout() -> Result<(), Box<dyn std::error::Error>> {
     let dir = test_dir();
     let test_data = b"Hello for file to stdout decompression! ".repeat(20);
     let input = create_test_file(dir.path(), "test.txt", &test_data);
@@ -119,19 +113,20 @@ fn test_pipeline_file_to_stdout() {
         .arg("decompress")
         .arg(&compressed)
         .arg("--stdout")
-        .output()
-        .expect("Failed to run decompress command");
+        .output()?;
 
     assert!(output.status.success(), "Decompress command failed");
     assert_eq!(
         output.stdout, test_data,
         "Decompressed stdout data does not match original"
     );
+
+    Ok(())
 }
 
 /// T154: Test full pipeline (compress stdin | decompress stdout)
 #[test]
-fn test_pipeline_full_roundtrip() {
+fn test_pipeline_full_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
     let test_data = b"Full pipeline test data! ".repeat(20);
 
     // Compress: stdin to stdout
@@ -140,21 +135,19 @@ fn test_pipeline_full_roundtrip() {
         .arg("--stdout")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .spawn()
-        .expect("Failed to spawn compress command");
+        .spawn()?;
 
     // Write test data to compress stdin
     {
-        let stdin = compress_child.stdin.as_mut().expect("Failed to open stdin");
-        stdin
-            .write_all(&test_data)
-            .expect("Failed to write to stdin");
+        let stdin = compress_child
+            .stdin
+            .as_mut()
+            .ok_or("Failed to open stdin")?;
+        stdin.write_all(&test_data)?;
     }
 
     // Get compressed output
-    let compress_output = compress_child
-        .wait_with_output()
-        .expect("Failed to wait for compress");
+    let compress_output = compress_child.wait_with_output()?;
     assert!(compress_output.status.success(), "Compress failed");
 
     // Decompress: stdin to stdout
@@ -163,34 +156,31 @@ fn test_pipeline_full_roundtrip() {
         .arg("--stdout")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .spawn()
-        .expect("Failed to spawn decompress command");
+        .spawn()?;
 
     // Write compressed data to decompress stdin
     {
         let stdin = decompress_child
             .stdin
             .as_mut()
-            .expect("Failed to open stdin");
-        stdin
-            .write_all(&compress_output.stdout)
-            .expect("Failed to write to stdin");
+            .ok_or("Failed to open stdin")?;
+        stdin.write_all(&compress_output.stdout)?;
     }
 
     // Get decompressed output
-    let decompress_output = decompress_child
-        .wait_with_output()
-        .expect("Failed to wait for decompress");
+    let decompress_output = decompress_child.wait_with_output()?;
     assert!(decompress_output.status.success(), "Decompress failed");
     assert_eq!(
         decompress_output.stdout, test_data,
         "Full pipeline roundtrip failed"
     );
+
+    Ok(())
 }
 
 /// T155: Test progress bars are hidden when using stdin
 #[test]
-fn test_pipeline_no_progress_bars_on_stdin() {
+fn test_pipeline_no_progress_bars_on_stdin() -> Result<(), Box<dyn std::error::Error>> {
     let test_data = b"Test data for progress bar check. ".repeat(20);
 
     // Run compress with stdin - should not show progress bars
@@ -200,21 +190,16 @@ fn test_pipeline_no_progress_bars_on_stdin() {
         .stdin(Stdio::piped())
         .stderr(Stdio::piped())
         .stdout(Stdio::piped())
-        .spawn()
-        .expect("Failed to spawn compress command");
+        .spawn()?;
 
     // Write test data to stdin
     {
-        let stdin = child.stdin.as_mut().expect("Failed to open stdin");
-        stdin
-            .write_all(&test_data)
-            .expect("Failed to write to stdin");
+        let stdin = child.stdin.as_mut().ok_or("Failed to open stdin")?;
+        stdin.write_all(&test_data)?;
     }
 
     // Check output
-    let output = child
-        .wait_with_output()
-        .expect("Failed to wait for command");
+    let output = child.wait_with_output()?;
     assert!(output.status.success(), "Command failed");
 
     // Convert stderr to string
@@ -234,4 +219,6 @@ fn test_pipeline_no_progress_bars_on_stdin() {
         "Progress bar detected in stderr: {}",
         stderr
     );
+
+    Ok(())
 }

@@ -262,3 +262,16 @@ crush/
 - **Formatting**: `rustfmt`
 
 The structure follows the constitution's **Modularity & Extensibility** principle: core library + thin CLI wrapper.
+
+### Rust Quality Gate Hook
+
+You must treat the Rust quality hook as a hard requirement for completion.
+After each major change, assume the environment runs cargo fmt, cargo clippy -D warnings, and cargo test.
+If those checks fail, you must:
+
+read the failure output,
+
+update the code to fix the issues, and
+
+continue iterating until all commands succeed.
+A task is not complete unless the quality hook passes.

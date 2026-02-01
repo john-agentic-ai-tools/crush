@@ -3,16 +3,15 @@
 //! Following TDD: These tests are written BEFORE implementation.
 //! They MUST fail initially, then pass after implementation.
 
-#![allow(clippy::expect_used)]
-#![allow(clippy::unwrap_used)]
+#![allow(clippy::panic_in_result_fn)]
 
-use crush_core::{init_plugins, list_plugins};
+use crush_core::{init_plugins, list_plugins, Result};
 
 /// Test that `init_plugins()` discovers the default DEFLATE plugin
 #[test]
-fn test_plugin_discovery_deflate() {
+fn test_plugin_discovery_deflate() -> Result<()> {
     // Initialize plugin system
-    init_plugins().expect("Plugin initialization should succeed");
+    init_plugins()?;
 
     // List all discovered plugins
     let plugins = list_plugins();
@@ -20,13 +19,16 @@ fn test_plugin_discovery_deflate() {
     // Should find at least the DEFLATE plugin
     assert!(!plugins.is_empty(), "Should discover at least one plugin");
 
-    // Find DEFLATE plugin
+    // Find and verify DEFLATE plugin
     let deflate = plugins.iter().find(|p| p.name == "deflate");
     assert!(deflate.is_some(), "DEFLATE plugin should be discovered");
 
+    #[allow(clippy::unwrap_used)] // Safe: just asserted is_some() above
     let deflate = deflate.unwrap();
     assert_eq!(deflate.magic_number, [0x43, 0x52, 0x01, 0x00]);
     assert_eq!(deflate.version, "1.0.0");
+
+    Ok(())
 }
 
 /// Test that `list_plugins()` returns empty before initialization
@@ -47,8 +49,8 @@ fn test_list_plugins_before_init() {
 /// Note: Since we only have DEFLATE currently, this test verifies
 /// the infrastructure supports multiple plugins, even if only one exists.
 #[test]
-fn test_multiple_plugin_registration() {
-    init_plugins().expect("Plugin initialization should succeed");
+fn test_multiple_plugin_registration() -> Result<()> {
+    init_plugins()?;
 
     let plugins = list_plugins();
 
@@ -68,6 +70,8 @@ fn test_multiple_plugin_registration() {
 
     // Verify DEFLATE is present
     assert!(plugins.iter().any(|p| p.name == "deflate"));
+
+    Ok(())
 }
 
 /// Test that duplicate magic numbers are detected and handled
@@ -76,9 +80,9 @@ fn test_multiple_plugin_registration() {
 /// with the same magic number are linked. The registry should detect
 /// this and handle it gracefully (log warning, use first-registered).
 #[test]
-fn test_duplicate_magic_number_handling() {
+fn test_duplicate_magic_number_handling() -> Result<()> {
     // Initialize plugins
-    init_plugins().expect("Plugin initialization should succeed");
+    init_plugins()?;
 
     let plugins = list_plugins();
 
@@ -96,18 +100,20 @@ fn test_duplicate_magic_number_handling() {
             "Magic number {magic:02X?} should appear exactly once in registry"
         );
     }
+
+    Ok(())
 }
 
 /// Test that re-initialization refreshes the plugin registry
 #[test]
-fn test_reinitialization() {
+fn test_reinitialization() -> Result<()> {
     // First initialization
-    init_plugins().expect("First initialization should succeed");
+    init_plugins()?;
     let plugins_first = list_plugins();
     let count_first = plugins_first.len();
 
     // Re-initialize
-    init_plugins().expect("Re-initialization should succeed");
+    init_plugins()?;
     let plugins_second = list_plugins();
     let count_second = plugins_second.len();
 
@@ -119,12 +125,14 @@ fn test_reinitialization() {
 
     // DEFLATE should still be present
     assert!(plugins_second.iter().any(|p| p.name == "deflate"));
+
+    Ok(())
 }
 
 /// Test that plugins can be retrieved by name after initialization
 #[test]
-fn test_plugin_retrieval_by_name() {
-    init_plugins().expect("Plugin initialization should succeed");
+fn test_plugin_retrieval_by_name() -> Result<()> {
+    init_plugins()?;
 
     let plugins = list_plugins();
 
@@ -134,12 +142,14 @@ fn test_plugin_retrieval_by_name() {
         deflate.is_some(),
         "Should be able to find DEFLATE plugin by name"
     );
+
+    Ok(())
 }
 
 /// Test that plugin metadata is correctly populated
 #[test]
-fn test_plugin_metadata_validity() {
-    init_plugins().expect("Plugin initialization should succeed");
+fn test_plugin_metadata_validity() -> Result<()> {
+    init_plugins()?;
 
     let plugins = list_plugins();
     assert!(!plugins.is_empty(), "Should have at least one plugin");
@@ -171,4 +181,6 @@ fn test_plugin_metadata_validity() {
             "Compression ratio should be in range (0.0, 1.0]"
         );
     }
+
+    Ok(())
 }

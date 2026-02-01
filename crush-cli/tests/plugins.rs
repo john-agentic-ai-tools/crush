@@ -5,10 +5,10 @@ use predicates::prelude::*;
 
 /// T113: Test plugins list shows all registered plugins
 #[test]
-fn test_plugins_list() {
+fn test_plugins_list() -> Result<(), Box<dyn std::error::Error>> {
     let assert = crush_cmd().arg("plugins").arg("list").assert().success();
 
-    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let stdout = String::from_utf8(assert.get_output().stdout.clone())?;
 
     // Should show at least the deflate plugin (default)
     assert!(stdout.contains("deflate"), "Should list deflate plugin");
@@ -26,11 +26,13 @@ fn test_plugins_list() {
         stdout.contains("Throughput") || stdout.contains("throughput") || stdout.contains("MB/s"),
         "Should show throughput"
     );
+
+    Ok(())
 }
 
 /// T114: Test plugins list with JSON format
 #[test]
-fn test_plugins_list_json() {
+fn test_plugins_list_json() -> Result<(), Box<dyn std::error::Error>> {
     let assert = crush_cmd()
         .arg("plugins")
         .arg("list")
@@ -39,7 +41,7 @@ fn test_plugins_list_json() {
         .assert()
         .success();
 
-    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let stdout = String::from_utf8(assert.get_output().stdout.clone())?;
 
     // Should be valid JSON
     assert!(
@@ -56,11 +58,13 @@ fn test_plugins_list_json() {
         stdout.contains("name") || stdout.contains("\"name\""),
         "Should have name field"
     );
+
+    Ok(())
 }
 
 /// T115: Test plugins info shows detailed information
 #[test]
-fn test_plugins_info() {
+fn test_plugins_info() -> Result<(), Box<dyn std::error::Error>> {
     let assert = crush_cmd()
         .arg("plugins")
         .arg("info")
@@ -68,7 +72,7 @@ fn test_plugins_info() {
         .assert()
         .success();
 
-    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let stdout = String::from_utf8(assert.get_output().stdout.clone())?;
 
     // Should show detailed information
     assert!(stdout.contains("deflate"), "Should show plugin name");
@@ -88,6 +92,8 @@ fn test_plugins_info() {
         stdout.contains("Description") || stdout.contains("description"),
         "Should show description"
     );
+
+    Ok(())
 }
 
 /// T116: Test plugin not found error
@@ -108,7 +114,7 @@ fn test_plugins_info_not_found() {
 
 /// T117: Test plugin self-test roundtrip validation
 #[test]
-fn test_plugins_test() {
+fn test_plugins_test() -> Result<(), Box<dyn std::error::Error>> {
     let assert = crush_cmd()
         .arg("plugins")
         .arg("test")
@@ -116,7 +122,7 @@ fn test_plugins_test() {
         .assert()
         .success();
 
-    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let stdout = String::from_utf8(assert.get_output().stdout.clone())?;
 
     // Should show test results
     assert!(
@@ -124,4 +130,6 @@ fn test_plugins_test() {
         "Should show test passed"
     );
     assert!(stdout.contains("deflate"), "Should mention plugin name");
+
+    Ok(())
 }
