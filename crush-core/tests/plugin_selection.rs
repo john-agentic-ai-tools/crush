@@ -3,10 +3,9 @@
 //! Following TDD: These tests are written BEFORE implementation.
 //! They MUST fail initially, then pass after implementation.
 
-#![allow(clippy::expect_used)]
-#![allow(clippy::unwrap_used)]
+#![allow(clippy::panic_in_result_fn)]
 
-use crush_core::{compress_with_options, init_plugins, CompressionOptions, ScoringWeights};
+use crush_core::{compress_with_options, init_plugins, CompressionOptions, Result, ScoringWeights};
 
 /// Test that plugin scoring selects the highest-scoring plugin
 ///
@@ -14,20 +13,22 @@ use crush_core::{compress_with_options, init_plugins, CompressionOptions, Scorin
 /// the selection algorithm chooses the one with the best score
 /// based on the default 70/30 throughput/ratio weighting.
 #[test]
-fn test_plugin_scoring_selection() {
-    init_plugins().expect("Plugin initialization failed");
+fn test_plugin_scoring_selection() -> Result<()> {
+    init_plugins()?;
 
     // Compress data with default selection (should pick highest scoring plugin)
     let data = b"Test data for plugin selection based on scoring algorithm.";
     let options = CompressionOptions::default();
 
-    let compressed = compress_with_options(data, &options).expect("Compression should succeed");
+    let compressed = compress_with_options(data, &options)?;
 
     // Verify compression succeeded
     assert!(!compressed.is_empty());
 
     // Note: With only DEFLATE plugin currently, this just verifies the selection logic works
     // In future, with multiple plugins, we can verify the correct plugin was selected
+
+    Ok(())
 }
 
 /// Test manual plugin override by name
@@ -35,27 +36,29 @@ fn test_plugin_scoring_selection() {
 /// Verifies that specifying a plugin name explicitly uses that plugin
 /// regardless of scoring.
 #[test]
-fn test_manual_plugin_override() {
-    init_plugins().expect("Plugin initialization failed");
+fn test_manual_plugin_override() -> Result<()> {
+    init_plugins()?;
 
     let data = b"Test data for manual plugin override.";
 
     // Explicitly request DEFLATE plugin by name
     let options = CompressionOptions::default().with_plugin("deflate");
 
-    let compressed = compress_with_options(data, &options).expect("Compression should succeed");
+    let compressed = compress_with_options(data, &options)?;
 
     // Verify compression succeeded
     assert!(!compressed.is_empty());
 
     // Verify the header has DEFLATE magic number
     assert_eq!(&compressed[0..4], &[0x43, 0x52, 0x01, 0x00]);
+
+    Ok(())
 }
 
 /// Test that requesting a non-existent plugin returns an error
 #[test]
-fn test_manual_override_nonexistent_plugin() {
-    init_plugins().expect("Plugin initialization failed");
+fn test_manual_override_nonexistent_plugin() -> Result<()> {
+    init_plugins()?;
 
     let data = b"Test data";
     let options = CompressionOptions::default().with_plugin("nonexistent");
@@ -64,6 +67,8 @@ fn test_manual_override_nonexistent_plugin() {
 
     // Should fail because plugin doesn't exist
     assert!(result.is_err());
+
+    Ok(())
 }
 
 /// Test tied plugin scores are resolved alphabetically
@@ -71,19 +76,21 @@ fn test_manual_override_nonexistent_plugin() {
 /// When two plugins have identical scores, the one with the
 /// alphabetically first name should be selected.
 #[test]
-fn test_tied_score_alphabetical_resolution() {
-    init_plugins().expect("Plugin initialization failed");
+fn test_tied_score_alphabetical_resolution() -> Result<()> {
+    init_plugins()?;
 
     let data = b"Test data for tied score resolution.";
     let options = CompressionOptions::default();
 
-    let compressed = compress_with_options(data, &options).expect("Compression should succeed");
+    let compressed = compress_with_options(data, &options)?;
 
     // Verify compression succeeded
     assert!(!compressed.is_empty());
 
     // Note: With only DEFLATE, this tests the tie-breaking logic exists
     // With multiple plugins having same score, alphabetical selection would be verified
+
+    Ok(())
 }
 
 /// Test custom scoring weights
@@ -91,21 +98,23 @@ fn test_tied_score_alphabetical_resolution() {
 /// Verifies that changing the throughput/ratio weights affects
 /// plugin selection appropriately.
 #[test]
-fn test_custom_scoring_weights() {
-    init_plugins().expect("Plugin initialization failed");
+fn test_custom_scoring_weights() -> Result<()> {
+    init_plugins()?;
 
     let data = b"Test data for custom weights.";
 
     // Use 50/50 weighting instead of default 70/30
-    let weights = ScoringWeights::new(0.5, 0.5).expect("Valid weights");
+    let weights = ScoringWeights::new(0.5, 0.5)?;
     let options = CompressionOptions::default().with_weights(weights);
 
-    let compressed = compress_with_options(data, &options).expect("Compression should succeed");
+    let compressed = compress_with_options(data, &options)?;
 
     // Verify compression succeeded
     assert!(!compressed.is_empty());
 
     // Note: With only DEFLATE, result is same, but test verifies weight system works
+
+    Ok(())
 }
 
 /// Test that invalid scoring weights are rejected
@@ -146,7 +155,7 @@ fn test_default_scoring_weights() {
 /// This test doesn't require multiple plugins, just verifies the scoring
 /// algorithm produces expected results for given metadata.
 #[test]
-fn test_scoring_calculation() {
+fn test_scoring_calculation() -> Result<()> {
     use crush_core::PluginMetadata;
 
     // Create test metadata
@@ -182,7 +191,7 @@ fn test_scoring_calculation() {
     );
 
     // With 50/50 weights, might be different
-    let balanced_weights = ScoringWeights::new(0.5, 0.5).unwrap();
+    let balanced_weights = ScoringWeights::new(0.5, 0.5)?;
     let balanced_score_a =
         crush_core::calculate_plugin_score(&plugin_a, &plugins, &balanced_weights);
     let balanced_score_b =
@@ -191,4 +200,6 @@ fn test_scoring_calculation() {
     // Scores should be different from 70/30 case
     assert!((balanced_score_a - score_a).abs() > 1e-6);
     assert!((balanced_score_b - score_b).abs() > 1e-6);
+
+    Ok(())
 }

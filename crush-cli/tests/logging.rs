@@ -5,7 +5,7 @@ use std::fs;
 
 /// T137: Test JSON format output
 #[test]
-fn test_logging_json_format() {
+fn test_logging_json_format() -> Result<(), Box<dyn std::error::Error>> {
     let dir = test_dir();
     let test_data = b"json logging test data";
     let input = create_test_file(dir.path(), "test.txt", test_data);
@@ -27,7 +27,7 @@ fn test_logging_json_format() {
     assert!(log_file.exists(), "Log file should be created");
 
     // Read log file
-    let log_contents = fs::read_to_string(&log_file).expect("Should read log file");
+    let log_contents = fs::read_to_string(&log_file)?;
 
     // Verify JSON format (should have opening brace)
     assert!(log_contents.contains("{"), "Should contain JSON objects");
@@ -43,11 +43,13 @@ fn test_logging_json_format() {
         log_contents.contains("\"message\"") || log_contents.contains("\"msg\""),
         "Should have message field"
     );
+
+    Ok(())
 }
 
 /// T138: Test error context in logs
 #[test]
-fn test_logging_error_context() {
+fn test_logging_error_context() -> Result<(), Box<dyn std::error::Error>> {
     let dir = test_dir();
     let log_file = dir.path().join("error.log");
 
@@ -62,7 +64,7 @@ fn test_logging_error_context() {
         .failure();
 
     // Verify stderr contains error
-    let stderr = String::from_utf8(assert.get_output().stderr.clone()).unwrap();
+    let stderr = String::from_utf8(assert.get_output().stderr.clone())?;
     assert!(
         stderr.contains("not found") || stderr.contains("does not exist"),
         "Should show error message"
@@ -70,18 +72,20 @@ fn test_logging_error_context() {
 
     // If log file was created, verify it contains error context
     if log_file.exists() {
-        let log_contents = fs::read_to_string(&log_file).expect("Should read log file");
+        let log_contents = fs::read_to_string(&log_file)?;
         // Log should have some context (filename, error type, etc.)
         assert!(
             log_contents.contains("nonexistent") || log_contents.contains("Starting"),
             "Log should contain context about the operation"
         );
     }
+
+    Ok(())
 }
 
 /// T139: Test log file creation
 #[test]
-fn test_logging_file_creation() {
+fn test_logging_file_creation() -> Result<(), Box<dyn std::error::Error>> {
     let dir = test_dir();
     let test_data = b"log file test data";
     let input = create_test_file(dir.path(), "test.txt", test_data);
@@ -104,7 +108,7 @@ fn test_logging_file_creation() {
     assert!(log_file.exists(), "Log file should be created");
 
     // Verify log file contains log entries
-    let log_contents = fs::read_to_string(&log_file).expect("Should read log file");
+    let log_contents = fs::read_to_string(&log_file)?;
     assert!(!log_contents.is_empty(), "Log file should not be empty");
 
     // Should contain operation information
@@ -114,4 +118,6 @@ fn test_logging_file_creation() {
             || log_contents.contains("Compressed"),
         "Log should contain compression operation info"
     );
+
+    Ok(())
 }

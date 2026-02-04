@@ -1,0 +1,15 @@
+{
+    "hooks": {
+        "Stop": [
+            {
+                "hooks": [
+                    {
+                        "type": "command",
+                        "name": "rust_quality_gate",
+                        "command": "bash .claude/hooks/rust-quality-gate.sh"
+                    }
+                ]
+            }
+        ]
+    }
+}

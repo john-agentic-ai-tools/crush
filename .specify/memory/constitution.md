@@ -1,16 +1,17 @@
 <!--
 Sync Impact Report:
-- Version change: 1.2.0 → 1.3.0
-- Modified principles: AI Agent Behavior Guidance - added Specification Adherence
+- Version change: 1.4.0 → 1.5.0
+- Modified principles: Rust Style & Standards - added Clippy Warning Handling
 - Added sections:
-  * Specification Adherence (CRITICAL) - agents must implement only what is in spec.md
+  * Clippy Warning Handling (MANDATORY) - fix warnings, don't suppress them
 - Removed sections: N/A
 - Templates requiring updates:
-  ✅ constitution.md - updated
-  ⚠ plan-template.md - should validate implementation against spec.md
-  ⚠ tasks-template.md - should reference spec.md for feature scope
-- Follow-up TODOs: None
-- Rationale: Prevents scope creep by requiring agents to implement exactly what's specified, not what they assume based on conventions from other tools
+  ⚠ All code - review existing #[allow(clippy::...)] attributes
+  ⚠ New code - MUST fix clippy warnings instead of suppressing
+- Follow-up TODOs:
+  * Review and remove unnecessary clippy allow attributes
+  * Document justification for any remaining suppressions
+- Rationale: Suppressing warnings creates technical debt and hides code quality issues. Addressing warnings improves maintainability, safety, and idiomaticity.
 -->
 
 # Crush Constitution
@@ -138,6 +139,69 @@ pub enum CrushError {
 
 pub type Result<T> = std::result::Result<T, CrushError>;
 ```
+
+### Test Writing Standards (MANDATORY)
+
+Tests MUST follow idiomatic Rust patterns and avoid test-specific anti-patterns.
+
+**Requirements**:
+- Test functions SHOULD return `Result<()>` and use `?` for error propagation
+- AVOID `#[allow(clippy::unwrap_used)]` - prefer `?` operator instead
+- AVOID `#[allow(clippy::expect_used)]` - prefer `?` operator instead
+- Use `assert!` macros with `?` for cleaner, more maintainable tests
+- Test failures should provide clear error context via Result propagation
+
+**Preferred Pattern**:
+```rust
+#[test]
+fn test_compression_roundtrip() -> Result<()> {
+    let original = b"Test data";
+    let compressed = compress(original)?;
+    let decompressed = decompress(&compressed)?;
+
+    assert_eq!(original.as_slice(), decompressed.as_slice());
+    Ok(())
+}
+```
+
+**Anti-Pattern (Avoid)**:
+```rust
+#[test]
+#[allow(clippy::unwrap_used)]
+fn test_compression_roundtrip() {
+    let original = b"Test data";
+    let compressed = compress(original).unwrap();
+    let decompressed = decompress(&compressed).unwrap();
+
+    assert_eq!(original.as_slice(), decompressed.as_slice());
+}
+```
+
+**Rationale**: Using `?` in tests makes error handling explicit and provides better error messages when tests fail. Clippy allow attributes for `unwrap` create technical debt and hide potential improvements. Result-returning tests are idiomatic Rust and simplify test maintenance.
+
+### Clippy Warning Handling (MANDATORY)
+
+Clippy warnings MUST be resolved by fixing the underlying issue, not by suppressing the warning, unless no better solution exists.
+
+**Requirements**:
+- FIX warnings by addressing the root cause (refactor code, change patterns, remove unnecessary code)
+- AVOID `#[allow(clippy::...)]` attributes unless absolutely necessary
+- JUSTIFY any clippy suppression with a comment explaining why the alternative is worse
+- PREFER removing unnecessary code over suppressing warnings about it
+- USE function-level `#[allow]` instead of module-level when suppression is unavoidable
+
+**Examples of Proper Resolution**:
+- `unnecessary_wraps`: Remove `Result<()>` from functions that don't use `?`, don't suppress
+- `unwrap_used`: Use `?` operator or proper error handling, don't suppress
+- `panic_in_result_fn`: Acceptable in test code where assertions are expected (document reason)
+
+**When Suppression is Acceptable**:
+- Test code using assertions (`panic_in_result_fn`) - test assertions are expected behavior
+- Platform-specific code that can't be refactored (`cfg` conditionals)
+- External API constraints that force non-idiomatic patterns
+- Performance-critical sections where the "correct" pattern measurably degrades performance
+
+**Rationale**: Suppressing warnings creates technical debt and hides code quality issues. Warnings exist to guide better code - addressing them improves maintainability, safety, and idiomaticity. Suppression should be a last resort with clear justification, not a first response.
 
 ## Development Toolchain
 
@@ -374,4 +438,4 @@ This constitution supersedes all other development practices. When in conflict, 
 - Major violations (safety, correctness, TDD bypass): Block merge, require rework
 - Repeated violations: Review contributor access and training needs
 
-**Version**: 1.2.0 | **Ratified**: 2026-01-17 | **Last Amended**: 2026-01-17
+**Version**: 1.5.0 | **Ratified**: 2026-01-17 | **Last Amended**: 2026-01-31

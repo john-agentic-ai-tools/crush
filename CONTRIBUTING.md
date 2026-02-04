@@ -20,9 +20,12 @@ Crush uses a pinned Rust toolchain to ensure consistency across all development 
 
 | Tool | Purpose | Installation |
 |------|---------|--------------|
+| Git | Version control + bash shell for hooks | [git-scm.com](https://git-scm.com/downloads) |
 | Rust | Compilation | [rustup.rs](https://rustup.rs) |
 | Docker | Local CI testing | [docker.com](https://docs.docker.com/get-docker/) |
 | act-cli | Run GitHub Actions locally | `choco install act-cli` or [nektos/act](https://github.com/nektos/act) |
+
+**Note**: On Windows, you must have a Unix shell environments such  Git Bash or Windows Subsystem for Linux. This is required for the quality gate hooks (`.claude/hooks/*.sh`).
 
 ### Installation Steps
 
