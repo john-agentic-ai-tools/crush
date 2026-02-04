@@ -50,9 +50,9 @@ echo "[hook] Using cargo: $CARGO" >&2
 echo "[hook] Running Rust quality gate..." >&2
 
 # 1. Ensure code is formatted
-if ! "$CARGO" fmt -- --check 2>&1; then
-  echo "[hook] Code not formatted. Run: cargo fmt" >&2
-  exit 1
+if ! "$CARGO" fmt 2>&1; then
+    echo "[hook] Failed to format code. Run: cargo fmt" >&2
+    exit 1
 fi
 
 # 2. Clippy with warnings as errors
