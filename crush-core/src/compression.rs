@@ -3,17 +3,22 @@
 //! Provides the public `compress()` API that compresses data using the default
 //! DEFLATE plugin and wraps it with a Crush header.
 
+use crate::cancel::CancellationToken;
 use crate::error::Result;
 use crate::plugin::registry::{get_default_plugin, get_plugin_by_magic};
-use crate::plugin::{run_with_timeout, CrushHeader, FileMetadata, PluginSelector, ScoringWeights};
+use crate::plugin::{
+    run_with_timeout, run_with_timeout_and_cancel, CrushHeader, FileMetadata, PluginSelector,
+    ScoringWeights,
+};
 use crc32fast::Hasher;
+use std::sync::Arc;
 use std::time::Duration;
 
 /// Default timeout for compression operations (0 = no timeout)
 pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(0);
 
 /// Compression options for plugin selection and scoring
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct CompressionOptions {
     /// Optional plugin name for manual override
     plugin_name: Option<String>,
@@ -26,6 +31,9 @@ pub struct CompressionOptions {
 
     /// Optional file metadata
     file_metadata: Option<FileMetadata>,
+
+    /// Optional cancellation token for Ctrl+C support
+    cancel_token: Option<Arc<dyn CancellationToken>>,
 }
 
 impl CompressionOptions {
@@ -37,6 +45,7 @@ impl CompressionOptions {
             weights: ScoringWeights::default(),
             timeout: DEFAULT_TIMEOUT,
             file_metadata: None,
+            cancel_token: None,
         }
     }
 
@@ -66,6 +75,28 @@ impl CompressionOptions {
     pub fn with_file_metadata(mut self, metadata: FileMetadata) -> Self {
         self.file_metadata = Some(metadata);
         self
+    }
+
+    /// Set cancellation token for Ctrl+C support
+    #[must_use]
+    pub fn with_cancel_token(mut self, token: Arc<dyn CancellationToken>) -> Self {
+        self.cancel_token = Some(token);
+        self
+    }
+}
+
+impl std::fmt::Debug for CompressionOptions {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CompressionOptions")
+            .field("plugin_name", &self.plugin_name)
+            .field("weights", &self.weights)
+            .field("timeout", &self.timeout)
+            .field("file_metadata", &self.file_metadata)
+            .field(
+                "cancel_token",
+                &self.cancel_token.as_ref().map(|_| "Some(...)"),
+            )
+            .finish()
     }
 }
 
@@ -165,6 +196,13 @@ pub fn compress(input: &[u8]) -> Result<Vec<u8>> {
 /// let compressed = compress_with_options(data, &options).expect("Compression failed");
 /// ```
 pub fn compress_with_options(input: &[u8], options: &CompressionOptions) -> Result<Vec<u8>> {
+    // Check if already cancelled before starting
+    if let Some(ref token) = options.cancel_token {
+        if token.is_cancelled() {
+            return Err(crate::error::CrushError::Cancelled);
+        }
+    }
+
     // Select plugin based on options
     let selector = PluginSelector::new(options.weights);
 
@@ -187,11 +225,13 @@ pub fn compress_with_options(input: &[u8], options: &CompressionOptions) -> Resu
     // Clone input for move into timeout closure
     let input_owned = input.to_vec();
     let timeout = options.timeout;
+    let cancel_token = options.cancel_token.clone();
 
-    // Compress the data with timeout protection
-    let compressed_payload = run_with_timeout(timeout, move |cancel_flag| {
-        plugin.compress(&input_owned, cancel_flag)
-    })?;
+    // Compress the data with timeout and cancellation protection
+    let compressed_payload =
+        run_with_timeout_and_cancel(timeout, cancel_token, move |cancel_flag| {
+            plugin.compress(&input_owned, cancel_flag)
+        })?;
 
     // Handle file metadata
     let metadata_bytes = options

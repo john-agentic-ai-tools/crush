@@ -31,7 +31,8 @@ coverage/
 test-results/
 lcov.info
 *.lcov
-
+test-*.txt
+test-*.txt.crush
 # Environment
 .env*
 *.log

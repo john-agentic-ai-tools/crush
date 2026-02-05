@@ -4,6 +4,7 @@
 //! Uses crossbeam channels for reliable timeout detection and `Arc<AtomicBool>`
 //! for cooperative cancellation within plugins.
 
+use crate::cancel::CancellationToken;
 use crate::error::{Result, TimeoutError};
 use crossbeam::channel;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -164,6 +165,120 @@ where
             Err(TimeoutError::PluginPanic.into())
         }
     }
+}
+
+/// Run an operation with timeout protection and external cancellation support
+///
+/// This version supports both timeout-based cancellation and external cancellation
+/// via a `CancellationToken` (e.g., for Ctrl+C handling).
+///
+/// # Arguments
+///
+/// * `timeout` - Maximum duration to wait for operation completion (0 = no timeout)
+/// * `cancel_token` - Optional external cancellation token
+/// * `operation` - The operation to run (receives cancellation flag)
+///
+/// # Returns
+///
+/// The operation's result if it completes, otherwise a timeout or cancellation error
+///
+/// # Errors
+///
+/// Returns an error if:
+/// - Operation times out
+/// - External cancellation is triggered
+/// - Plugin thread panics during execution
+/// - Operation returns an error
+pub fn run_with_timeout_and_cancel<F, T>(
+    timeout: Duration,
+    cancel_token: Option<Arc<dyn CancellationToken>>,
+    operation: F,
+) -> Result<T>
+where
+    F: FnOnce(Arc<AtomicBool>) -> Result<T> + Send + 'static,
+    T: Send + 'static,
+{
+    // Check if already cancelled before starting
+    if let Some(ref token) = cancel_token {
+        if token.is_cancelled() {
+            return Err(crate::error::CrushError::Cancelled);
+        }
+    }
+
+    // Timeout of 0 means no timeout - use Duration::MAX for effectively infinite wait
+    let effective_timeout = if timeout == Duration::from_secs(0) {
+        Duration::MAX
+    } else {
+        timeout
+    };
+
+    let cancel_flag = Arc::new(AtomicBool::new(false));
+    let cancel_flag_thread = Arc::clone(&cancel_flag);
+    let cancel_flag_guard = Arc::clone(&cancel_flag);
+    let cancel_flag_monitor = Arc::clone(&cancel_flag);
+
+    // Spawn a monitor thread for external cancellation token
+    let monitor_handle = if let Some(token) = cancel_token {
+        let handle = std::thread::spawn(move || {
+            // Poll the external token very frequently for responsive cancellation
+            while !cancel_flag_monitor.load(Ordering::Acquire) {
+                if token.is_cancelled() {
+                    // External cancellation requested - signal the plugin
+                    cancel_flag_monitor.store(true, Ordering::Release);
+                    break;
+                }
+                // Use a very short sleep for fast response
+                std::thread::sleep(Duration::from_micros(100));
+            }
+        });
+        Some(handle)
+    } else {
+        None
+    };
+
+    let (tx, rx) = channel::bounded(1);
+
+    // Spawn operation in dedicated thread
+    std::thread::spawn(move || {
+        let _guard = TimeoutGuard {
+            cancel_flag: cancel_flag_guard,
+        };
+
+        // Run operation and send result
+        let result = operation(cancel_flag_thread);
+        let _ = tx.send(result); // Ignore send errors (receiver might have timed out)
+    });
+
+    // Wait for completion or timeout
+    let result = match rx.recv_timeout(effective_timeout) {
+        Ok(result) => {
+            // Convert PluginError::Cancelled to CrushError::Cancelled
+            match result {
+                Err(crate::error::CrushError::Plugin(crate::error::PluginError::Cancelled)) => {
+                    Err(crate::error::CrushError::Cancelled)
+                }
+                other => other,
+            }
+        }
+        Err(channel::RecvTimeoutError::Timeout) => {
+            // Signal cancellation to the operation
+            cancel_flag.store(true, Ordering::Release);
+            eprintln!("Warning: Plugin operation timed out after {timeout:?}");
+            Err(TimeoutError::Timeout(timeout).into())
+        }
+        Err(channel::RecvTimeoutError::Disconnected) => {
+            eprintln!("Warning: Plugin thread panicked during execution");
+            Err(TimeoutError::PluginPanic.into())
+        }
+    };
+
+    // Stop the monitor thread if it's still running
+    cancel_flag.store(true, Ordering::Release);
+    if let Some(handle) = monitor_handle {
+        let _ = handle.join(); // Wait for monitor to finish
+    }
+
+    result
 }
 
 #[cfg(test)]

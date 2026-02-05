@@ -1,6 +1,7 @@
 use crate::cli::CompressArgs;
 use crate::error::{CliError, Result};
 use crate::output::{self, CompressionResult};
+use crush_core::cancel::CancellationToken;
 use crush_core::plugin::FileMetadata;
 use crush_core::{compress_with_options, CompressionOptions};
 use filetime::FileTime;
@@ -9,12 +10,11 @@ use is_terminal::IsTerminal;
 use std::fs::{self, File};
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tracing::{debug, info, instrument, trace};
 
-pub fn run(args: &CompressArgs, interrupted: Arc<AtomicBool>) -> Result<()> {
+pub fn run(args: &CompressArgs, interrupted: Arc<dyn CancellationToken>) -> Result<()> {
     // Check if reading from stdin (no input files provided)
     if args.input.is_empty() {
         compress_stdin(args, interrupted)?;
@@ -29,11 +29,11 @@ pub fn run(args: &CompressArgs, interrupted: Arc<AtomicBool>) -> Result<()> {
 
 /// Compress data from stdin
 #[instrument(skip(args, interrupted))]
-fn compress_stdin(args: &CompressArgs, interrupted: Arc<AtomicBool>) -> Result<()> {
+fn compress_stdin(args: &CompressArgs, interrupted: Arc<dyn CancellationToken>) -> Result<()> {
     info!("Compressing from stdin");
 
-    // Check for interrupt before starting
-    if interrupted.load(Ordering::SeqCst) {
+    // Check for cancellation before starting
+    if interrupted.is_cancelled() {
         return Err(CliError::Interrupted);
     }
 
@@ -51,13 +51,15 @@ fn compress_stdin(args: &CompressArgs, interrupted: Arc<AtomicBool>) -> Result<(
     let input_size = input_data.len() as u64;
     debug!("Read {} bytes from stdin", input_size);
 
-    // Check for interrupt after reading
-    if interrupted.load(Ordering::SeqCst) {
+    // Check for cancellation after reading
+    if interrupted.is_cancelled() {
         return Err(CliError::Interrupted);
     }
 
     // Prepare compression options (no file metadata for stdin)
-    let mut options = CompressionOptions::default().with_weights(args.level.to_weights());
+    let mut options = CompressionOptions::default()
+        .with_weights(args.level.to_weights())
+        .with_cancel_token(Arc::clone(&interrupted));
 
     if let Some(ref plugin) = args.plugin {
         debug!("Using manually selected plugin: {}", plugin);
@@ -77,7 +79,7 @@ fn compress_stdin(args: &CompressArgs, interrupted: Arc<AtomicBool>) -> Result<(
     // Start timing
     let start = Instant::now();
 
-    // Compress
+    // Compress (cancellation is handled internally by compress_with_options)
     trace!("Starting compression operation");
     let compressed_data = compress_with_options(&input_data, &options)?;
 
@@ -90,7 +92,7 @@ fn compress_stdin(args: &CompressArgs, interrupted: Arc<AtomicBool>) -> Result<(
     );
 
     // Check for interrupt before writing
-    if interrupted.load(Ordering::SeqCst) {
+    if interrupted.is_cancelled() {
         return Err(CliError::Interrupted);
     }
 
@@ -112,7 +114,7 @@ fn compress_stdin(args: &CompressArgs, interrupted: Arc<AtomicBool>) -> Result<(
         }
 
         // Check for interrupt after writing (cleanup partial file if interrupted)
-        if interrupted.load(Ordering::SeqCst) {
+        if interrupted.is_cancelled() {
             let _ = fs::remove_file(output_path);
             return Err(CliError::Interrupted);
         }
@@ -167,11 +169,11 @@ fn compress_stdin(args: &CompressArgs, interrupted: Arc<AtomicBool>) -> Result<(
 fn compress_file(
     input_path: &Path,
     args: &CompressArgs,
-    interrupted: Arc<AtomicBool>,
+    interrupted: Arc<dyn CancellationToken>,
 ) -> Result<()> {
     info!("Starting compression of {}", input_path.display());
     // Check for interrupt before starting
-    if interrupted.load(Ordering::SeqCst) {
+    if interrupted.is_cancelled() {
         return Err(CliError::Interrupted);
     }
 
@@ -217,7 +219,8 @@ fn compress_file(
 
     let mut options = CompressionOptions::default()
         .with_weights(args.level.to_weights())
-        .with_file_metadata(file_meta);
+        .with_file_metadata(file_meta)
+        .with_cancel_token(Arc::clone(&interrupted));
 
     if let Some(ref plugin) = args.plugin {
         debug!("Using manually selected plugin: {}", plugin);
@@ -240,7 +243,7 @@ fn compress_file(
     debug!("Read {} bytes from input file", input_data.len());
 
     // Check for interrupt after reading
-    if interrupted.load(Ordering::SeqCst) {
+    if interrupted.is_cancelled() {
         return Err(CliError::Interrupted);
     }
 
@@ -265,7 +268,7 @@ fn compress_file(
     }
 
     // Check for interrupt before writing
-    if interrupted.load(Ordering::SeqCst) {
+    if interrupted.is_cancelled() {
         return Err(CliError::Interrupted);
     }
 
@@ -284,7 +287,7 @@ fn compress_file(
         }
 
         // Check for interrupt after writing (cleanup partial file if interrupted)
-        if interrupted.load(Ordering::SeqCst) {
+        if interrupted.is_cancelled() {
             // Remove the output file we just wrote
             let _ = fs::remove_file(&output_path);
             return Err(CliError::Interrupted);

@@ -40,7 +40,11 @@ impl std::error::Error for CliError {
 
 impl From<crush_core::CrushError> for CliError {
     fn from(e: crush_core::CrushError) -> Self {
-        CliError::Core(e)
+        // Convert Cancelled core error to Interrupted CLI error
+        match e {
+            crush_core::CrushError::Cancelled => CliError::Interrupted,
+            other => CliError::Core(other),
+        }
     }
 }
 

@@ -1,0 +1,5 @@
+# Enforce Unix line endings for shell scripts
+*.sh text eol=lf
+
+# Enforce Unix line endings for hook scripts specifically
+.claude/hooks/* text eol=lf

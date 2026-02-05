@@ -23,7 +23,7 @@ By focusing on fast, extensible compression rather than one-size-fits-all algori
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/crush.git
+git clone https://github.com/john-agentic-ai-tools/crush.git
 cd crush
 
 # Build release binary
@@ -35,7 +35,7 @@ cargo install --path crush-cli
 
 ### Binary Release
 
-Download the latest release from [GitHub Releases](https://github.com/yourusername/crush/releases).
+Download the latest release from [GitHub Releases](https://github.com/john-agentic-ai-tools/crush/releases).
 
 ## Quick Start
 
@@ -446,7 +446,7 @@ crush config set compression.level balanced
 crush config set compression.level best
 ```
 
-### Benchmarking
+### Benchmarking CLI
 
 ```bash
 # Measure compression performance
@@ -595,7 +595,7 @@ print(f"Compression ratio: {info['compression_ratio']:.1%}")
 
 ## Project Structure
 
-```
+```text
 crush/
 ├── crush-core/          # Core compression library
 │   ├── src/

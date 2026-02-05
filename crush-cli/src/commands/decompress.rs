@@ -1,6 +1,7 @@
 use crate::cli::DecompressArgs;
 use crate::error::{CliError, Result};
 use crate::output::{self, DecompressionResult};
+use crush_core::cancel::CancellationToken;
 use crush_core::decompress;
 use filetime::{set_file_mtime, FileTime};
 use indicatif::{ProgressBar, ProgressStyle};
@@ -8,12 +9,11 @@ use is_terminal::IsTerminal;
 use std::fs::{self, File};
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tracing::{debug, info, instrument, trace};
 
-pub fn run(args: &DecompressArgs, interrupted: Arc<AtomicBool>) -> Result<()> {
+pub fn run(args: &DecompressArgs, interrupted: Arc<dyn CancellationToken>) -> Result<()> {
     // Check if reading from stdin (no input files and stdout mode)
     if args.input.is_empty() {
         if args.stdout {
@@ -35,11 +35,11 @@ pub fn run(args: &DecompressArgs, interrupted: Arc<AtomicBool>) -> Result<()> {
 
 /// Decompress data from stdin
 #[instrument(skip(_args, interrupted))]
-fn decompress_stdin(_args: &DecompressArgs, interrupted: Arc<AtomicBool>) -> Result<()> {
+fn decompress_stdin(_args: &DecompressArgs, interrupted: Arc<dyn CancellationToken>) -> Result<()> {
     info!("Decompressing from stdin");
 
     // Check for interrupt before starting
-    if interrupted.load(Ordering::SeqCst) {
+    if interrupted.is_cancelled() {
         return Err(CliError::Interrupted);
     }
 
@@ -51,7 +51,7 @@ fn decompress_stdin(_args: &DecompressArgs, interrupted: Arc<AtomicBool>) -> Res
     debug!("Read {} bytes from stdin", input_size);
 
     // Check for interrupt after reading
-    if interrupted.load(Ordering::SeqCst) {
+    if interrupted.is_cancelled() {
         return Err(CliError::Interrupted);
     }
 
@@ -72,7 +72,7 @@ fn decompress_stdin(_args: &DecompressArgs, interrupted: Arc<AtomicBool>) -> Res
     );
 
     // Check for interrupt before writing
-    if interrupted.load(Ordering::SeqCst) {
+    if interrupted.is_cancelled() {
         return Err(CliError::Interrupted);
     }
 
@@ -114,11 +114,11 @@ fn decompress_stdin(_args: &DecompressArgs, interrupted: Arc<AtomicBool>) -> Res
 fn decompress_file(
     input_path: &Path,
     args: &DecompressArgs,
-    interrupted: Arc<AtomicBool>,
+    interrupted: Arc<dyn CancellationToken>,
 ) -> Result<()> {
     info!("Starting decompression of {}", input_path.display());
     // Check for interrupt before starting
-    if interrupted.load(Ordering::SeqCst) {
+    if interrupted.is_cancelled() {
         return Err(CliError::Interrupted);
     }
 
@@ -160,7 +160,7 @@ fn decompress_file(
     debug!("Read {} bytes from compressed file", compressed_data.len());
 
     // Check for interrupt after reading
-    if interrupted.load(Ordering::SeqCst) {
+    if interrupted.is_cancelled() {
         return Err(CliError::Interrupted);
     }
 
@@ -187,7 +187,7 @@ fn decompress_file(
     }
 
     // Check for interrupt before writing
-    if interrupted.load(Ordering::SeqCst) {
+    if interrupted.is_cancelled() {
         return Err(CliError::Interrupted);
     }
 
@@ -205,7 +205,7 @@ fn decompress_file(
         }
 
         // Check for interrupt after writing (cleanup partial file if interrupted)
-        if interrupted.load(Ordering::SeqCst) {
+        if interrupted.is_cancelled() {
             // Remove the output file we just wrote
             let _ = fs::remove_file(&output_path);
             return Err(CliError::Interrupted);

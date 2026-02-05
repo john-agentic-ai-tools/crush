@@ -67,12 +67,14 @@
 //! }
 //! ```
 
+pub mod cancel;
 pub mod compression;
 pub mod decompression;
 pub mod error;
 pub mod inspection;
 pub mod plugin;
 
+pub use cancel::{AtomicCancellationToken, CancellationToken, ResourceTracker};
 pub use compression::{compress, compress_with_options, CompressionOptions};
 pub use decompression::decompress;
 pub use error::{CrushError, PluginError, Result, TimeoutError, ValidationError};
