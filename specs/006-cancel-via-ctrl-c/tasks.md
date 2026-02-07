@@ -104,8 +104,9 @@ This is a Rust workspace project:
 - ✅ Incomplete files are automatically deleted (manual cleanup in place)
 - ✅ Process exits with exit code 130 (Unix) / 2 (Windows)
 - ✅ Error message "Operation interrupted" displayed
-- ✅ All tests passing (116 total: 61 core + 47 CLI + 8 utils)
-- ✅ Code cleanup performed (see cleanup-summary.md)
+- ✅ All tests passing (134 total: 61 core + 47 CLI + 8 utils + 18 integration)
+- ✅ Code cleanup performed - 210 lines of duplication eliminated (see cleanup-summary.md)
+- ✅ Automated duplicate detection tooling implemented (constitution v1.6.0)
 
 ### Code Cleanup Tasks (Post-Implementation)
 
@@ -116,10 +117,12 @@ This is a Rust workspace project:
 - [X] T046-CLEANUP Extract file write with cleanup to utils
 - [X] T047-CLEANUP Refactor compress.rs to use utils functions (~60 lines of duplication eliminated)
 - [X] T048-CLEANUP Add comprehensive tests for utils module (8 tests)
-- [ ] T049-CLEANUP Refactor decompress.rs to use utils functions (DEFERRED - future enhancement)
+- [X] T049-CLEANUP Refactor decompress.rs to use utils functions (~82 lines of duplication eliminated)
+- [X] T050-CLEANUP Remove buggy run_with_timeout() v1 function from timeout.rs (~55 lines removed)
+- [X] T051-CLEANUP Fix validate_output() in utils.rs for proper parent path handling
 
-**Total Duplication Eliminated**: ~60 lines in compress.rs
-**Code Quality**: All tests passing, clippy warnings minor (unused functions until decompress refactored)
+**Total Duplication Eliminated**: ~210 lines (compress.rs: 60 lines, decompress.rs: 82 lines, timeout.rs: 55 lines, utils fixes: 13 lines)
+**Code Quality**: All tests passing (134 total), clippy clean with -D warnings
 
 ---
 
