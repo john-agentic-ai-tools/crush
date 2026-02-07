@@ -1,4 +1,5 @@
 use crate::cli::DecompressArgs;
+use crate::commands::utils;
 use crate::error::{CliError, Result};
 use crate::output::{self, DecompressionResult};
 use crush_core::cancel::CancellationToken;
@@ -6,8 +7,8 @@ use crush_core::decompress;
 use filetime::{set_file_mtime, FileTime};
 use indicatif::{ProgressBar, ProgressStyle};
 use is_terminal::IsTerminal;
-use std::fs::{self, File};
-use std::io::{self, Read, Write};
+use std::fs;
+use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -39,9 +40,7 @@ fn decompress_stdin(_args: &DecompressArgs, interrupted: Arc<dyn CancellationTok
     info!("Decompressing from stdin");
 
     // Check for interrupt before starting
-    if interrupted.is_cancelled() {
-        return Err(CliError::Interrupted);
-    }
+    utils::check_cancelled(&interrupted)?;
 
     // Read all data from stdin
     trace!("Reading from stdin");
@@ -51,9 +50,7 @@ fn decompress_stdin(_args: &DecompressArgs, interrupted: Arc<dyn CancellationTok
     debug!("Read {} bytes from stdin", input_size);
 
     // Check for interrupt after reading
-    if interrupted.is_cancelled() {
-        return Err(CliError::Interrupted);
-    }
+    utils::check_cancelled(&interrupted)?;
 
     // Start timing
     let start = Instant::now();
@@ -72,22 +69,15 @@ fn decompress_stdin(_args: &DecompressArgs, interrupted: Arc<dyn CancellationTok
     );
 
     // Check for interrupt before writing
-    if interrupted.is_cancelled() {
-        return Err(CliError::Interrupted);
-    }
+    utils::check_cancelled(&interrupted)?;
 
     // Write to stdout
     trace!("Writing decompressed data to stdout");
-    io::stdout().write_all(&decompressed_data)?;
-    io::stdout().flush()?;
+    utils::write_to_stdout(&decompressed_data)?;
 
     // Calculate statistics
     let output_size = decompressed_data.len() as u64;
-    let throughput_mbps = if duration.as_secs_f64() > 0.0 {
-        (output_size as f64 / (1024.0 * 1024.0)) / duration.as_secs_f64()
-    } else {
-        0.0
-    };
+    let throughput_mbps = utils::calculate_throughput_mbps(output_size, duration);
 
     // Log performance metrics
     debug!(
@@ -118,17 +108,15 @@ fn decompress_file(
 ) -> Result<()> {
     info!("Starting decompression of {}", input_path.display());
     // Check for interrupt before starting
-    if interrupted.is_cancelled() {
-        return Err(CliError::Interrupted);
-    }
+    utils::check_cancelled(&interrupted)?;
 
     // Validate input file
-    validate_input(input_path)?;
+    utils::validate_input(input_path)?;
 
     // Determine and validate output path (only if not writing to stdout)
     let output_path = if !args.stdout {
         let path = determine_output_path(input_path, &args.output)?;
-        validate_output(&path, args.force)?;
+        utils::validate_output(&path, args.force)?;
         path
     } else {
         // Dummy path when writing to stdout (won't be used)
@@ -160,9 +148,7 @@ fn decompress_file(
     debug!("Read {} bytes from compressed file", compressed_data.len());
 
     // Check for interrupt after reading
-    if interrupted.is_cancelled() {
-        return Err(CliError::Interrupted);
-    }
+    utils::check_cancelled(&interrupted)?;
 
     // Start timing
     let start = Instant::now();
@@ -187,29 +173,18 @@ fn decompress_file(
     }
 
     // Check for interrupt before writing
-    if interrupted.is_cancelled() {
-        return Err(CliError::Interrupted);
-    }
+    utils::check_cancelled(&interrupted)?;
 
     // Write output
     if args.stdout {
         // Write to stdout
-        use std::io::Write;
-        std::io::stdout().write_all(&decompressed_data)?;
+        utils::write_to_stdout(&decompressed_data)?;
     } else {
         // Write to file (with cleanup on failure/interrupt)
-        if let Err(e) = fs::write(&output_path, &decompressed_data) {
-            // If write failed, ensure no partial file remains
-            let _ = fs::remove_file(&output_path);
-            return Err(e.into());
-        }
+        utils::write_with_cleanup(&output_path, &decompressed_data)?;
 
         // Check for interrupt after writing (cleanup partial file if interrupted)
-        if interrupted.is_cancelled() {
-            // Remove the output file we just wrote
-            let _ = fs::remove_file(&output_path);
-            return Err(CliError::Interrupted);
-        }
+        utils::check_cancelled_with_cleanup(&interrupted, &output_path)?;
 
         // Restore mtime if available
         if let Some(mtime_secs) = metadata.mtime {
@@ -258,11 +233,7 @@ fn decompress_file(
 
         // Calculate statistics
         let output_size = decompressed_data.len() as u64;
-        let throughput_mbps = if duration.as_secs_f64() > 0.0 {
-            (output_size as f64 / (1024.0 * 1024.0)) / duration.as_secs_f64()
-        } else {
-            0.0
-        };
+        let throughput_mbps = utils::calculate_throughput_mbps(output_size, duration);
 
         // Log performance metrics with structured fields
         debug!(
@@ -310,34 +281,6 @@ fn decompress_file(
     Ok(())
 }
 
-/// Validate that input file exists and is readable
-fn validate_input(path: &Path) -> Result<()> {
-    if !path.exists() {
-        return Err(CliError::InvalidInput(format!(
-            "Compressed file not found: {}",
-            path.display()
-        )));
-    }
-
-    if !path.is_file() {
-        return Err(CliError::InvalidInput(format!(
-            "Input path is not a file: {}",
-            path.display()
-        )));
-    }
-
-    // Check if file is readable
-    File::open(path).map_err(|e| {
-        CliError::InvalidInput(format!(
-            "Cannot read compressed file {}: {}",
-            path.display(),
-            e
-        ))
-    })?;
-
-    Ok(())
-}
-
 /// Determine the output file path
 fn determine_output_path(input: &Path, output_arg: &Option<PathBuf>) -> Result<PathBuf> {
     if let Some(output) = output_arg {
@@ -380,28 +323,4 @@ fn strip_crush_extension(path: &Path) -> Result<PathBuf> {
             ))
         })
     }
-}
-
-/// Validate output path and check for conflicts
-fn validate_output(path: &Path, force: bool) -> Result<()> {
-    // Check if output file already exists
-    if path.exists() && !force {
-        return Err(CliError::InvalidInput(format!(
-            "Output file already exists: {} (use --force to overwrite)",
-            path.display()
-        )));
-    }
-
-    // Check that parent directory exists
-    if let Some(parent) = path.parent() {
-        // parent() returns "" for relative paths in the current directory, which is valid
-        if !parent.as_os_str().is_empty() && !parent.exists() {
-            return Err(CliError::InvalidInput(format!(
-                "Output directory does not exist: {}",
-                parent.display()
-            )));
-        }
-    }
-
-    Ok(())
 }

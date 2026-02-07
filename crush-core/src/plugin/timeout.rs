@@ -34,7 +34,7 @@ impl Drop for TimeoutGuard {
 ///
 /// # Arguments
 ///
-/// * `timeout` - Maximum duration to wait for operation completion
+/// * `timeout` - Maximum duration to wait for operation completion (0 = no timeout)
 /// * `operation` - The operation to run (receives cancellation flag)
 ///
 /// # Returns
@@ -45,7 +45,7 @@ impl Drop for TimeoutGuard {
 ///
 /// Returns an error if:
 /// - Operation times out
-/// - Plugin panics during execution
+/// - Plugin thread panics during execution
 /// - Operation returns an error
 ///
 /// # Examples
@@ -63,68 +63,6 @@ impl Drop for TimeoutGuard {
 /// });
 /// ```
 pub fn run_with_timeout<F, T>(timeout: Duration, operation: F) -> Result<T>
-where
-    F: FnOnce(Arc<AtomicBool>) -> Result<T> + Send + 'static,
-    T: Send + 'static,
-{
-    let cancel_flag = Arc::new(AtomicBool::new(false));
-    let cancel_flag_clone = Arc::clone(&cancel_flag);
-
-    let (_tx, rx) = channel::bounded(1);
-
-    // Spawn operation in dedicated thread
-    let handle = std::thread::spawn(move || {
-        let _guard = TimeoutGuard {
-            cancel_flag: cancel_flag_clone,
-        };
-
-        // Run the operation
-        operation(cancel_flag)
-    });
-
-    // Wait for completion or timeout
-    match rx.recv_timeout(timeout) {
-        Ok(result) => result,
-        Err(channel::RecvTimeoutError::Timeout) => {
-            // Timeout occurred - cancellation flag will be set when guard drops
-            // Wait a bit for thread to notice cancellation
-            std::thread::sleep(Duration::from_millis(10));
-
-            // Try to join thread (it might have finished just after timeout)
-            if let Ok(result) = handle.join() {
-                // Thread completed just after timeout - use result anyway
-                result
-            } else {
-                // Thread panicked
-                eprintln!("Warning: Plugin operation timed out after {timeout:?}");
-                Err(TimeoutError::Timeout(timeout).into())
-            }
-        }
-        Err(channel::RecvTimeoutError::Disconnected) => {
-            // Channel disconnected - check if thread panicked
-            match handle.join() {
-                Ok(result) => result,
-                Err(e) => {
-                    eprintln!("Warning: Plugin panicked during execution: {e:?}");
-                    Err(TimeoutError::PluginPanic.into())
-                }
-            }
-        }
-    }
-}
-
-/// Alternative implementation that actually sends results through channel
-///
-/// This is the corrected version that properly communicates between threads.
-/// Spawns the operation in a dedicated thread and enforces the specified timeout.
-///
-/// # Errors
-///
-/// Returns an error if:
-/// - Operation times out
-/// - Plugin thread panics during execution
-/// - Operation returns an error
-pub fn run_with_timeout_v2<F, T>(timeout: Duration, operation: F) -> Result<T>
 where
     F: FnOnce(Arc<AtomicBool>) -> Result<T> + Send + 'static,
     T: Send + 'static,
@@ -291,7 +229,7 @@ mod tests {
     fn test_operation_completes_within_timeout() {
         let timeout = Duration::from_secs(1);
 
-        let result = run_with_timeout_v2(timeout, |_cancel| {
+        let result = run_with_timeout(timeout, |_cancel| {
             // Fast operation
             Ok(42)
         });
@@ -304,7 +242,7 @@ mod tests {
     fn test_operation_respects_cancellation() {
         let timeout = Duration::from_millis(50);
 
-        let result = run_with_timeout_v2(timeout, |cancel_flag| {
+        let result = run_with_timeout(timeout, |cancel_flag| {
             // Simulate slow operation that checks cancellation
             for _ in 0..1000 {
                 if cancel_flag.load(Ordering::Acquire) {
@@ -324,7 +262,7 @@ mod tests {
     fn test_zero_timeout_means_no_timeout() {
         let timeout = Duration::from_secs(0);
 
-        let result = run_with_timeout_v2(timeout, |_cancel| Ok(42));
+        let result = run_with_timeout(timeout, |_cancel| Ok(42));
 
         // Zero timeout means no timeout - operation should succeed
         assert!(result.is_ok());
@@ -346,21 +284,18 @@ mod tests {
 
     #[test]
     #[allow(clippy::unwrap_used)]
-    fn test_run_with_timeout_v1_disconnected() {
-        // run_with_timeout v1 has a bug where it doesn't send through the channel
-        // This means it always goes to the Disconnected branch
+    fn test_run_with_timeout_basic_success() {
         let timeout = Duration::from_secs(1);
 
         let result = run_with_timeout(timeout, |_cancel| Ok(100));
 
-        // The v1 function will go through Disconnected path and return the result
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), 100);
     }
 
     #[test]
     #[allow(clippy::unwrap_used)]
-    fn test_run_with_timeout_v1_operation_error() {
+    fn test_run_with_timeout_operation_error() {
         let timeout = Duration::from_secs(1);
 
         let result: Result<i32> = run_with_timeout(timeout, |_cancel| {
@@ -383,10 +318,10 @@ mod tests {
 
     #[test]
     #[allow(clippy::unwrap_used)]
-    fn test_run_with_timeout_v2_error_propagation() {
+    fn test_run_with_timeout_error_propagation() {
         let timeout = Duration::from_secs(1);
 
-        let result: Result<i32> = run_with_timeout_v2(timeout, |_cancel| {
+        let result: Result<i32> = run_with_timeout(timeout, |_cancel| {
             Err(PluginError::OperationFailed("custom error".to_string()).into())
         });
 
@@ -402,7 +337,7 @@ mod tests {
         let timeout = Duration::from_secs(0);
 
         // This should complete successfully even with "infinite" effective timeout
-        let result = run_with_timeout_v2(timeout, |_cancel| {
+        let result = run_with_timeout(timeout, |_cancel| {
             std::thread::sleep(Duration::from_millis(10));
             Ok("done".to_string())
         });

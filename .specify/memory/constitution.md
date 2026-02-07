@@ -1,17 +1,18 @@
 <!--
 Sync Impact Report:
-- Version change: 1.4.0 → 1.5.0
-- Modified principles: Rust Style & Standards - added Clippy Warning Handling
+- Version change: 1.5.0 → 1.6.0
+- Modified principles: Added MVP Delivery Workflow section
 - Added sections:
-  * Clippy Warning Handling (MANDATORY) - fix warnings, don't suppress them
+  * Post-MVP Cleanup Phase (MANDATORY) - prevent technical debt accumulation
 - Removed sections: N/A
 - Templates requiring updates:
-  ⚠ All code - review existing #[allow(clippy::...)] attributes
-  ⚠ New code - MUST fix clippy warnings instead of suppressing
+  ⚠ tasks.md template - add cleanup phase after each user story completion
+  ⚠ All feature specs - include cleanup-summary.md in deliverables
 - Follow-up TODOs:
-  * Review and remove unnecessary clippy allow attributes
-  * Document justification for any remaining suppressions
-- Rationale: Suppressing warnings creates technical debt and hides code quality issues. Addressing warnings improves maintainability, safety, and idiomaticity.
+  * Add cleanup phase to task generation workflow
+  * Create cleanup-summary.md template
+  * Document cleanup patterns and duplication detection methods
+- Rationale: Code duplication and technical debt compound during MVP development. Mandatory cleanup after each MVP maintains codebase quality and prevents debt accumulation that slows future work.
 -->
 
 # Crush Constitution
@@ -107,6 +108,51 @@ All of the following MUST pass before merge:
 - [ ] Fuzz testing runs clean (100k iterations minimum, no panics or errors)
 - [ ] No memory leaks (miri or valgrind clean for unsafe code)
 - [ ] SpecKit task checklist complete
+
+## MVP Delivery Workflow
+
+### Post-MVP Cleanup Phase (MANDATORY)
+
+After completing each MVP (minimal viable product) or user story implementation, a mandatory cleanup phase MUST be executed to prevent technical debt accumulation.
+
+**Tooling Requirements**:
+- Use [jscpd](https://jscpd.dev/) for automated duplicate code detection
+- Run detection via `.specify/scripts/powershell/detect-duplicates.ps1 -Json`
+- Configure thresholds in `.jscpd.json` at repository root
+- Tool MUST be used before manual analysis to save tokens and identify targets efficiently
+
+**Duplicate Detection Methodology**:
+1. **Automated Scan**: Run `detect-duplicates.ps1 -Json` to generate duplication report
+2. **Review Output**: Examine JSON output for duplicates > 20 lines
+3. **Prioritize Targets**: Focus on highest-impact duplications first (by line count and frequency)
+4. **Extract Utilities**: Create shared modules for identified patterns
+5. **Verify Changes**: Run tests and clippy after each extraction
+6. **Document Results**: Record findings in `cleanup-summary.md`
+
+**Manual Cleanup Requirements**:
+- Identify and extract common patterns into shared utility modules
+- Remove dead code, unused functions, and deprecated implementations
+- Eliminate duplicate validation, error handling, and business logic
+- Consolidate similar functions with identical or near-identical implementations
+- Update tests to cover extracted utilities
+- Verify all cleanup changes with full test suite and clippy validation
+
+**Cleanup Quality Gates**:
+- [ ] No code duplication > 20 lines between modules
+- [ ] All extracted utilities have comprehensive tests
+- [ ] Clippy clean after refactoring (`cargo clippy --all-targets -- -D warnings`)
+- [ ] All tests pass after cleanup (`cargo test`)
+- [ ] No regression in performance benchmarks
+
+**Documentation Requirements**:
+- Document cleanup analysis in `specs/[feature]/cleanup-summary.md`
+- Include jscpd detection output summary (total duplicates, line counts, files affected)
+- List specific duplication instances found and how they were resolved
+- Track lines of code removed and consolidation patterns applied
+- Record any deferred cleanup items with justification
+- Archive jscpd JSON output in `specs/[feature]/checklists/duplication-report.json`
+
+**Rationale**: Code duplication and technical debt accumulate rapidly during MVP development as developers focus on feature delivery. Mandatory cleanup after each MVP prevents this debt from compounding, maintains codebase quality, and ensures future features build on clean foundations. The cleanup phase is a forcing function for continuous refactoring and quality improvement.
 
 ## Rust Style & Standards
 
@@ -438,4 +484,4 @@ This constitution supersedes all other development practices. When in conflict, 
 - Major violations (safety, correctness, TDD bypass): Block merge, require rework
 - Repeated violations: Review contributor access and training needs
 
-**Version**: 1.5.0 | **Ratified**: 2026-01-17 | **Last Amended**: 2026-01-31
+**Version**: 1.6.0 | **Ratified**: 2026-01-17 | **Last Amended**: 2026-02-07
