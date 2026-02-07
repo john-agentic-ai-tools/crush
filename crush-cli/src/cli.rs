@@ -25,6 +25,16 @@ or via environment variables.")]
     # Configure default compression level
     crush config set compression.level fast
 
+    # Cancel an operation with Ctrl+C (large files show hint)
+    crush compress largefile.bin
+    # Press Ctrl+C to cancel gracefully
+
+EXIT CODES:
+    0   - Success
+    1   - Operational error (I/O, compression failure, etc.)
+    2   - Configuration or usage error
+    130 - Operation cancelled (Ctrl+C/SIGINT)
+
 For more information about a specific command, run:
     crush <COMMAND> --help")]
 pub struct Cli {

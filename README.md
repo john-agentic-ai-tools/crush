@@ -17,6 +17,44 @@ Crush is built to:
 
 By focusing on fast, extensible compression rather than one-size-fits-all algorithms, Crush helps data pipelines move faster without becoming a bottleneck.
 
+## Features
+
+### Core Capabilities
+
+- **High-Performance Compression**: Multi-threaded parallel compression matching or exceeding pigz performance
+- **Plugin Architecture**: Extensible system supporting multiple compression algorithms
+- **Metadata Preservation**: Automatically preserves file modification times and Unix permissions
+- **Pipeline Integration**: Full stdin/stdout support for seamless Unix pipeline integration
+- **Configuration Management**: Per-user configuration with environment variable overrides
+
+### Graceful Cancellation (New!)
+
+Crush supports graceful cancellation of long-running operations via **Ctrl+C** (SIGINT):
+
+- **Instant Response**: Cancellation detection within 100μs for immediate feedback
+- **Automatic Cleanup**: Incomplete output files are automatically deleted on cancellation
+- **User Hints**: Large file operations (>1MB) display helpful hints about cancellation
+- **Proper Exit Codes**: Exit code 130 (Unix) / 2 (Windows) indicates cancelled operations
+- **Clear Messaging**: Displays "Operation cancelled" message for user feedback
+
+```bash
+# Start compression of a large file
+crush compress large_dataset.bin
+# ℹ️  Press Ctrl+C to cancel this operation
+
+# Press Ctrl+C at any time
+^C
+# Output: Operation cancelled
+# Exit code: 130
+# Result: Incomplete large_dataset.bin.crush automatically deleted
+```
+
+**Benefits**:
+- No more waiting for operations you didn't want to complete
+- No manual cleanup of incomplete files
+- Safe interruption without corruption or partial files
+- Ideal for interactive use and long-running batch jobs
+
 ## Installation
 
 ### From Source

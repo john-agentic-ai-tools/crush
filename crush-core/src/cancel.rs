@@ -107,7 +107,40 @@ impl CancellationToken for AtomicCancellationToken {
 /// Tracks resources created during compression/decompression for guaranteed cleanup.
 ///
 /// Uses RAII pattern - resources are automatically cleaned up when dropped unless
-/// marked as complete.
+/// marked as complete. This ensures incomplete output files are deleted if an
+/// operation is cancelled or fails.
+///
+/// # Thread Safety
+///
+/// All methods use interior mutability and are safe to call from multiple threads.
+///
+/// # Example
+///
+/// ```no_run
+/// use crush_core::cancel::ResourceTracker;
+/// use std::path::PathBuf;
+///
+/// let tracker = ResourceTracker::new();
+///
+/// // Register the output file to be cleaned up if operation fails
+/// tracker.register_output(PathBuf::from("output.crush"));
+///
+/// // Register temporary files that should always be deleted
+/// tracker.register_temp_file(PathBuf::from("temp.dat"));
+///
+/// // ... do compression work ...
+///
+/// // If successful, mark complete to keep the output file
+/// tracker.mark_complete();
+///
+/// // Drop will clean up temp files but keep output (marked complete)
+/// ```
+///
+/// # Cleanup Behavior
+///
+/// - **Temp files**: Always deleted on drop
+/// - **Output file**: Deleted on drop UNLESS `mark_complete()` was called
+/// - **On panic**: Drop runs, ensuring cleanup even during unwinding
 pub struct ResourceTracker {
     output_path: Mutex<Option<PathBuf>>,
     temp_files: Mutex<Vec<PathBuf>>,
@@ -125,21 +158,55 @@ impl ResourceTracker {
         }
     }
 
-    /// Register output file path (to delete on cancellation).
+    /// Register the output file path to be cleaned up if the operation doesn't complete.
+    ///
+    /// The output file will be deleted on drop unless `mark_complete()` is called.
+    /// Only one output file can be registered (subsequent calls replace the previous).
+    ///
+    /// # Arguments
+    ///
+    /// * `path` - Path to the output file
     pub fn register_output(&self, path: PathBuf) {
         if let Ok(mut output) = self.output_path.lock() {
             *output = Some(path);
         }
     }
 
-    /// Register temporary file (to delete always).
+    /// Register a temporary file that should always be deleted on cleanup.
+    ///
+    /// Temporary files are always deleted on drop, regardless of completion status.
+    /// Multiple temporary files can be registered.
+    ///
+    /// # Arguments
+    ///
+    /// * `path` - Path to the temporary file
     pub fn register_temp_file(&self, path: PathBuf) {
         if let Ok(mut temps) = self.temp_files.lock() {
             temps.push(path);
         }
     }
 
-    /// Mark operation as successfully completed (keep output file).
+    /// Mark the operation as successfully completed, preventing output file deletion.
+    ///
+    /// Call this after the operation succeeds to keep the output file.
+    /// If not called, the output file will be deleted on drop (cleanup on failure).
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use crush_core::cancel::ResourceTracker;
+    /// # use std::path::PathBuf;
+    /// let tracker = ResourceTracker::new();
+    /// tracker.register_output(PathBuf::from("output.dat"));
+    ///
+    /// // ... do work ...
+    ///
+    /// if work_succeeded() {
+    ///     tracker.mark_complete(); // Keep the output file
+    /// }
+    /// // If work failed, drop will delete the output file
+    /// # fn work_succeeded() -> bool { true }
+    /// ```
     pub fn mark_complete(&self) {
         self.is_complete.store(true, Ordering::SeqCst);
     }
