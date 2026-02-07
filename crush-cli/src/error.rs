@@ -23,7 +23,7 @@ impl fmt::Display for CliError {
             CliError::Config(msg) => write!(f, "Configuration error: {}", msg),
             CliError::Io(e) => write!(f, "I/O error: {}", e),
             CliError::InvalidInput(msg) => write!(f, "Invalid input: {}", msg),
-            CliError::Interrupted => write!(f, "Operation interrupted"),
+            CliError::Interrupted => write!(f, "Operation cancelled"),
         }
     }
 }
@@ -122,7 +122,7 @@ mod tests {
         assert!(invalid_input.to_string().contains("Invalid input"));
 
         let interrupted = CliError::Interrupted;
-        assert_eq!(interrupted.to_string(), "Operation interrupted");
+        assert_eq!(interrupted.to_string(), "Operation cancelled");
     }
 
     #[test]

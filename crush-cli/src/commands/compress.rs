@@ -172,6 +172,11 @@ fn compress_file(
     let mtime = FileTime::from_last_modification_time(&file_metadata);
     let input_size = file_metadata.len();
 
+    // Show cancel hint for large files (>1MB)
+    if !args.stdout {
+        crate::feedback::show_cancel_hint(crate::feedback::should_show_hint(input_size));
+    }
+
     // Create progress indicator for larger files (but not when writing to stdout)
     let show_progress = std::io::stderr().is_terminal() && !args.stdout;
     let spinner = if show_progress && input_size > 1024 * 1024 {

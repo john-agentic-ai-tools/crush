@@ -126,6 +126,11 @@ fn decompress_file(
     // Get file size for statistics
     let input_size = fs::metadata(input_path)?.len();
 
+    // Show cancel hint for large files (>1MB)
+    if !args.stdout {
+        crate::feedback::show_cancel_hint(crate::feedback::should_show_hint(input_size));
+    }
+
     // Create progress indicator for larger files
     let show_progress = std::io::stderr().is_terminal() && !args.stdout;
     let spinner = if show_progress && input_size > 1024 * 1024 {
