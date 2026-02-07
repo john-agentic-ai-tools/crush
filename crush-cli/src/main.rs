@@ -2,6 +2,7 @@ mod cli;
 mod commands;
 mod config;
 mod error;
+mod feedback;
 mod logging;
 mod output;
 mod signal;
@@ -60,5 +61,16 @@ fn run() -> Result<()> {
         Commands::Inspect(args) => commands::inspect::run(args),
         Commands::Config(args) => commands::config::run(args),
         Commands::Plugins(args) => commands::plugins::run(args),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn verify_cli() {
+        use clap::CommandFactory;
+        Cli::command().debug_assert();
     }
 }

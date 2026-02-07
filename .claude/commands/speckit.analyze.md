@@ -24,92 +24,63 @@ Identify inconsistencies, duplications, ambiguities, and underspecified items ac
 
 ### 1. Initialize Analysis Context
 
-Run `.specify/scripts/powershell/check-prerequisites.ps1 -Json -RequireTasks -IncludeTasks` once from repo root and parse JSON for FEATURE_DIR and AVAILABLE_DOCS. Derive absolute paths:
+1.  Run `.specify/scripts/powershell/check-prerequisites.ps1 -Json -RequireTasks -IncludeTasks` from repo root.
+    -   Parse the JSON output to get `FEATURE_DIR`. If `Success` is false or `FEATURE_DIR` is missing, report the error messages and exit.
+2.  Run `.specify/scripts/powershell/get-spec-data.ps1 -FeatureDir "$FEATURE_DIR" -Json` from repo root.
+    -   Parse the JSON output into a variable named `$SPEC_DATA`.
+    -   If `$SPEC_DATA.Success` is false, report the error messages from `$SPEC_DATA.Messages` and exit.
+    -   The `$SPEC_DATA` object now contains all structured information from `spec.md`, `plan.md`, `tasks.md`, and `constitution.md`.
 
-- SPEC = FEATURE_DIR/spec.md
-- PLAN = FEATURE_DIR/plan.md
-- TASKS = FEATURE_DIR/tasks.md
+### 2. Use Structured Artifact Data
 
-Abort with an error message if any required file is missing (instruct the user to run missing prerequisite command).
-For single quotes in args like "I'm Groot", use escape syntax: e.g 'I'\''m Groot' (or double-quote if possible: "I'm Groot").
-
-### 2. Load Artifacts (Progressive Disclosure)
-
-Load only the minimal necessary context from each artifact:
-
-**From spec.md:**
-
-- Overview/Context
-- Functional Requirements
-- Non-Functional Requirements
-- User Stories
-- Edge Cases (if present)
-
-**From plan.md:**
-
-- Architecture/stack choices
-- Data Model references
-- Phases
-- Technical constraints
-
-**From tasks.md:**
-
-- Task IDs
-- Descriptions
-- Phase grouping
-- Parallel markers [P]
-- Referenced file paths
-
-**From constitution:**
-
-- Load `.specify/memory/constitution.md` for principle validation
+The `$SPEC_DATA` object from Step 1 contains all necessary structured information from `spec.md`, `plan.md`, `tasks.md`, and `constitution.md`. Refer to its properties directly for analysis.
 
 ### 3. Build Semantic Models
 
-Create internal representations (do not include raw artifacts in output):
+Create internal representations using the `$SPEC_DATA` object:
 
-- **Requirements inventory**: Each functional + non-functional requirement with a stable key (derive slug based on imperative phrase; e.g., "User can upload file" → `user-can-upload-file`)
-- **User story/action inventory**: Discrete user actions with acceptance criteria
-- **Task coverage mapping**: Map each task to one or more requirements or stories (inference by keyword / explicit reference patterns like IDs or key phrases)
-- **Constitution rule set**: Extract principle names and MUST/SHOULD normative statements
+-   **Requirements inventory**: From `$SPEC_DATA.Spec.FunctionalRequirements` and `$SPEC_DATA.Spec.NonFunctionalRequirements`. Derive a stable key for each (e.g., "User can upload file" → `user-can-upload-file`).
+-   **User story/action inventory**: From `$SPEC_DATA.Spec.UserStories`.
+-   **Task coverage mapping**: Map tasks from `$SPEC_DATA.Tasks.Tasks` to requirements/stories.
+-   **Constitution rule set**: From `$SPEC_DATA.Constitution.Principles`.
 
 ### 4. Detection Passes (Token-Efficient Analysis)
 
-Focus on high-signal findings. Limit to 50 findings total; aggregate remainder in overflow summary.
+Focus on high-signal findings based on the `$SPEC_DATA` object. Limit to 50 findings total; aggregate remainder in overflow summary.
 
 #### A. Duplication Detection
 
-- Identify near-duplicate requirements
-- Mark lower-quality phrasing for consolidation
+- Identify near-duplicate requirements within `$SPEC_DATA.Spec.FunctionalRequirements` and `$SPEC_DATA.Spec.NonFunctionalRequirements`.
+- Mark lower-quality phrasing for consolidation.
 
 #### B. Ambiguity Detection
 
-- Flag vague adjectives (fast, scalable, secure, intuitive, robust) lacking measurable criteria
-- Flag unresolved placeholders (TODO, TKTK, ???, `<placeholder>`, etc.)
+- Flag vague adjectives (fast, scalable, secure, intuitive, robust) lacking measurable criteria within requirement descriptions.
+- Flag unresolved placeholders (TODO, TKTK, ???, `<placeholder>`, etc.) across all text fields in `$SPEC_DATA`.
 
 #### C. Underspecification
 
-- Requirements with verbs but missing object or measurable outcome
-- User stories missing acceptance criteria alignment
-- Tasks referencing files or components not defined in spec/plan
+- Requirements from `$SPEC_DATA.Spec` with verbs but missing object or measurable outcome.
+- User stories from `$SPEC_DATA.Spec.UserStories` missing acceptance criteria alignment.
+- Tasks from `$SPEC_DATA.Tasks.Tasks` referencing files or components not defined in `$SPEC_DATA.Spec` or `$SPEC_DATA.Plan`.
 
 #### D. Constitution Alignment
 
-- Any requirement or plan element conflicting with a MUST principle
-- Missing mandated sections or quality gates from constitution
+- Any requirement or plan element from `$SPEC_DATA.Spec` or `$SPEC_DATA.Plan` conflicting with a MUST principle in `$SPEC_DATA.Constitution.Principles`.
+- Missing mandated sections or quality gates from `$SPEC_DATA.Constitution`.
 
 #### E. Coverage Gaps
 
-- Requirements with zero associated tasks
-- Tasks with no mapped requirement/story
-- Non-functional requirements not reflected in tasks (e.g., performance, security)
+- Requirements from `$SPEC_DATA.Spec` with zero associated tasks from `$SPEC_DATA.Tasks`.
+- Tasks from `$SPEC_DATA.Tasks` with no mapped requirement/story from `$SPEC_DATA.Spec`.
+- Non-functional requirements from `$SPEC_DATA.Spec` not reflected in tasks from `$SPEC_DATA.Tasks` (e.g., performance, security).
 
 #### F. Inconsistency
 
-- Terminology drift (same concept named differently across files)
-- Data entities referenced in plan but absent in spec (or vice versa)
-- Task ordering contradictions (e.g., integration tasks before foundational setup tasks without dependency note)
-- Conflicting requirements (e.g., one requires Next.js while other specifies Vue)
+- Terminology drift (same concept named differently across `$SPEC_DATA.Spec` and `$SPEC_DATA.Plan`).
+- Data entities referenced in `$SPEC_DATA.Plan` but absent in `$SPEC_DATA.Spec` (or vice versa).
+- Task ordering contradictions within `$SPEC_DATA.Tasks` (e.g., integration tasks before foundational setup tasks without dependency note).
+- Conflicting requirements within `$SPEC_DATA.Spec` (e.g., one requires Next.js while other specifies Vue).
 
 ### 5. Severity Assignment
 

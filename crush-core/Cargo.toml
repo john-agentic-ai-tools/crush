@@ -19,8 +19,10 @@ rayon = { workspace = true }
 flate2 = { workspace = true }
 crc32fast = { workspace = true }
 thiserror = { workspace = true }
-serde =  { version = "1.0", features = ["derive"] } 
-serde_json = "1.0" 
+serde =  { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+ctrlc = "3.4"
+tempfile = "3.8" 
 
 [dev-dependencies]
 criterion = { workspace = true }

@@ -1,0 +1,22 @@
+{
+    "threshold":  0,
+    "reporters":  [
+                      "json",
+                      "console"
+                  ],
+    "format":  [
+                   "rust"
+               ],
+    "ignore":  [
+                   "**/target/**",
+                   "**/node_modules/**",
+                   "**/.git/**",
+                   "**/specs/**",
+                   "**/.specify/**"
+               ],
+    "absolute":  true,
+    "minLines":  20,
+    "minTokens":  50,
+    "output":  ".jscpd-report",
+    "exitCode":  1
+}

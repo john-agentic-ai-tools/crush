@@ -12,7 +12,13 @@ You **MUST** consider the user input before proceeding (if not empty).
 
 ## Outline
 
-1. Run `.specify/scripts/powershell/check-prerequisites.ps1 -Json -RequireTasks -IncludeTasks` from repo root and parse FEATURE_DIR and AVAILABLE_DOCS list. All paths must be absolute. For single quotes in args like "I'm Groot", use escape syntax: e.g 'I'\''m Groot' (or double-quote if possible: "I'm Groot").
+1. Run `.specify/scripts/powershell/check-prerequisites.ps1 -Json -RequireTasks -IncludeTasks` from repo root.
+   - Parse the JSON output to get `FEATURE_DIR`. If `Success` is false or `FEATURE_DIR` is missing, report the error messages and exit.
+2. Run `.specify/scripts/powershell/get-spec-data.ps1 -FeatureDir "$FEATURE_DIR" -Json` from repo root.
+   - Parse the JSON output into a variable named `$SPEC_DATA`.
+   - If `$SPEC_DATA.Success` is false, report the error messages from `$SPEC_DATA.Messages` and exit.
+   - The `$SPEC_DATA` object now contains all structured information from `spec.md`, `plan.md`, `tasks.md`, and `constitution.md`.
+   - The `$SPEC_DATA` object also includes paths to `research.md`, `data-model.md`, `quickstart.md`, and `contracts/` if they exist.
 
 2. **Check checklists status** (if FEATURE_DIR/checklists/ exists):
    - Scan all checklist files in the checklists/ directory
@@ -45,16 +51,11 @@ You **MUST** consider the user input before proceeding (if not empty).
      - Display the table showing all checklists passed
      - Automatically proceed to step 3
 
-3. Load and analyze the implementation context:
-   - **REQUIRED**: Read tasks.md for the complete task list and execution plan
-   - **REQUIRED**: Read plan.md for tech stack, architecture, and file structure
-   - **IF EXISTS**: Read data-model.md for entities and relationships
-   - **IF EXISTS**: Read contracts/ for API specifications and test requirements
-   - **IF EXISTS**: Read research.md for technical decisions and constraints
-   - **IF EXISTS**: Read quickstart.md for integration scenarios
+3. Use the `$SPEC_DATA` object for all implementation context:
+   - All required information from `tasks.md`, `plan.md`, `data-model.md`, `contracts/`, `research.md`, and `quickstart.md` is available via `$SPEC_DATA`. Refer to its properties directly.
 
 4. **Project Setup Verification**:
-   - **REQUIRED**: Create/verify ignore files based on actual project setup:
+   - **REQUIRED**: Create/verify ignore files based on actual project setup. Use information from `$SPEC_DATA.Plan.TechStack` to determine relevant technologies.
 
    **Detection & Creation Logic**:
    - Check if the following command succeeds to determine if the repository is a git repo (create/verify .gitignore if so):
@@ -63,7 +64,7 @@ You **MUST** consider the user input before proceeding (if not empty).
      git rev-parse --git-dir 2>/dev/null
      ```
 
-   - Check if Dockerfile* exists or Docker in plan.md → create/verify .dockerignore
+   - Check if Dockerfile* exists or Docker is indicated in `$SPEC_DATA.Plan.TechStack` → create/verify .dockerignore
    - Check if .eslintrc* exists → create/verify .eslintignore
    - Check if eslint.config.* exists → ensure the config's `ignores` entries cover required patterns
    - Check if .prettierrc* exists → create/verify .prettierignore
@@ -74,7 +75,7 @@ You **MUST** consider the user input before proceeding (if not empty).
    **If ignore file already exists**: Verify it contains essential patterns, append missing critical patterns only
    **If ignore file missing**: Create with full pattern set for detected technology
 
-   **Common Patterns by Technology** (from plan.md tech stack):
+   **Common Patterns by Technology** (derived from `$SPEC_DATA.Plan.TechStack`):
    - **Node.js/JavaScript/TypeScript**: `node_modules/`, `dist/`, `build/`, `*.log`, `.env*`
    - **Python**: `__pycache__/`, `*.pyc`, `.venv/`, `venv/`, `dist/`, `*.egg-info/`
    - **Java**: `target/`, `*.class`, `*.jar`, `.gradle/`, `build/`
@@ -97,11 +98,11 @@ You **MUST** consider the user input before proceeding (if not empty).
    - **Terraform**: `.terraform/`, `*.tfstate*`, `*.tfvars`, `.terraform.lock.hcl`
    - **Kubernetes/k8s**: `*.secret.yaml`, `secrets/`, `.kube/`, `kubeconfig*`, `*.key`, `*.crt`
 
-5. Parse tasks.md structure and extract:
-   - **Task phases**: Setup, Tests, Core, Integration, Polish
-   - **Task dependencies**: Sequential vs parallel execution rules
-   - **Task details**: ID, description, file paths, parallel markers [P]
-   - **Execution flow**: Order and dependency requirements
+5. Parse task structure from `$SPEC_DATA.Tasks.Tasks` and extract:
+   - **Task phases**: Setup, Tests, Core, Integration, Polish (these are conceptual phases, not directly from `$SPEC_DATA.Tasks` which is a flat list)
+   - **Task dependencies**: Infer from task descriptions or relative ordering in `$SPEC_DATA.Tasks.Tasks`.
+   - **Task details**: Description, file paths (if mentioned in description), parallel markers [P] (if mentioned in description).
+   - **Execution flow**: Order and dependency requirements.
 
 6. Execute implementation following the task plan:
    - **Phase-by-phase execution**: Complete each phase before moving to the next

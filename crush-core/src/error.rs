@@ -23,6 +23,10 @@ pub enum CrushError {
     /// I/O errors (file operations, network, etc.)
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
+
+    /// Operation was cancelled by user (Ctrl+C) or programmatically
+    #[error("Operation cancelled")]
+    Cancelled,
 }
 
 /// Plugin-specific errors

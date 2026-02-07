@@ -31,7 +31,11 @@ coverage/
 test-results/
 lcov.info
 *.lcov
+test-*.txt
+test-*.txt.crush
 
+# Code Quality Reports
+.jscpd-report/
 # Environment
 .env*
 *.log

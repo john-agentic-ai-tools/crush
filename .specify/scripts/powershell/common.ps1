@@ -1,6 +1,38 @@
 #!/usr/bin/env pwsh
 # Common PowerShell functions analogous to common.sh
 
+function Write-SpecifyInfo { 
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$Message
+    )
+    Write-Host "INFO: $Message" 
+}
+
+function Write-SpecifySuccess { 
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$Message
+    )
+    Write-Host "$([char]0x2713) $Message" 
+}
+
+function Write-SpecifyWarning { 
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$Message
+    )
+    Write-Warning $Message 
+}
+
+function Write-SpecifyError { 
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$Message
+    )
+    Write-Error "ERROR: $Message" -ErrorAction Stop # Use Write-Error cmdlet with -ErrorAction Stop
+}
+
 function Get-RepoRoot {
     try {
         $result = git rev-parse --show-toplevel 2>$null
@@ -75,13 +107,13 @@ function Test-FeatureBranch {
     
     # For non-git repos, we can't enforce branch naming but still provide output
     if (-not $HasGit) {
-        Write-Warning "[specify] Warning: Git repository not detected; skipped branch validation"
+        Write-SpecifyWarning "[specify] Git repository not detected; skipped branch validation"
         return $true
     }
     
     if ($Branch -notmatch '^[0-9]{3}-') {
-        Write-Output "ERROR: Not on a feature branch. Current branch: $Branch"
-        Write-Output "Feature branches should be named like: 001-feature-name"
+        Write-SpecifyError "Not on a feature branch. Current branch: $Branch"
+        Write-SpecifyError "Feature branches should be named like: 001-feature-name"
         return $false
     }
     return $true
@@ -116,10 +148,10 @@ function Get-FeaturePathsEnv {
 function Test-FileExists {
     param([string]$Path, [string]$Description)
     if (Test-Path -Path $Path -PathType Leaf) {
-        Write-Output "  ✓ $Description"
+        Write-SpecifySuccess "  $Description"
         return $true
     } else {
-        Write-Output "  ✗ $Description"
+        Write-SpecifyError "  $Description"
         return $false
     }
 }
@@ -127,11 +159,10 @@ function Test-FileExists {
 function Test-DirHasFiles {
     param([string]$Path, [string]$Description)
     if ((Test-Path -Path $Path -PathType Container) -and (Get-ChildItem -Path $Path -ErrorAction SilentlyContinue | Where-Object { -not $_.PSIsContainer } | Select-Object -First 1)) {
-        Write-Output "  ✓ $Description"
+        Write-SpecifySuccess "  $Description"
         return $true
     } else {
-        Write-Output "  ✗ $Description"
+        Write-SpecifyError "  $Description"
         return $false
     }
 }
-
