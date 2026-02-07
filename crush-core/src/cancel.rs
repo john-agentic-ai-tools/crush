@@ -259,6 +259,8 @@ impl Drop for ResourceTracker {
 }
 
 #[cfg(test)]
+#[allow(clippy::panic_in_result_fn)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
 
@@ -291,5 +293,222 @@ mod tests {
         assert!(token.is_cancelled());
         token.reset();
         assert!(!token.is_cancelled());
+    }
+
+    #[test]
+    fn default_creates_uncancelled_token() {
+        let token = AtomicCancellationToken::default();
+        assert!(!token.is_cancelled());
+    }
+
+    // ResourceTracker tests
+    #[test]
+    fn new_resource_tracker_is_empty() {
+        let tracker = ResourceTracker::new();
+        // Verify cleanup_all succeeds with no registered resources
+        assert!(tracker.cleanup_all().is_ok());
+    }
+
+    #[test]
+    fn resource_tracker_default() {
+        let tracker = ResourceTracker::default();
+        assert!(tracker.cleanup_all().is_ok());
+    }
+
+    #[test]
+    fn register_output_and_mark_complete() -> std::io::Result<()> {
+        use std::fs;
+        use tempfile::TempDir;
+
+        let dir = TempDir::new()?;
+        let output_path = dir.path().join("output.txt");
+
+        // Create the output file
+        fs::write(&output_path, b"test data")?;
+        assert!(output_path.exists());
+
+        let tracker = ResourceTracker::new();
+        tracker.register_output(output_path.clone());
+        tracker.mark_complete();
+
+        // Clean up - file should NOT be deleted (marked complete)
+        tracker.cleanup_all()?;
+        assert!(
+            output_path.exists(),
+            "Completed output file should not be deleted"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn register_output_without_complete_deletes() -> std::io::Result<()> {
+        use std::fs;
+        use tempfile::TempDir;
+
+        let dir = TempDir::new()?;
+        let output_path = dir.path().join("output.txt");
+
+        // Create the output file
+        fs::write(&output_path, b"test data")?;
+        assert!(output_path.exists());
+
+        let tracker = ResourceTracker::new();
+        tracker.register_output(output_path.clone());
+
+        // Clean up without marking complete - file SHOULD be deleted
+        tracker.cleanup_all()?;
+        assert!(
+            !output_path.exists(),
+            "Incomplete output file should be deleted"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn register_temp_file_always_deletes() -> std::io::Result<()> {
+        use std::fs;
+        use tempfile::TempDir;
+
+        let dir = TempDir::new()?;
+        let temp_path = dir.path().join("temp.txt");
+
+        // Create the temp file
+        fs::write(&temp_path, b"temp data")?;
+        assert!(temp_path.exists());
+
+        let tracker = ResourceTracker::new();
+        tracker.register_temp_file(temp_path.clone());
+        tracker.mark_complete(); // Even if marked complete
+
+        // Clean up - temp file should ALWAYS be deleted
+        tracker.cleanup_all()?;
+        assert!(!temp_path.exists(), "Temp file should always be deleted");
+
+        Ok(())
+    }
+
+    #[test]
+    fn register_multiple_temp_files() -> std::io::Result<()> {
+        use std::fs;
+        use tempfile::TempDir;
+
+        let dir = TempDir::new()?;
+        let temp1 = dir.path().join("temp1.txt");
+        let temp2 = dir.path().join("temp2.txt");
+        let temp3 = dir.path().join("temp3.txt");
+
+        // Create temp files
+        fs::write(&temp1, b"temp1")?;
+        fs::write(&temp2, b"temp2")?;
+        fs::write(&temp3, b"temp3")?;
+
+        let tracker = ResourceTracker::new();
+        tracker.register_temp_file(temp1.clone());
+        tracker.register_temp_file(temp2.clone());
+        tracker.register_temp_file(temp3.clone());
+
+        // Clean up - all temp files should be deleted
+        tracker.cleanup_all()?;
+        assert!(!temp1.exists());
+        assert!(!temp2.exists());
+        assert!(!temp3.exists());
+
+        Ok(())
+    }
+
+    #[test]
+    fn drop_cleans_up_incomplete_output() -> std::io::Result<()> {
+        use std::fs;
+        use tempfile::TempDir;
+
+        let dir = TempDir::new()?;
+        let output_path = dir.path().join("output.txt");
+
+        // Create the output file
+        fs::write(&output_path, b"test data")?;
+        assert!(output_path.exists());
+
+        {
+            let tracker = ResourceTracker::new();
+            tracker.register_output(output_path.clone());
+            // Drop without marking complete
+        }
+
+        // File should be deleted by Drop
+        assert!(
+            !output_path.exists(),
+            "Drop should delete incomplete output"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn drop_keeps_completed_output() -> std::io::Result<()> {
+        use std::fs;
+        use tempfile::TempDir;
+
+        let dir = TempDir::new()?;
+        let output_path = dir.path().join("output.txt");
+
+        // Create the output file
+        fs::write(&output_path, b"test data")?;
+
+        {
+            let tracker = ResourceTracker::new();
+            tracker.register_output(output_path.clone());
+            tracker.mark_complete();
+            // Drop with completion
+        }
+
+        // File should NOT be deleted
+        assert!(output_path.exists(), "Drop should keep completed output");
+
+        Ok(())
+    }
+
+    #[test]
+    fn cleanup_nonexistent_files_succeeds() {
+        use tempfile::TempDir;
+
+        let dir = TempDir::new().unwrap();
+        let fake_path = dir.path().join("does_not_exist.txt");
+
+        let tracker = ResourceTracker::new();
+        tracker.register_output(fake_path.clone());
+        tracker.register_temp_file(fake_path);
+
+        // Cleanup should succeed even if files don't exist
+        assert!(tracker.cleanup_all().is_ok());
+    }
+
+    #[test]
+    fn replace_output_registration() -> std::io::Result<()> {
+        use std::fs;
+        use tempfile::TempDir;
+
+        let dir = TempDir::new()?;
+        let output1 = dir.path().join("output1.txt");
+        let output2 = dir.path().join("output2.txt");
+
+        fs::write(&output1, b"data1")?;
+        fs::write(&output2, b"data2")?;
+
+        let tracker = ResourceTracker::new();
+        tracker.register_output(output1.clone());
+        tracker.register_output(output2.clone()); // Replace first registration
+
+        // Only the second output should be deleted
+        tracker.cleanup_all()?;
+
+        assert!(
+            output1.exists(),
+            "First output should not be tracked after replacement"
+        );
+        assert!(!output2.exists(), "Second output should be deleted");
+
+        Ok(())
     }
 }

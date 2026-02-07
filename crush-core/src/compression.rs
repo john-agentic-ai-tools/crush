@@ -309,4 +309,212 @@ mod tests {
         // Should compress well (repeated data)
         assert!(compressed.len() < data.len() / 2);
     }
+
+    // CompressionOptions tests
+    #[test]
+    fn test_compression_options_default() {
+        let options = CompressionOptions::default();
+        assert_eq!(options.timeout, DEFAULT_TIMEOUT);
+        assert!(options.plugin_name.is_none());
+        assert!(options.file_metadata.is_none());
+        assert!(options.cancel_token.is_none());
+    }
+
+    #[test]
+    fn test_compression_options_new() {
+        let options = CompressionOptions::new();
+        assert_eq!(options.timeout, DEFAULT_TIMEOUT);
+    }
+
+    #[test]
+    fn test_compression_options_with_plugin() {
+        let options = CompressionOptions::new().with_plugin("deflate");
+        assert_eq!(options.plugin_name, Some("deflate".to_string()));
+    }
+
+    #[test]
+    fn test_compression_options_with_weights() {
+        let weights = ScoringWeights {
+            throughput: 0.5,
+            compression_ratio: 0.5,
+        };
+        let options = CompressionOptions::new().with_weights(weights);
+        assert!((options.weights.throughput - 0.5).abs() < f64::EPSILON);
+        assert!((options.weights.compression_ratio - 0.5).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_compression_options_with_timeout() {
+        let timeout = Duration::from_secs(10);
+        let options = CompressionOptions::new().with_timeout(timeout);
+        assert_eq!(options.timeout, timeout);
+    }
+
+    #[test]
+    fn test_compression_options_with_file_metadata() {
+        let metadata = FileMetadata {
+            mtime: Some(1_234_567_890),
+            #[cfg(unix)]
+            permissions: Some(0o644),
+        };
+        let options = CompressionOptions::new().with_file_metadata(metadata);
+        assert!(options.file_metadata.is_some());
+    }
+
+    #[test]
+    fn test_compression_options_with_cancel_token() {
+        use crate::cancel::AtomicCancellationToken;
+        let token: Arc<dyn CancellationToken> = Arc::new(AtomicCancellationToken::new());
+        let options = CompressionOptions::new().with_cancel_token(token);
+        assert!(options.cancel_token.is_some());
+    }
+
+    #[test]
+    fn test_compression_options_debug() {
+        let options = CompressionOptions::new().with_plugin("test");
+        let debug_str = format!("{options:?}");
+        assert!(debug_str.contains("CompressionOptions"));
+        assert!(debug_str.contains("test"));
+    }
+
+    // compress_with_options tests
+    #[test]
+    #[allow(clippy::unwrap_used)]
+    fn test_compress_with_options_default() {
+        init_plugins().unwrap();
+        let data = b"Test data for compression";
+        let options = CompressionOptions::default();
+        let compressed = compress_with_options(data, &options).unwrap();
+
+        assert!(compressed.len() >= CrushHeader::SIZE);
+    }
+
+    #[test]
+    #[allow(clippy::unwrap_used)]
+    fn test_compress_with_options_manual_plugin() {
+        init_plugins().unwrap();
+        let data = b"Test data";
+        let options = CompressionOptions::default().with_plugin("deflate");
+        let compressed = compress_with_options(data, &options).unwrap();
+
+        assert!(compressed.len() >= CrushHeader::SIZE);
+        assert_eq!(&compressed[0..4], &[0x43, 0x52, 0x01, 0x00]); // DEFLATE magic
+    }
+
+    #[test]
+    #[allow(clippy::unwrap_used)]
+    fn test_compress_with_options_invalid_plugin() {
+        init_plugins().unwrap();
+        let data = b"Test data";
+        let options = CompressionOptions::default().with_plugin("nonexistent");
+        let result = compress_with_options(data, &options);
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    #[allow(clippy::unwrap_used)]
+    fn test_compress_with_options_with_metadata() {
+        init_plugins().unwrap();
+        let data = b"Test data with metadata";
+        let metadata = FileMetadata {
+            mtime: Some(1_234_567_890),
+            #[cfg(unix)]
+            permissions: Some(0o644),
+        };
+        let options = CompressionOptions::default().with_file_metadata(metadata);
+        let compressed = compress_with_options(data, &options).unwrap();
+
+        // Should have header + metadata
+        assert!(compressed.len() > CrushHeader::SIZE + 4); // +4 for metadata length
+    }
+
+    #[test]
+    #[allow(clippy::unwrap_used)]
+    fn test_compress_with_options_cancellation() {
+        use crate::cancel::AtomicCancellationToken;
+
+        init_plugins().unwrap();
+        let data = b"Test data";
+        let token = Arc::new(AtomicCancellationToken::new());
+        token.cancel(); // Cancel before compression
+
+        let options = CompressionOptions::default().with_cancel_token(token);
+        let result = compress_with_options(data, &options);
+
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            crate::error::CrushError::Cancelled
+        ));
+    }
+
+    #[test]
+    #[allow(clippy::unwrap_used)]
+    fn test_compress_with_options_timeout() {
+        init_plugins().unwrap();
+        let data = vec![0u8; 10_000_000]; // Large data
+        let options = CompressionOptions::default().with_timeout(Duration::from_nanos(1)); // Extremely short timeout
+
+        let result = compress_with_options(&data, &options);
+        // May succeed or timeout depending on system speed
+        // Just verify it doesn't panic
+        let _ = result;
+    }
+
+    #[test]
+    #[allow(clippy::unwrap_used)]
+    fn test_compress_with_options_zero_timeout() {
+        init_plugins().unwrap();
+        let data = b"Test with no timeout";
+        let options = CompressionOptions::default().with_timeout(Duration::from_secs(0)); // No timeout
+
+        let result = compress_with_options(data, &options);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    #[allow(clippy::unwrap_used)]
+    fn test_compress_roundtrip_with_options() {
+        use crate::decompress;
+
+        init_plugins().unwrap();
+        let original = b"Roundtrip test data with options";
+        let options = CompressionOptions::default();
+        let compressed = compress_with_options(original, &options).unwrap();
+        let result = decompress(&compressed).unwrap();
+
+        assert_eq!(result.data, original);
+    }
+
+    #[test]
+    #[allow(clippy::unwrap_used)]
+    fn test_compression_options_builder_chain() {
+        use crate::cancel::AtomicCancellationToken;
+
+        let metadata = FileMetadata {
+            mtime: Some(1_234_567_890),
+            #[cfg(unix)]
+            permissions: Some(0o644),
+        };
+        let weights = ScoringWeights {
+            throughput: 0.7,
+            compression_ratio: 0.3,
+        };
+        let token: Arc<dyn CancellationToken> = Arc::new(AtomicCancellationToken::new());
+
+        // Test method chaining
+        let options = CompressionOptions::new()
+            .with_plugin("deflate")
+            .with_weights(weights)
+            .with_timeout(Duration::from_secs(30))
+            .with_file_metadata(metadata)
+            .with_cancel_token(token);
+
+        assert_eq!(options.plugin_name, Some("deflate".to_string()));
+        assert!((options.weights.throughput - 0.7).abs() < f64::EPSILON);
+        assert_eq!(options.timeout, Duration::from_secs(30));
+        assert!(options.file_metadata.is_some());
+        assert!(options.cancel_token.is_some());
+    }
 }
