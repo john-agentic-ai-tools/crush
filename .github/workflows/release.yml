@@ -163,33 +163,74 @@ jobs:
           cargo publish --dry-run -p crush-core
           cargo publish --dry-run -p crush-cli
 
-      - name: Authenticate with crates.io (OIDC)
-        uses: rust-lang/crates-io-auth-action@v1
-        id: cargo_auth
+      - name: Authenticate with crates.io
+        id: crates_auth
+        run: |
+          # Try trusted publishing (OIDC) first, fall back to secret token
+          if [ -n "${ACTIONS_ID_TOKEN_REQUEST_URL}" ]; then
+            echo "Attempting trusted publishing (OIDC)..."
+            OIDC_JWT=$(curl -sSf \
+              "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=https://crates.io" \
+              -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+              | jq -r '.value')
+
+            RESPONSE=$(curl -sS -w "\n%{http_code}" -X POST \
+              "https://crates.io/api/v1/tokens/oidc" \
+              -H "Content-Type: application/json" \
+              -d "{\"oidc_token\": \"${OIDC_JWT}\"}")
+
+            HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+            BODY=$(echo "$RESPONSE" | sed '$d')
+
+            if [ "$HTTP_CODE" = "200" ]; then
+              TOKEN=$(echo "$BODY" | jq -r '.token')
+              echo "::add-mask::${TOKEN}"
+              echo "token=${TOKEN}" >> $GITHUB_OUTPUT
+              echo "Authenticated via trusted publishing (OIDC)"
+              exit 0
+            else
+              echo "OIDC failed (HTTP ${HTTP_CODE}): $(echo "$BODY" | jq -r '.errors // empty')"
+              echo "Falling back to secret token..."
+            fi
+          fi
+
+          # Fall back to CARGO_REGISTRY_TOKEN secret (needed for initial publish)
+          if [ -n "$FALLBACK_TOKEN" ]; then
+            echo "::add-mask::${FALLBACK_TOKEN}"
+            echo "token=${FALLBACK_TOKEN}" >> $GITHUB_OUTPUT
+            echo "Authenticated via CARGO_REGISTRY_TOKEN secret"
+          else
+            echo "::error::No authentication method available."
+            echo "For initial publish: add a CARGO_REGISTRY_TOKEN repository secret"
+            echo "For trusted publishing: configure the crate on crates.io first"
+            exit 1
+          fi
+        env:
+          FALLBACK_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
       - name: Publish crush-core to crates.io
-        run: cargo publish --token ${{ steps.cargo_auth.outputs.token }} -p crush-core
+        run: cargo publish -p crush-core
         env:
-          CARGO_REGISTRY_TOKEN: ${{ steps.cargo_auth.outputs.token }}
+          CARGO_REGISTRY_TOKEN: ${{ steps.crates_auth.outputs.token }}
 
       - name: Wait for crates.io index update
         run: sleep 30
 
       - name: Publish crush-cli to crates.io
-        run: cargo publish --token ${{ steps.cargo_auth.outputs.token }} -p crush-cli
+        run: cargo publish -p crush-cli
         env:
-          CARGO_REGISTRY_TOKEN: ${{ steps.cargo_auth.outputs.token }}
+          CARGO_REGISTRY_TOKEN: ${{ steps.crates_auth.outputs.token }}
 
       - name: Retry publish on failure
         if: failure()
         run: |
           echo "Retrying publish after 30 seconds..."
           sleep 30
-          cargo publish --token ${{ steps.cargo_auth.outputs.token }} -p crush-core || true
+          cargo publish -p crush-core || true
           sleep 10
-          cargo publish --token ${{ steps.cargo_auth.outputs.token }} -p crush-cli
+          cargo publish -p crush-cli
         env:
-          CARGO_REGISTRY_TOKEN: ${{ steps.cargo_auth.outputs.token }}
+          CARGO_REGISTRY_TOKEN: ${{ steps.crates_auth.outputs.token }}
 
   create_github_release:
     name: Create GitHub Release
