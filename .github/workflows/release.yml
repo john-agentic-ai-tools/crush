@@ -114,7 +114,7 @@ jobs:
           file target/x86_64-unknown-linux-musl/release/crush
 
           echo "=== Checking for dynamic dependencies ==="
-          if ldd target/x86_64-unknown-linux-musl/release/crush 2>&1 | grep -q "not a dynamic executable"; then
+          if ldd target/x86_64-unknown-linux-musl/release/crush 2>&1 | grep -qE "not a dynamic executable|statically linked"; then
             echo "✓ Binary is statically linked"
           else
             echo "✗ Binary has dynamic dependencies:"
