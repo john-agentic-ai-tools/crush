@@ -1,6 +1,6 @@
 [package]
 name = "crush-cli"
-version = "0.1.0"
+version = "0.1.1"
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
@@ -13,7 +13,7 @@ name = "crush"
 path = "src/main.rs"
 
 [dependencies]
-crush-core = { version = "0.1.0", path = "../crush-core" }
+crush-core = { version = "0.1.1", path = "../crush-core" }
 clap = { version = "4", features = ["derive"] }
 indicatif = "0.18"
 termcolor = "1.4"
@@ -32,7 +32,7 @@ assert_cmd = "2.0"
 predicates = "3.1"
 tempfile = "3.10"
 serde_json = "1.0"
-criterion = "0.5"
+criterion = "0.8.2"
 
 [[bench]]
 name = "cli_startup"
