@@ -38,7 +38,8 @@ jobs:
           if [ -n "${{ github.event.inputs.version }}" ]; then
             VERSION="${{ github.event.inputs.version }}"
           else
-            VERSION=$(grep -m1 '^version' Cargo.toml | sed 's/.*"\(.*\)".*/\1/')
+            # Read from crush-core (workspace root has no [package] version)
+            VERSION=$(grep -m1 '^version' crush-core/Cargo.toml | sed 's/.*"\(.*\)".*/\1/')
           fi
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
           echo "Detected version: ${VERSION}"
@@ -55,29 +56,33 @@ jobs:
       - name: Check version uniqueness on crates.io
         run: |
           VERSION="${{ steps.get_version.outputs.version }}"
-          CRATE_NAME=$(grep -m1 '^name' Cargo.toml | sed 's/.*"\(.*\)".*/\1/')
 
-          # Query crates.io API for existing versions
-          HTTP_STATUS=$(curl -s -o /tmp/crates_response.json -w "%{http_code}" \
-            "https://crates.io/api/v1/crates/${CRATE_NAME}/versions")
+          # Check both workspace crates (workspace root has no [package] name)
+          for CRATE_NAME in crush-core crush-cli; do
+            echo "Checking ${CRATE_NAME}..."
 
-          if [ "$HTTP_STATUS" = "404" ]; then
-            echo "Crate '${CRATE_NAME}' not found on crates.io (first publish)"
-            exit 0
-          fi
+            # Query crates.io API for existing versions
+            HTTP_STATUS=$(curl -s -o /tmp/crates_response.json -w "%{http_code}" \
+              "https://crates.io/api/v1/crates/${CRATE_NAME}/versions")
 
-          if [ "$HTTP_STATUS" != "200" ]; then
-            echo "Warning: Could not verify version uniqueness (HTTP ${HTTP_STATUS})"
-            exit 0
-          fi
+            if [ "$HTTP_STATUS" = "404" ]; then
+              echo "Crate '${CRATE_NAME}' not found on crates.io (first publish)"
+              continue
+            fi
 
-          # Check if version already exists
-          if jq -e ".versions[] | select(.num == \"$VERSION\")" /tmp/crates_response.json > /dev/null 2>&1; then
-            echo "Error: Version '${VERSION}' already exists on crates.io"
-            exit 1
-          fi
+            if [ "$HTTP_STATUS" != "200" ]; then
+              echo "Warning: Could not verify version uniqueness for '${CRATE_NAME}' (HTTP ${HTTP_STATUS})"
+              continue
+            fi
 
-          echo "Version '${VERSION}' is unique on crates.io"
+            # Check if version already exists
+            if jq -e ".versions[] | select(.num == \"$VERSION\")" /tmp/crates_response.json > /dev/null 2>&1; then
+              echo "Error: Version '${VERSION}' of '${CRATE_NAME}' already exists on crates.io"
+              exit 1
+            fi
+
+            echo "Version '${VERSION}' of '${CRATE_NAME}' is unique on crates.io"
+          done
 
   run_ci:
     name: Run CI Checks
@@ -109,7 +114,7 @@ jobs:
           file target/x86_64-unknown-linux-musl/release/crush
 
           echo "=== Checking for dynamic dependencies ==="
-          if ldd target/x86_64-unknown-linux-musl/release/crush 2>&1 | grep -q "not a dynamic executable"; then
+          if ldd target/x86_64-unknown-linux-musl/release/crush 2>&1 | grep -qE "not a dynamic executable|statically linked"; then
             echo "✓ Binary is statically linked"
           else
             echo "✗ Binary has dynamic dependencies:"
@@ -152,25 +157,79 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
 
       - name: Dry-run publish
-        run: cargo publish --dry-run
+        run: |
+          # Only dry-run crush-core — crush-cli depends on crush-core being
+          # on crates.io, so its dry-run fails until core is published
+          cargo publish --dry-run -p crush-core
 
-      - name: Authenticate with crates.io (OIDC)
-        uses: rust-lang/crates-io-auth-action@v1
-        id: cargo_auth
+      - name: Authenticate with crates.io
+        id: crates_auth
+        run: |
+          # Try trusted publishing (OIDC) first, fall back to secret token
+          if [ -n "${ACTIONS_ID_TOKEN_REQUEST_URL}" ]; then
+            echo "Attempting trusted publishing (OIDC)..."
+            OIDC_JWT=$(curl -sSf \
+              "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=https://crates.io" \
+              -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+              | jq -r '.value')
 
-      - name: Publish to crates.io
-        run: cargo publish --token ${{ steps.cargo_auth.outputs.token }}
+            RESPONSE=$(curl -sS -w "\n%{http_code}" -X POST \
+              "https://crates.io/api/v1/tokens/oidc" \
+              -H "Content-Type: application/json" \
+              -d "{\"oidc_token\": \"${OIDC_JWT}\"}")
+
+            HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+            BODY=$(echo "$RESPONSE" | sed '$d')
+
+            if [ "$HTTP_CODE" = "200" ]; then
+              TOKEN=$(echo "$BODY" | jq -r '.token')
+              echo "::add-mask::${TOKEN}"
+              echo "token=${TOKEN}" >> $GITHUB_OUTPUT
+              echo "Authenticated via trusted publishing (OIDC)"
+              exit 0
+            else
+              echo "OIDC failed (HTTP ${HTTP_CODE}): $(echo "$BODY" | jq -r '.errors // empty')"
+              echo "Falling back to secret token..."
+            fi
+          fi
+
+          # Fall back to CARGO_REGISTRY_TOKEN secret (needed for initial publish)
+          if [ -n "$FALLBACK_TOKEN" ]; then
+            echo "::add-mask::${FALLBACK_TOKEN}"
+            echo "token=${FALLBACK_TOKEN}" >> $GITHUB_OUTPUT
+            echo "Authenticated via CARGO_REGISTRY_TOKEN secret"
+          else
+            echo "::error::No authentication method available."
+            echo "For initial publish: add a CARGO_REGISTRY_TOKEN repository secret"
+            echo "For trusted publishing: configure the crate on crates.io first"
+            exit 1
+          fi
         env:
-          CARGO_REGISTRY_TOKEN: ${{ steps.cargo_auth.outputs.token }}
+          FALLBACK_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+      - name: Publish crush-core to crates.io
+        run: cargo publish -p crush-core
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.crates_auth.outputs.token }}
+
+      - name: Wait for crates.io index update
+        run: sleep 30
+
+      - name: Publish crush-cli to crates.io
+        run: cargo publish -p crush-cli
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.crates_auth.outputs.token }}
 
       - name: Retry publish on failure
         if: failure()
         run: |
-          echo "Retrying publish after 10 seconds..."
+          echo "Retrying publish after 30 seconds..."
+          sleep 30
+          cargo publish -p crush-core || true
           sleep 10
-          cargo publish --token ${{ steps.cargo_auth.outputs.token }}
+          cargo publish -p crush-cli
         env:
-          CARGO_REGISTRY_TOKEN: ${{ steps.cargo_auth.outputs.token }}
+          CARGO_REGISTRY_TOKEN: ${{ steps.crates_auth.outputs.token || secrets.CARGO_REGISTRY_TOKEN }}
 
   create_github_release:
     name: Create GitHub Release
