@@ -13,7 +13,7 @@ name = "crush"
 path = "src/main.rs"
 
 [dependencies]
-crush-core = { path = "../crush-core" }
+crush-core = { version = "0.1.0", path = "../crush-core" }
 clap = { version = "4", features = ["derive"] }
 indicatif = "0.18"
 termcolor = "1.4"
