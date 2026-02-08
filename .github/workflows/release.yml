@@ -158,10 +158,9 @@ jobs:
 
       - name: Dry-run publish
         run: |
-          # Workspace root has no [package] - must publish each crate individually
-          # Core must be published first (cli depends on it)
+          # Only dry-run crush-core — crush-cli depends on crush-core being
+          # on crates.io, so its dry-run fails until core is published
           cargo publish --dry-run -p crush-core
-          cargo publish --dry-run -p crush-cli
 
       - name: Authenticate with crates.io
         id: crates_auth
@@ -230,7 +229,7 @@ jobs:
           sleep 10
           cargo publish -p crush-cli
         env:
-          CARGO_REGISTRY_TOKEN: ${{ steps.crates_auth.outputs.token }}
+          CARGO_REGISTRY_TOKEN: ${{ steps.crates_auth.outputs.token || secrets.CARGO_REGISTRY_TOKEN }}
 
   create_github_release:
     name: Create GitHub Release
