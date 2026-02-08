@@ -88,16 +88,10 @@ fn test_file_cleanup_on_cancellation() {
 
     // On optimized/release builds, compression of repetitive data may complete
     // before the cancel signal arrives — both outcomes are valid.
-    match &result {
-        Err(CrushError::Cancelled) => {
-            // Cancellation won the race — output file should be cleaned up
-            // (This will be verified once ResourceTracker integration is complete)
-        }
-        Ok(_) => {
-            // Compression finished before cancellation — valid on fast builds
-        }
-        other => panic!("Expected Cancelled or Ok, got: {other:?}"),
-    }
+    assert!(
+        matches!(result, Ok(_) | Err(CrushError::Cancelled)),
+        "Expected Ok or Cancelled error, got: {result:?}"
+    );
 }
 
 /// T019: Test exit code behavior on cancellation
