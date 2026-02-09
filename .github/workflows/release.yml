@@ -18,7 +18,7 @@ concurrency:
 permissions:
   id-token: write
   contents: write
-  pull-requests: read
+  pull-requests: write
 
 env:
   CARGO_TERM_COLOR: always
@@ -258,34 +258,46 @@ jobs:
             dist/crush-${VERSION}-x86_64-unknown-linux-musl.tar.gz \
             dist/crush-${VERSION}-x86_64-unknown-linux-musl.tar.gz.sha256
 
-  merge_to_develop:
-    name: Merge to develop
+  pr_to_develop:
+    name: Create PR to develop
     needs: [validate_version, create_github_release]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Configure Git
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-
-      - name: Merge to develop
+      - name: Create PR and enable auto-merge
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           VERSION="${{ needs.validate_version.outputs.version }}"
           RELEASE_BRANCH="${GITHUB_REF#refs/heads/}"
 
-          git fetch origin develop
-          git checkout develop
-          git merge --no-ff "${RELEASE_BRANCH}" -m "Merge release v${VERSION} to develop"
-          git push origin develop
+          BODY=$(cat <<EOF
+          ## Release v${VERSION}
+
+          Automated PR to merge release branch back to develop.
+
+          - GitHub Release created
+          - Crates published to crates.io
+          - Static binary built and attached to release
+          EOF
+          )
+
+          PR_URL=$(gh pr create \
+            --base develop \
+            --head "${RELEASE_BRANCH}" \
+            --title "Merge release v${VERSION} to develop" \
+            --body "${BODY}")
+
+          echo "Created PR: ${PR_URL}"
+
+          gh pr merge "${PR_URL}" --auto --merge
 
   merge_to_main:
     name: Merge to main
-    needs: [merge_to_develop, validate_version]
+    needs: [validate_version]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
