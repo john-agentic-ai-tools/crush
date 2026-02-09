@@ -297,7 +297,7 @@ jobs:
 
   merge_to_main:
     name: Merge to main
-    needs: [pr_to_develop, validate_version]
+    needs: [validate_version]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
