@@ -18,13 +18,17 @@ Implement `crush-parallel`, a new workspace crate providing a pigz-inspired mult
 - `rayon` — parallel block compression/decompression (workspace dep)
 - `flate2` — raw DEFLATE encoding/decoding per block (workspace dep)
 - `crc32fast` — per-block CRC32 checksums (workspace dep)
-- `memmap2` — memory-mapped file I/O for large file zero-copy reads (workspace dep)
+- `memmap2` — memory-mapped file I/O; used inside `compress_file()` for zero-copy large file reads (workspace dep, used in `crush-parallel`)
 - `thiserror` — error types (workspace dep)
 - `wgpu` + `pollster` — GPU compute, optional feature `gpu` (new, feature-gated)
 - `linkme` — plugin registration (workspace dep)
 
 **CLI additions**:
 - `indicatif` — progress bar in `crush-cli` (already in crush-cli deps)
+
+**Dev Dependencies** (workspace root):
+
+- `cargo-husky` — pre-commit hooks enforcing `cargo fmt --check` and `cargo clippy --quiet` (MANDATORY per constitution)
 
 **Storage**: Binary file format (`.crsh`). No database.
 **Testing**: `cargo test`, `cargo-fuzz` (100k iterations), `criterion` benchmarks, `proptest` for round-trip properties.
@@ -55,7 +59,8 @@ Implement `crush-parallel`, a new workspace crate providing a pigz-inspired mult
 ### III. Modularity & Extensibility ✅
 
 - `crush-parallel` is a separate crate — `crush-core` has no compile-time dependency on it
-- Plugin registered via `linkme` distributed slice (same as existing plugins)
+- Plugin registered via `linkme` distributed slice under name `parallel-deflate` (FR-015, same pattern as existing plugins)
+- Algorithm selection policy (`crush-cli/src/algorithm.rs`) is decoupled from the plugin library — policy changes do not require recompiling `crush-parallel` (FR-016)
 - GPU path is entirely feature-gated — zero GPU symbols in default binary
 - `EngineConfiguration` uses builder pattern per constitution requirement
 
@@ -125,16 +130,21 @@ crush-core/src/error.rs          # Add: VersionMismatch, ChecksumMismatch,
                                  #   Add: CrushError::is_cancelled() helper
 
 crush-cli/src/commands/
-├── compress.rs                  # Wire crush-parallel plugin; indicatif progress bar
+├── compress.rs                  # Wire crush-parallel plugin; indicatif progress bar;
+│                                #   invoke parallel-deflate automatically for inputs ≥ 25 MB
 └── decompress.rs                # Wire crush-parallel plugin; indicatif progress bar;
                                  #   --block N flag for random access
+
+crush-cli/src/algorithm.rs       # Algorithm selection logic: choose plugin by name or by
+                                 #   input size (≥ 25 MB → parallel-deflate, else default);
+                                 #   --algorithm flag; --parallel-threshold flag; verbose output
 
 Cargo.toml (workspace root)      # Add crush-parallel to members[];
                                  # Add wgpu, pollster to [workspace.dependencies]
                                  #   (optional, behind feature flag)
 ```
 
-**Structure Decision**: Separate `crush-parallel` crate per Principle III (Modularity). The `crush-core` crate is the stable interface layer; `crush-parallel` is a plugin implementation. GPU code is entirely within `crush-parallel/src/gpu/`, gated by `#[cfg(feature = "gpu")]`.
+**Structure Decision**: Separate `crush-parallel` crate per Principle III (Modularity). The `crush-core` crate is the stable interface layer; `crush-parallel` is a plugin implementation registered under the name `parallel-deflate` via the `linkme` distributed slice (FR-015). Algorithm selection (FR-016) lives in `crush-cli/src/algorithm.rs` — no coupling between selection policy and the plugin library. GPU code is entirely within `crush-parallel/src/gpu/`, gated by `#[cfg(feature = "gpu")]`.
 
 ---
 
@@ -146,8 +156,10 @@ Cargo.toml (workspace root)      # Add crush-parallel to members[];
 2. Create `crush-parallel/Cargo.toml` with correct dependencies
 3. Add new `CrushError` variants to `crush-core/src/error.rs`
 4. Add `CrushError::is_cancelled()` helper
-5. Stub `crush-parallel/src/lib.rs` with public module declarations
-6. Verify `cargo build` compiles clean
+5. Stub `crush-parallel/src/lib.rs` with public module declarations and `linkme` plugin registration (FR-015): `static PARALLEL_DEFLATE_PLUGIN: CompressionPlugin` under `#[crush_core::plugin::register]`
+6. Stub `crush-cli/src/algorithm.rs` with `select_algorithm(input_size: u64, explicit: Option<&str>, threshold: u64) -> &'static str` signature (returns plugin name string)
+7. Configure `cargo-husky` pre-commit hooks (`.cargo-husky/hooks/pre-commit`): `cargo fmt --check` + `cargo clippy --quiet` (constitution MANDATORY)
+8. Verify `cargo build` compiles clean
 
 ### Phase 2: File Format (Foundational — blocks US1–US4)
 
@@ -172,7 +184,7 @@ TDD order:
 3. Implement `engine.rs`: `decompress()` + `decompress_from_reader()` with parallel index-driven decompression
 4. Verify checksum validation halts cleanly at corrupt block
 
-### Phase 5: US3 — Progress Callback & Cancellation
+### Phase 5: Cross-Cutting — Progress Callback, Cancellation & Algorithm Selection (FR-012, FR-013, FR-016)
 
 TDD order:
 1. Tests: `test_progress_events_emitted`, `test_cancel_halts_at_block_boundary`, `test_cancelled_discards_output`
@@ -180,6 +192,7 @@ TDD order:
 3. Integrate callback invocation + `AtomicCancellationToken` into `engine.rs` compress/decompress loops
 4. `crush-cli`: implement `indicatif` progress bar reference implementation (FR-013)
 5. Wire `ctrlc` → `AtomicCancellationToken` → callback
+6. `crush-cli/src/algorithm.rs`: implement full `select_algorithm()` logic — default threshold 25 MB, `--algorithm` override, `--parallel-threshold` flag; log selected plugin name when `--verbose` is set (FR-016)
 
 ### Phase 6: US4 — Random Access
 

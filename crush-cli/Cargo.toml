@@ -13,7 +13,8 @@ name = "crush"
 path = "src/main.rs"
 
 [dependencies]
-crush-core = { version = "0.1.1", path = "../crush-core" }
+crush-core = { version = "0.2.0", path = "../crush-core" }
+crush-parallel = { version = "0.1.0", path = "../crush-parallel" }
 clap = { version = "4", features = ["derive"] }
 indicatif = "0.18"
 termcolor = "1.4"

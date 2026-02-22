@@ -187,10 +187,24 @@ let compressed = compress(&large_data, &config)?;
 
 ## CLI Integration Pattern
 
-In `crush-cli`, the compression command wires `crush-parallel` as a plugin — no manual registration needed. The parallel DEFLATE plugin is auto-discovered via the `linkme` distributed slice. The CLI invokes it when the user selects the `parallel-deflate` algorithm or it is the default.
+In `crush-cli`, the compression command wires `crush-parallel` as a plugin — no manual registration needed. The parallel DEFLATE plugin is auto-discovered via the `linkme` distributed slice.
+
+**Automatic selection (FR-016)**: crush-cli automatically uses `parallel-deflate` when the input is ≥ 25 MB. For smaller inputs the default single-threaded algorithm is used unless overridden.
 
 ```text
-$ crush compress --algorithm parallel-deflate input.dat output.crsh
+# Files ≥ 25 MB: parallel-deflate selected automatically
+$ crush compress large.dat output.crsh
+$ crush --verbose compress large.dat output.crsh
+[crush] input size: 512 MB — selected algorithm: parallel-deflate (threshold: 25 MB)
+
+# Files < 25 MB: default algorithm, or explicit override
+$ crush compress small.dat output.crsh
+$ crush compress --algorithm parallel-deflate small.dat output.crsh
+
+# Adjust the threshold at invocation time
+$ crush compress --parallel-threshold 10485760 medium.dat output.crsh  # 10 MB threshold
+
+# Decompression and random access (algorithm auto-detected from file header)
 $ crush decompress output.crsh restored.dat
 $ crush decompress --block 47 output.crsh block47.dat   # single block random access
 ```

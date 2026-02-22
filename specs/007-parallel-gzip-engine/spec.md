@@ -21,6 +21,8 @@ A developer integrating Crush into a data pipeline wants to compress large files
 2. **Given** a stream of arbitrary size with no known end, **When** streaming compression is invoked, **Then** the engine compresses data as it arrives without buffering the full input.
 3. **Given** a single-core machine, **When** compression is invoked, **Then** the engine falls back to sequential compression and produces a valid output file.
 4. **Given** the compressed output, **When** decompressed by this engine, **Then** the output is byte-for-byte identical to the original input.
+5. **Given** a user invokes crush-cli to compress a file ≥ 25 MB without specifying an algorithm, **When** the command runs, **Then** crush-cli automatically selects the `parallel-deflate` plugin and the verbose output confirms the chosen algorithm.
+6. **Given** a user invokes crush-cli to compress a file < 25 MB without specifying an algorithm, **When** the command runs, **Then** crush-cli uses the default algorithm; the user may override this by explicitly passing `--algorithm parallel-deflate`.
 
 ---
 
@@ -75,10 +77,10 @@ A data engineer working with large compressed archives needs to read a specific 
 ### Edge Cases
 
 - What happens when input data is already highly compressed or incompressible (e.g., encrypted data)? The engine must not produce output larger than a configurable threshold above raw input size; if so, it should store the block uncompressed.
-- How does the engine handle input that arrives slower than the compression rate (backpressure)? Worker threads must block cleanly without spinning.
+- How does the engine handle input that arrives slower than the compression rate (backpressure)? Worker threads must block cleanly without spinning. *Note: handled automatically by rayon's work-stealing scheduler; worker threads block on channel reads and do not spin.*
 - What if block size is set larger than available memory per thread? The engine must reject the configuration with a clear error before starting.
 - What happens if the compressed file's block index is missing or truncated? The engine must detect this and refuse to decompress rather than silently producing corrupt output.
-- What if the number of CPU cores changes during compression (e.g., cgroups adjustment)? The engine must complete with the thread pool it started with and not crash.
+- What if the number of CPU cores changes during compression (e.g., cgroups adjustment)? The engine must complete with the thread pool it started with and not crash. *Note: rayon's thread pool is configured at engine creation time and is unaffected by subsequent OS-level CPU count changes; no additional handling required.*
 - What if the caller cancels a compression or decompression in progress? The engine must halt at the next block boundary, discard partial output, and return a distinct `Cancelled` result — not an error — so callers can distinguish intentional cancellation from failures.
 - What if the engine encounters a file produced by a different engine version? The engine must refuse to process it and emit an error naming both the file's producer version and the current engine version, so the user knows exactly which version to use.
 - What if decompressed output would exceed the caller's configured expansion limit? The engine must halt immediately with a clear error identifying the offending block, not silently truncate output.
@@ -89,18 +91,20 @@ A data engineer working with large compressed archives needs to read a specific 
 
 - **FR-001**: The engine MUST divide input data into independently compressible blocks and compress each block concurrently across available processing units.
 - **FR-002**: The compressed output format MUST embed a block index that records the byte offset and uncompressed size of every block, enabling decompression to start at any block without reading preceding blocks.
-- **FR-003**: The engine MUST produce output that decompresses to a byte-for-byte identical copy of the original input, verified by a per-block integrity checksum stored in the format.
+- **FR-003**: The engine MUST produce output that decompresses to a byte-for-byte identical copy of the original input, verified by a per-block integrity checksum stored in the format (see FR-010 for the checksum mechanism).
 - **FR-004**: The engine MUST expose a streaming compression interface that accepts data in chunks of arbitrary size and does not require the full input to be available before compression begins.
-- **FR-005**: The engine MUST expose a streaming decompression interface that can decompress any block in isolation given only the compressed file and the target block's offset from the index.
+- **FR-005**: The engine MUST expose a seekable single-block decompression interface that can decompress any block in isolation given only the compressed file and the target block's index from the block index.
 - **FR-006**: The engine MUST detect and report corrupt or truncated compressed data before emitting any decompressed output for the affected block.
 - **FR-007**: The engine MUST allow the calling application to configure the number of parallel workers, block size, and compression level independently.
 - **FR-008**: When GPU acceleration is enabled, the engine MUST automatically detect whether compatible GPU hardware is present and fall back to CPU processing if not.
-- **FR-009**: The engine MUST expose its functionality as a library with a stable public API, usable independently of any command-line interface.
-- **FR-010**: The engine MUST record per-block checksums in the format and validate them on decompression, reporting the exact block index of any integrity failure.
+- **FR-009**: The engine MUST expose its functionality as a library with a stable public API, usable independently of any command-line interface. The library MUST include a file-level entry point (`compress_file`) that performs zero-copy memory-mapped reads for large file inputs.
+- **FR-010**: The engine MUST record per-block checksums in the format and validate them on decompression, reporting the exact block index of any integrity failure (implements the correctness guarantee stated in FR-003).
 - **FR-011**: The engine MUST enforce a configurable maximum decompression expansion ratio with a safe default. If decompressed output would exceed the caller-configured limit, the engine MUST halt and return an error before emitting further output. Callers may raise or explicitly disable this limit.
-- **FR-014**: The compressed format MUST store the engine version that produced it in the file header. When the engine encounters a file produced by a different version, it MUST refuse to decompress and emit an error that identifies both the file's producer version and the current engine version, so the user knows which version to install to read the file.
 - **FR-012**: The engine MUST accept an optional progress callback in its configuration. The callback is invoked after each block completes and receives: bytes processed so far, total blocks completed, and total blocks if known. The callback returns a boolean; returning `false` signals the engine to abort. The engine MUST halt at the next block boundary, discard any partial output, and return a `Cancelled` result to the caller. The callback is optional; omitting it incurs no overhead.
 - **FR-013**: The crush-cli crate MUST provide a working reference implementation of the progress callback, rendering a progress indicator to the terminal during compression and decompression operations.
+- **FR-014**: The compressed format MUST store the engine version that produced it in the file header. When the engine encounters a file produced by a different version, it MUST refuse to decompress and emit an error that identifies both the file's producer version and the current engine version, so the user knows which version to install to read the file.
+- **FR-015**: The parallel compression engine MUST be packaged and registered as a named plugin in the crush workspace plugin registry (name: `parallel-deflate`), enabling crush-cli and other consumers to discover and invoke it without compile-time coupling to the `crush-parallel` crate.
+- **FR-016**: crush-cli MUST automatically select the `parallel-deflate` plugin when the input size is at or above a configurable threshold (default: 25 MB). Below the threshold, crush-cli MAY use the default single-threaded algorithm. The threshold MUST be overridable by the user at invocation time, and the selected algorithm MUST be visible in verbose output.
 
 ### Key Entities
 
@@ -120,7 +124,7 @@ A data engineer working with large compressed archives needs to read a specific 
 - **SC-004**: Random access to any block in a compressed file (seek + decompress single block) completes in under 100 ms for files up to 10 GB.
 - **SC-005**: When GPU acceleration is active on supported hardware, end-to-end compression throughput is at least 20% higher than CPU-only on the same machine.
 - **SC-006**: Compressed output size is within 5% of equivalent single-threaded gzip output at the same nominal compression level for compressible data.
-- **SC-007**: 100% of decompressed outputs are byte-for-byte identical to their inputs, verified across all block sizes, thread counts, and hardware paths (CPU and GPU).
+- **SC-007**: 100% of decompressed outputs are byte-for-byte identical to their inputs, verified across all block sizes, thread counts, and hardware paths (CPU and GPU). *(verifies FR-003)*
 - **SC-008**: The engine correctly detects and reports every injected block corruption in fuzz testing over a minimum of 100,000 iterations.
 
 ## Assumptions
@@ -129,11 +133,16 @@ A data engineer working with large compressed archives needs to read a specific 
 - **A-002**: The custom format is not required to be forward-compatible with standard gzip decompressors. Interoperability with gzip is explicitly out of scope.
 - **A-003**: GPU acceleration targets discrete GPU hardware capable of general-purpose compute. Integrated graphics are out of scope for P3.
 - **A-004**: Block size defaults to 1 MB, consistent with pigz's default, as a starting point. This is tunable at runtime.
-- **A-005**: The engine is a library, not a standalone binary. CLI integration is handled by a separate crate (crush-cli) already in the workspace.
+- **A-005**: The engine is both a library with a stable public API and a registered crush plugin. It ships as the `crush-parallel` crate which self-registers under the name `parallel-deflate`. CLI integration is handled by a separate crate (crush-cli) already in the workspace; crush-cli selects the plugin automatically for large inputs.
 - **A-006**: Thread safety is required: multiple callers may create independent engine instances concurrently; shared state between instances is not assumed or required.
 - **A-007**: Multi-file archive support is explicitly out of scope. The engine operates on a single byte stream; callers are responsible for any multi-file bundling upstream (e.g., piping a tar stream into the engine).
 
 ## Clarifications
+
+### Session 2026-02-22
+
+- Q: Should the parallel engine be a crush plugin, or only a standalone library? → A: Both — it MUST register as a crush plugin named `parallel-deflate` so crush-cli can auto-discover it. The stable library API is retained for direct programmatic use.
+- Q: When should crush-cli use the parallel engine by default? → A: Automatically for inputs ≥ 25 MB; the threshold is user-configurable. The selected algorithm is shown in verbose output.
 
 ### Session 2026-02-21
 

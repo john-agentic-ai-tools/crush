@@ -152,6 +152,34 @@ All functions are synchronous (no `async`). All are safe Rust (no `unsafe` in th
 pub fn compress(input: &[u8], config: &EngineConfiguration) -> Result<Vec<u8>, CrushError>;
 ```
 
+### `compress_file`
+
+```rust
+/// Compress a file at `path` using memory-mapped zero-copy I/O.
+///
+/// This is the preferred entry point for large file inputs (FR-009).
+/// Internally uses `memmap2::MmapOptions` to avoid copying file contents
+/// into a heap buffer before compression. The caller does not need to
+/// handle the memory map — it is managed within this function.
+///
+/// # Returns
+/// - `Ok(Vec<u8>)` — compressed output in CRSH format
+/// - `Err(CrushError::Io)` — file could not be opened or memory-mapped
+/// - `Err(CrushError::Cancelled)` — operation was cancelled via the progress callback
+/// - `Err(CrushError::InvalidConfig)` — configuration validation failed
+///
+/// # Example
+/// ```rust
+/// use crush_parallel::{compress_file, EngineConfiguration};
+/// use std::path::Path;
+///
+/// let config = EngineConfiguration::default();
+/// let compressed = compress_file(Path::new("input.bin"), &config)?;
+/// # Ok::<(), crush_core::CrushError>(())
+/// ```
+pub fn compress_file(path: &Path, config: &EngineConfiguration) -> Result<Vec<u8>, CrushError>;
+```
+
 ### `compress_to_writer`
 
 ```rust
@@ -284,9 +312,9 @@ impl BlockIndex {
 
 ---
 
-## `CompressionAlgorithm` Plugin Registration
+## `CompressionAlgorithm` Plugin Registration (FR-015)
 
-`crush-parallel` registers itself as a plugin into `crush-core`'s plugin registry via the `linkme`-based distributed slice pattern already used by the existing plugin system:
+`crush-parallel` registers itself as a plugin into `crush-core`'s plugin registry via the `linkme`-based distributed slice pattern already used by the existing plugin system (satisfies FR-015):
 
 ```rust
 // In crush-parallel/src/lib.rs
@@ -301,7 +329,53 @@ static PARALLEL_DEFLATE_PLUGIN: CompressionPlugin = CompressionPlugin {
 };
 ```
 
-This means `crush-cli` automatically discovers `crush-parallel` when it is a workspace dependency — no manual registration required.
+`crush-cli` automatically discovers `crush-parallel` when it is a workspace dependency — no manual registration required. The plugin name `"parallel-deflate"` is the stable identifier used by the algorithm selection logic.
+
+---
+
+## Algorithm Selection API (FR-016) — `crush-cli/src/algorithm.rs`
+
+This module lives in `crush-cli`, not in `crush-parallel`. The selection policy is decoupled from the plugin library so it can be changed without recompiling `crush-parallel`.
+
+```rust
+/// Default input-size threshold above which the parallel engine is preferred.
+pub const DEFAULT_PARALLEL_THRESHOLD_BYTES: u64 = 25 * 1024 * 1024; // 25 MB
+
+/// Select the compression plugin name given the input size and any explicit override.
+///
+/// # Arguments
+/// - `input_size`: known input byte count, or `None` for streaming inputs (unknown size).
+/// - `explicit`: value of the `--algorithm` flag, if provided by the user.
+/// - `threshold`: size threshold in bytes (from `--parallel-threshold` flag or default).
+///
+/// # Returns
+/// The plugin name string to pass to the `crush-core` plugin registry.
+///
+/// # Behaviour
+/// - If `explicit` is `Some`, that value is returned unconditionally.
+/// - If `input_size` is `None` (streaming), returns `"parallel-deflate"` (streaming favours
+///   parallel to avoid buffering the full input).
+/// - If `input_size >= threshold`, returns `"parallel-deflate"`.
+/// - Otherwise returns `"default"` (the existing single-threaded algorithm).
+pub fn select_algorithm(
+    input_size: Option<u64>,
+    explicit: Option<&str>,
+    threshold: u64,
+) -> &'static str;
+```
+
+**CLI flags added to `crush-cli/src/args.rs`**:
+
+| Flag                           | Type             | Default              | Description                                       |
+|--------------------------------|------------------|----------------------|---------------------------------------------------|
+| `--algorithm <name>`           | `Option<String>` | None                 | Explicit algorithm name; bypasses auto-selection  |
+| `--parallel-threshold <bytes>` | `u64`            | `26214400` (25 MB)   | Override the auto-selection threshold             |
+
+**Verbose output contract**: when `--verbose` is passed, `crush-cli` MUST log the selected algorithm name before compression begins:
+
+```text
+[crush] input size: 128 MB — selected algorithm: parallel-deflate (threshold: 25 MB)
+```
 
 ---
 

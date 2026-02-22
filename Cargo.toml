@@ -3,9 +3,11 @@ resolver = "2"
 members = [
     "crush-core",
     "crush-cli",
+    "crush-parallel",
 ]
 exclude = [
     "crush-core/fuzz",
+    "crush-parallel/fuzz",
 ]
 
 [workspace.package]
@@ -21,7 +23,8 @@ crossbeam = "0.8"
 rayon = "1.10"
 flate2 = "1.1"
 crc32fast = "1.4"
-thiserror = "2.0.0"
+memmap2 = "0.9"
+thiserror = "2.0.18"
 criterion = "0.8.2"
 
 [profile.dev]

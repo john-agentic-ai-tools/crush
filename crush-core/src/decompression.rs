@@ -10,6 +10,40 @@ use crc32fast::Hasher;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
+/// Read and compute the CRC32 block that follows a Crush header.
+///
+/// Returns `(stored_crc, computed_crc, new_payload_start)` where:
+/// - `stored_crc` is the checksum recorded in the stream
+/// - `computed_crc` is the checksum computed over the remaining payload
+/// - `new_payload_start` is the byte offset at which the actual payload begins
+///
+/// # Errors
+///
+/// Returns an error if the input is truncated (fewer than 4 bytes remain at
+/// `payload_start`).
+pub(crate) fn read_crc32_block(input: &[u8], payload_start: usize) -> Result<(u32, u32, usize)> {
+    if input.len() < payload_start + 4 {
+        return Err(ValidationError::InvalidHeader(
+            "Truncated: CRC32 flag set but no CRC32 data".to_string(),
+        )
+        .into());
+    }
+    let stored_crc = u32::from_le_bytes([
+        input[payload_start],
+        input[payload_start + 1],
+        input[payload_start + 2],
+        input[payload_start + 3],
+    ]);
+    let new_payload_start = payload_start + 4;
+
+    let payload_for_crc = &input[new_payload_start..];
+    let mut hasher = Hasher::new();
+    hasher.update(payload_for_crc);
+    let computed_crc = hasher.finalize();
+
+    Ok((stored_crc, computed_crc, new_payload_start))
+}
+
 #[derive(Debug)]
 pub struct DecompressionResult {
     pub data: Vec<u8>,
@@ -63,25 +97,8 @@ pub fn decompress(input: &[u8]) -> Result<DecompressionResult> {
 
     // Handle CRC32
     if header.has_crc32() {
-        if input.len() < payload_start + 4 {
-            return Err(ValidationError::InvalidHeader(
-                "Truncated: CRC32 flag set but no CRC32 data".to_string(),
-            )
-            .into());
-        }
-        let stored_crc = u32::from_le_bytes([
-            input[payload_start],
-            input[payload_start + 1],
-            input[payload_start + 2],
-            input[payload_start + 3],
-        ]);
-        payload_start += 4;
-
-        let payload_for_crc = &input[payload_start..];
-        let mut hasher = Hasher::new();
-        hasher.update(payload_for_crc);
-        let computed_crc = hasher.finalize();
-
+        let (stored_crc, computed_crc, new_start) = read_crc32_block(input, payload_start)?;
+        payload_start = new_start;
         if stored_crc != computed_crc {
             return Err(ValidationError::CrcMismatch {
                 expected: stored_crc,

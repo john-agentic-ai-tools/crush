@@ -1,53 +1,49 @@
 [package]
-name = "crush-core"
-version = "0.2.0"
+name = "crush-parallel"
+version = "0.1.0"
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
-description = "High-performance parallel compression library core"
+description = "Parallel DEFLATE compression engine with custom CRSH block format"
 
 [lib]
-name = "crush_core"
+name = "crush_parallel"
 path = "src/lib.rs"
 
+[features]
+default = []
+gpu = ["dep:wgpu", "dep:pollster"]
+
 [dependencies]
-linkme = { workspace = true }
-crossbeam = { workspace = true }
+crush-core = { version = "0.2.0", path = "../crush-core" }
 rayon = { workspace = true }
 flate2 = { workspace = true }
 crc32fast = { workspace = true }
+memmap2 = { workspace = true }
 thiserror = { workspace = true }
-serde =  { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-ctrlc = "3.4"
-tempfile = "3.8" 
+linkme = { workspace = true }
+wgpu = { version = "22", optional = true }
+pollster = { version = "0.4", optional = true }
 
 [dev-dependencies]
 criterion = { workspace = true }
 proptest = "1.5"
+tempfile = "3.8"
 
 [[bench]]
-name = "plugin_discovery"
+name = "throughput"
 harness = false
 
 [[bench]]
-name = "plugin_selection"
-harness = false
-
-[[bench]]
-name = "compression"
+name = "random_access"
 harness = false
 
 [lints.clippy]
-# Deny all warnings to enforce quality
 all = "deny"
-# Enable pedantic lints for stricter code quality
 pedantic = "warn"
-# Constitution requirement: No unwrap() in production
 unwrap_used = "deny"
 expect_used = "deny"
-# Additional safety lints
 panic = "deny"
 panic_in_result_fn = "deny"
