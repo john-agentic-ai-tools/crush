@@ -165,6 +165,10 @@ pub struct DecompressArgs {
     /// Write output to stdout (for piping)
     #[arg(long, conflicts_with = "output")]
     pub stdout: bool,
+
+    /// Decompress only a specific block (random access, 0-indexed)
+    #[arg(long, value_name = "N")]
+    pub block: Option<u64>,
 }
 
 /// Inspect command arguments

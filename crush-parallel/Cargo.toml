@@ -14,7 +14,7 @@ path = "src/lib.rs"
 
 [features]
 default = []
-gpu = ["dep:wgpu", "dep:pollster"]
+gpu = ["dep:wgpu", "dep:pollster", "dep:bytemuck"]
 
 [dependencies]
 crush-core = { version = "0.2.0", path = "../crush-core" }
@@ -24,8 +24,9 @@ crc32fast = { workspace = true }
 memmap2 = { workspace = true }
 thiserror = { workspace = true }
 linkme = { workspace = true }
-wgpu = { version = "22", optional = true }
+wgpu = { version = "22", optional = true, features = ["wgsl"] }
 pollster = { version = "0.4", optional = true }
+bytemuck = { version = "1.14", optional = true, features = ["derive"] }
 
 [dev-dependencies]
 criterion = { workspace = true }
