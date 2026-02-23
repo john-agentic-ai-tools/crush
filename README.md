@@ -105,6 +105,35 @@ cargo bench --bench random_access
 cargo bench --features gpu --bench throughput
 ```
 
+### Comparing Against gzip/pigz
+
+To compare crush against standard compression tools:
+
+```bash
+# Build crush first
+cargo build --release
+
+# Run comparison script (Linux/Mac/WSL)
+bash benchmark-compare.sh
+
+# Manual comparison example
+echo "Test data..." > test.txt
+
+# Crush
+time ./target/release/crush compress test.txt
+ls -lh test.txt.crush
+
+# gzip --fast (comparable compression ratio to crush)
+time gzip --fast --keep test.txt
+ls -lh test.txt.gz
+
+# pigz (parallel gzip)
+time pigz --keep test.txt
+ls -lh test.txt.gz
+```
+
+**Note**: Crush currently optimizes for speed over compression ratio. For fairest comparisons, compare against `gzip --fast` rather than default gzip, as they have similar compression ratios while crush provides significantly higher throughput.
+
 ## Installation
 
 ### From Source
