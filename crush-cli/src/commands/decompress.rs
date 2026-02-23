@@ -4,15 +4,55 @@ use crate::error::{CliError, Result};
 use crate::output::{self, DecompressionResult};
 use crush_core::cancel::CancellationToken;
 use crush_core::decompress;
+use crush_core::plugin::FileMetadata;
 use filetime::{set_file_mtime, FileTime};
 use indicatif::{ProgressBar, ProgressStyle};
 use is_terminal::IsTerminal;
 use std::fs;
-use std::io::{self, Read};
+use std::io::{self, Cursor, Read};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tracing::{debug, info, instrument, trace};
+
+/// Decompress a single block using random access.
+///
+/// Returns the decompressed block data and empty metadata (random access doesn't preserve metadata).
+fn decompress_single_block(
+    compressed_data: &[u8],
+    block_n: u64,
+) -> Result<(Vec<u8>, FileMetadata)> {
+    // Detect if this is a parallel-deflate CRSH file
+    if compressed_data.len() >= 4 && &compressed_data[0..4] == b"CRSH" {
+        // Use crush_parallel for random access
+        let mut cursor = Cursor::new(compressed_data);
+        let index = crush_parallel::load_index(&mut cursor)?;
+
+        // Check if block exists
+        if block_n >= index.len() {
+            return Err(CliError::InvalidInput(format!(
+                "Block {} does not exist (file has {} blocks)",
+                block_n,
+                index.len()
+            )));
+        }
+
+        let config = crush_parallel::EngineConfiguration::default();
+        let block_data = crush_parallel::decompress_block(&mut cursor, &index, block_n, &config)?;
+
+        debug!(
+            "Decompressed block {} ({} bytes)",
+            block_n,
+            block_data.len()
+        );
+        Ok((block_data, FileMetadata::default()))
+    } else {
+        Err(CliError::InvalidInput(
+            "Random access (--block) is only supported for parallel-deflate (.crsh) files"
+                .to_string(),
+        ))
+    }
+}
 
 pub fn run(args: &DecompressArgs, interrupted: Arc<dyn CancellationToken>) -> Result<()> {
     // Check if reading from stdin (no input files and stdout mode)
@@ -158,11 +198,17 @@ fn decompress_file(
     // Start timing
     let start = Instant::now();
 
-    // Decompress
-    trace!("Starting decompression operation");
-    let result = decompress(&compressed_data)?;
-    let decompressed_data = result.data;
-    let metadata = result.metadata;
+    // Decompress (either full file or single block)
+    let (decompressed_data, metadata) = if let Some(block_n) = args.block {
+        // Random access: decompress only the specified block
+        trace!("Starting random access decompression for block {}", block_n);
+        decompress_single_block(&compressed_data, block_n)?
+    } else {
+        // Full decompression
+        trace!("Starting full decompression operation");
+        let result = decompress(&compressed_data)?;
+        (result.data, result.metadata)
+    };
 
     // Stop timing
     let duration = start.elapsed();

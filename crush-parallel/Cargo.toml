@@ -1,0 +1,43 @@
+[package]
+name = "crush-parallel"
+version = "0.1.0"
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Parallel DEFLATE compression engine with custom CRSH block format"
+
+[lib]
+name = "crush_parallel"
+path = "src/lib.rs"
+
+[dependencies]
+crush-core = { version = "0.2.0", path = "../crush-core" }
+rayon = { workspace = true }
+libdeflater = { workspace = true }
+crc32fast = { workspace = true }
+memmap2 = { workspace = true }
+thiserror = { workspace = true }
+linkme = { workspace = true }
+
+[dev-dependencies]
+criterion = { workspace = true }
+proptest = "1.5"
+tempfile = "3.8"
+
+[[bench]]
+name = "throughput"
+harness = false
+
+[[bench]]
+name = "random_access"
+harness = false
+
+[lints.clippy]
+all = "deny"
+pedantic = "warn"
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+panic_in_result_fn = "deny"

@@ -422,9 +422,10 @@ fn test_compress_interrupt_cleanup() {
     use std::time::Duration;
 
     let dir = test_dir();
-    // Create a large file so compression takes some time
-    // Use 100MB to ensure it takes long enough to interrupt
-    let large_data = vec![0u8; 100 * 1024 * 1024]; // 100MB
+    // File size does not matter much — we kill before compression can complete.
+    // A 50 MB file is large enough to require reading from disk (> 5 ms on any
+    // storage device), giving us a reliable window to send the kill signal.
+    let large_data = vec![0u8; 50 * 1024 * 1024]; // 50 MB
     let input = create_test_file(dir.path(), "interrupt_test.bin", &large_data);
     let _output = dir.path().join("interrupt_test.bin.crush");
 
@@ -442,8 +443,10 @@ fn test_compress_interrupt_cleanup() {
         .spawn()
         .expect("Failed to start compress process");
 
-    // Give it a moment to start processing
-    thread::sleep(Duration::from_millis(100));
+    // Kill almost immediately — Windows process startup (DLL loading, Rust runtime
+    // init) takes at minimum 20-100 ms, so a 5 ms window reliably arrives before
+    // the process has read the input file, regardless of compression speed.
+    thread::sleep(Duration::from_millis(5));
 
     // Kill the process (simulating Ctrl+C)
     child.kill().expect("Failed to kill process");

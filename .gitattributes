@@ -3,3 +3,4 @@
 
 # Enforce Unix line endings for hook scripts specifically
 .claude/hooks/* text eol=lf
+.cargo-husky/hooks/* text eol=lf

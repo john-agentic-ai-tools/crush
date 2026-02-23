@@ -1,0 +1,12 @@
+#!/bin/sh
+# Pre-commit hook managed by cargo-husky (constitution MANDATORY).
+# Runs on every git commit to enforce code quality gates.
+set -e
+
+echo "[pre-commit] Running cargo fmt --check..."
+cargo fmt --all -- --check
+
+echo "[pre-commit] Running cargo clippy..."
+cargo clippy --all-targets --quiet -- -D warnings
+
+echo "[pre-commit] All checks passed."
