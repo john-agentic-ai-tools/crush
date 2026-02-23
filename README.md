@@ -110,7 +110,6 @@ Compression scales near-linearly with thread count. `workers=0` (default) uses a
 - **Configurable parallelism**: `workers(n)` limits CPU usage for background tasks; `workers(0)` (default) uses all cores
 - **Consistent Random Access**: O(1) block decompression via seekable block index (~1 ms per block)
 - **Memory Efficient**: Exact worst-case buffer sizing eliminates over-allocation
-- **GPU Acceleration**: Optional GPU support for additional performance (experimental)
 
 ### Running Benchmarks
 

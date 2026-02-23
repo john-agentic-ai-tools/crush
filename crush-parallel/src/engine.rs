@@ -11,11 +11,6 @@ use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-#[cfg(feature = "gpu")]
-use crate::format::BlockFlags;
-#[cfg(feature = "gpu")]
-use crate::gpu::worker::GpuWorker;
-
 // ---------------------------------------------------------------------------
 // Thread pool helper
 // ---------------------------------------------------------------------------
@@ -27,46 +22,6 @@ fn with_pool<T: Send>(config: &EngineConfiguration, f: impl FnOnce() -> T + Send
         Some(pool) => pool.install(f),
         None => f(),
     }
-}
-
-// ---------------------------------------------------------------------------
-// GPU compression helper
-// ---------------------------------------------------------------------------
-
-#[cfg(feature = "gpu")]
-fn compress_block_gpu(
-    worker: &GpuWorker,
-    chunk: &[u8],
-    _block_index: usize,
-    config: &EngineConfiguration,
-) -> Result<crate::block::CompressedBlock> {
-    // NOTE: The current GPU shader is a placeholder that does pass-through.
-    // Real DEFLATE on GPU is complex (requires LZ77 + Huffman encoding).
-    // For this MVP, GPU blocks are stored uncompressed.
-
-    // Get data from GPU (currently just a pass-through)
-    let _gpu_output = worker.compress_block(chunk)?;
-
-    // Calculate checksum
-    let checksum = if config.checksums {
-        crc32fast::hash(chunk)
-    } else {
-        0
-    };
-
-    let uncompressed_size = u32::try_from(chunk.len())
-        .map_err(|_| CrushError::InvalidConfig("block too large".to_owned()))?;
-
-    // Always store uncompressed for GPU path (since shader doesn't compress yet)
-    Ok(crate::block::CompressedBlock {
-        header: BlockHeader {
-            compressed_size: uncompressed_size,
-            uncompressed_size,
-            checksum,
-            flags: BlockFlags::default().with_stored(),
-        },
-        payload: chunk.to_vec(),
-    })
 }
 
 // ---------------------------------------------------------------------------
@@ -86,14 +41,6 @@ pub fn compress(input: &[u8], config: &EngineConfiguration) -> Result<Vec<u8>> {
     let blocks: Vec<&[u8]> = input.chunks(block_size).collect();
     let total_blocks = blocks.len() as u64;
 
-    // Initialize GPU worker if requested
-    #[cfg(feature = "gpu")]
-    let gpu_worker = if config.gpu { GpuWorker::new() } else { None };
-
-    // Track GPU fallback
-    #[cfg(feature = "gpu")]
-    let gpu_fallback = Arc::new(AtomicBool::new(false));
-
     // Compress all blocks in parallel (respects config.workers via dedicated pool)
     let results: Vec<Result<crate::block::CompressedBlock>> = with_pool(config, || {
         blocks
@@ -103,23 +50,6 @@ pub fn compress(input: &[u8], config: &EngineConfiguration) -> Result<Vec<u8>> {
                 if cancelled.load(Ordering::Acquire) {
                     return Err(CrushError::Cancelled);
                 }
-
-                // Try GPU compression if available and not yet fallen back
-                #[cfg(feature = "gpu")]
-                if let Some(ref worker) = gpu_worker {
-                    if !gpu_fallback.load(Ordering::Acquire) {
-                        match compress_block_gpu(worker, chunk, i, config) {
-                            Ok(block) => return Ok(block),
-                            Err(e) => {
-                                // GPU failed, fall back to CPU for remaining blocks
-                                gpu_fallback.store(true, Ordering::Release);
-                                eprintln!("GPU compression failed, falling back to CPU: {e:?}");
-                            }
-                        }
-                    }
-                }
-
-                // CPU fallback
                 compress_block(chunk, i, config)
             })
             .collect()

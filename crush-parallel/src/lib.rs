@@ -21,9 +21,6 @@ pub mod engine;
 pub mod format;
 pub mod index;
 
-#[cfg(feature = "gpu")]
-pub mod gpu;
-
 // Public API re-exports
 pub use config::{
     EngineConfiguration, EngineConfigurationBuilder, ProgressCallback, ProgressEvent, ProgressPhase,

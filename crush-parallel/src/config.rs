@@ -51,8 +51,6 @@ pub struct EngineConfiguration {
     pub max_decompression_ratio: f64,
     /// Enable per-block CRC32 checksums.
     pub checksums: bool,
-    /// Attempt GPU-accelerated compression (no-op if `gpu` feature disabled or no adapter).
-    pub gpu: bool,
     /// Optional progress callback.
     pub progress: Option<Arc<Mutex<ProgressCallback>>>,
 }
@@ -67,7 +65,6 @@ impl Default for EngineConfiguration {
             max_expansion_ratio: 1.0,
             max_decompression_ratio: 1024.0,
             checksums: true,
-            gpu: false,
             progress: None,
         }
     }
@@ -133,13 +130,6 @@ impl EngineConfigurationBuilder {
     #[must_use]
     pub fn checksums(mut self, enabled: bool) -> Self {
         self.inner.checksums = enabled;
-        self
-    }
-
-    /// Enable GPU-accelerated compression.
-    #[must_use]
-    pub fn gpu(mut self, enabled: bool) -> Self {
-        self.inner.gpu = enabled;
         self
     }
 

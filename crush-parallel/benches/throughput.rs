@@ -139,59 +139,7 @@ fn bench_decompression(c: &mut Criterion) {
     group.finish();
 }
 
-#[cfg(feature = "gpu")]
-fn bench_gpu_vs_cpu(c: &mut Criterion) {
-    // Only run if GPU is available
-    if crush_parallel::gpu::worker::GpuWorker::new().is_none() {
-        eprintln!("GPU benchmark skipped: no compatible adapter found");
-        return;
-    }
-
-    // 64 MB realistic corpus for GPU vs CPU comparison
-    let data = generate_corpus(64 * 1024 * 1024, 0x1234_5678_9ABC_DEF0);
-
-    let mut group = c.benchmark_group("gpu_vs_cpu");
-    group.throughput(Throughput::Bytes(data.len() as u64));
-    group.sample_size(10);
-
-    // CPU baseline
-    let cpu_config = EngineConfiguration::builder()
-        .workers(8)
-        .block_size(1_048_576)
-        .gpu(false)
-        .build()
-        .expect("config");
-
-    group.bench_with_input(BenchmarkId::new("mode", "cpu"), &data, |b, data| {
-        b.iter(|| compress(data, &cpu_config).expect("compress"));
-    });
-
-    // GPU mode
-    let gpu_config = EngineConfiguration::builder()
-        .workers(8)
-        .block_size(1_048_576)
-        .gpu(true)
-        .build()
-        .expect("config");
-
-    group.bench_with_input(BenchmarkId::new("mode", "gpu"), &data, |b, data| {
-        b.iter(|| compress(data, &gpu_config).expect("compress"));
-    });
-
-    group.finish();
-}
-
-#[cfg(feature = "gpu")]
-criterion_group!(
-    benches,
-    bench_compression,
-    bench_decompression,
-    bench_gpu_vs_cpu
-);
-
-#[cfg(not(feature = "gpu"))]
 criterion_group!(benches, bench_compression, bench_decompression);
-
 criterion_main!(benches);
 
 // SC-006 Size comparison results (T074, measured 2026-02-22):

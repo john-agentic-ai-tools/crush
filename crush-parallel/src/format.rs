@@ -132,26 +132,15 @@ pub struct BlockFlags(pub u8);
 impl BlockFlags {
     /// Bit 0: block is stored raw (uncompressed).
     pub const STORED: u8 = 0b0000_0001;
-    /// Bit 1: block was compressed by the GPU path (informational).
-    pub const GPU_COMPRESSED: u8 = 0b0000_0010;
 
     #[must_use]
     pub fn stored(self) -> bool {
         self.0 & Self::STORED != 0
     }
-    #[must_use]
-    pub fn gpu_compressed(self) -> bool {
-        self.0 & Self::GPU_COMPRESSED != 0
-    }
 
     #[must_use]
     pub fn with_stored(mut self) -> Self {
         self.0 |= Self::STORED;
-        self
-    }
-    #[must_use]
-    pub fn with_gpu_compressed(mut self) -> Self {
-        self.0 |= Self::GPU_COMPRESSED;
         self
     }
 }
