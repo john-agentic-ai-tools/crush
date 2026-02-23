@@ -232,7 +232,13 @@ impl GpuWorker {
         }
 
         // Copy output to staging buffer
-        encoder.copy_buffer_to_buffer(&output_buffer, 0, &staging_buffer, 0, u64::from(padded_size));
+        encoder.copy_buffer_to_buffer(
+            &output_buffer,
+            0,
+            &staging_buffer,
+            0,
+            u64::from(padded_size),
+        );
         encoder.copy_buffer_to_buffer(&metadata_buffer, 0, &metadata_staging, 0, 12);
 
         // Submit commands

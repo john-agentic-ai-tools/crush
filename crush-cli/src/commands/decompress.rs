@@ -18,7 +18,10 @@ use tracing::{debug, info, instrument, trace};
 /// Decompress a single block using random access.
 ///
 /// Returns the decompressed block data and empty metadata (random access doesn't preserve metadata).
-fn decompress_single_block(compressed_data: &[u8], block_n: u64) -> Result<(Vec<u8>, FileMetadata)> {
+fn decompress_single_block(
+    compressed_data: &[u8],
+    block_n: u64,
+) -> Result<(Vec<u8>, FileMetadata)> {
     // Detect if this is a parallel-deflate CRSH file
     if compressed_data.len() >= 4 && &compressed_data[0..4] == b"CRSH" {
         // Use crush_parallel for random access
@@ -37,11 +40,16 @@ fn decompress_single_block(compressed_data: &[u8], block_n: u64) -> Result<(Vec<
         let config = crush_parallel::EngineConfiguration::default();
         let block_data = crush_parallel::decompress_block(&mut cursor, &index, block_n, &config)?;
 
-        debug!("Decompressed block {} ({} bytes)", block_n, block_data.len());
+        debug!(
+            "Decompressed block {} ({} bytes)",
+            block_n,
+            block_data.len()
+        );
         Ok((block_data, FileMetadata::default()))
     } else {
         Err(CliError::InvalidInput(
-            "Random access (--block) is only supported for parallel-deflate (.crsh) files".to_string()
+            "Random access (--block) is only supported for parallel-deflate (.crsh) files"
+                .to_string(),
         ))
     }
 }

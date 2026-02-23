@@ -2,9 +2,7 @@
 
 use crate::block::{compress_block, decompress_block_payload};
 use crate::config::{EngineConfiguration, ProgressEvent, ProgressPhase};
-use crate::format::{
-    BlockHeader, BlockIndexEntry, FileFlags, FileFooter, FileHeader, IndexHeader,
-};
+use crate::format::{BlockHeader, BlockIndexEntry, FileFlags, FileFooter, FileHeader, IndexHeader};
 use crate::index::load_index;
 use crush_core::error::{CrushError, Result};
 use rayon::prelude::*;
