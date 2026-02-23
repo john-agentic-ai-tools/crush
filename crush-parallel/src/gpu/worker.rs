@@ -112,7 +112,7 @@ impl GpuWorker {
             label: Some("Crush Compression Pipeline"),
             layout: Some(&pipeline_layout),
             module: &shader,
-            entry_point: "compress_block",
+            entry_point: Some("compress_block"),
             compilation_options: wgpu::PipelineCompilationOptions::default(),
             cache: None,
         });
