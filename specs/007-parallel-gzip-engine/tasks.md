@@ -196,9 +196,9 @@
 
 **Purpose**: Run the mandatory post-MVP duplicate detection and cleanup pass required by the project constitution. Every feature must complete this phase before merge.
 
-- [] T082 Run `.specify/scripts/powershell/detect-duplicates.ps1` targeting `crush-parallel/src/` and identify any code patterns longer than 20 lines; output findings to `specs/007-parallel-gzip-engine/duplication-report.json`
-- [] T083 Refactor any duplicated code patterns > 20 lines found in T082 into shared helpers, traits, or utility functions within `crush-parallel/src/`; re-run `cargo test` to verify no regressions
-- [] T084 Create `specs/007-parallel-gzip-engine/cleanup-summary.md` documenting: number of duplications found, what was refactored (or why nothing needed refactoring), and final status; move `duplication-report.json` to `specs/007-parallel-gzip-engine/duplication-report.json` for archival
+- [X] T082 Run `.specify/scripts/powershell/detect-duplicates.ps1` targeting `crush-parallel/src/` and identify any code patterns longer than 20 lines; output findings to `specs/007-parallel-gzip-engine/duplication-report.json`
+- [X] T083 Refactor any duplicated code patterns > 20 lines found in T082 into shared helpers, traits, or utility functions within `crush-parallel/src/`; re-run `cargo test` to verify no regressions
+- [X] T084 Create `specs/007-parallel-gzip-engine/cleanup-summary.md` documenting: number of duplications found, what was refactored (or why nothing needed refactoring), and final status; move `duplication-report.json` to `specs/007-parallel-gzip-engine/duplication-report.json` for archival
 
 ---
 

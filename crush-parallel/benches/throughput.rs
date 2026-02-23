@@ -7,14 +7,77 @@
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use crush_parallel::{compress, decompress, EngineConfiguration};
 
+/// Generate a realistic benchmark corpus simulating source-code / log-file content.
+///
+/// Uses a seeded `XorShift64` PRNG — deterministic, no external dependencies.
+/// Mixes code vocabulary tokens (structure/repetition) with pseudo-random ASCII
+/// bytes (entropy variation), yielding a ~2–4x compression ratio representative
+/// of real text workloads.
+fn generate_corpus(size: usize, seed: u64) -> Vec<u8> {
+    const TOKENS: &[&[u8]] = &[
+        b"fn ",
+        b"let ",
+        b"mut ",
+        b"pub ",
+        b"use ",
+        b"mod ",
+        b"struct ",
+        b"impl ",
+        b"return ",
+        b"match ",
+        b"if ",
+        b"else ",
+        b"for ",
+        b"while ",
+        b"Vec<u8>",
+        b"Result<",
+        b"    ",
+        b"\n",
+        b"// comment\n",
+        b"Ok(",
+        b"Err(",
+        b"Some(",
+        b"None",
+        b"true",
+        b"false",
+        b"self",
+        b"type ",
+        b"trait ",
+        b"where ",
+        b"0x",
+        b"ERROR: ",
+        b"WARN: ",
+        b"INFO: ",
+        b"2026-02-",
+        b"::new()",
+    ];
+
+    let mut data = Vec::with_capacity(size);
+    let mut state = seed;
+
+    while data.len() < size {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+
+        if state.is_multiple_of(3) {
+            // ~33%: pseudo-random printable ASCII byte (adds entropy)
+            data.push(((state >> 8) & 0x5F) as u8 + 32);
+        } else {
+            // ~67%: vocabulary token (adds structure and repetition)
+            let token = TOKENS[(state as usize >> 4) % TOKENS.len()];
+            let remaining = size - data.len();
+            data.extend_from_slice(&token[..token.len().min(remaining)]);
+        }
+    }
+
+    data.truncate(size);
+    data
+}
+
 fn bench_compression(c: &mut Criterion) {
-    // 128 MB of compressible data
-    let data: Vec<u8> = b"benchmark data for parallel deflate compression engine"
-        .iter()
-        .cycle()
-        .take(128 * 1024 * 1024)
-        .copied()
-        .collect();
+    // 128 MB realistic corpus (source-code / log-file character distribution)
+    let data = generate_corpus(128 * 1024 * 1024, 0xDEAD_BEEF_CAFE_1234);
 
     let mut group = c.benchmark_group("compress_throughput");
     group.throughput(Throughput::Bytes(data.len() as u64));
@@ -42,12 +105,8 @@ fn bench_compression(c: &mut Criterion) {
 }
 
 fn bench_decompression(c: &mut Criterion) {
-    let data: Vec<u8> = b"decompression benchmark data"
-        .iter()
-        .cycle()
-        .take(128 * 1024 * 1024)
-        .copied()
-        .collect();
+    // 128 MB realistic corpus — same seed family as compression bench for consistency
+    let data = generate_corpus(128 * 1024 * 1024, 0xCAFE_BABE_0000_0001);
 
     let config_compress = EngineConfiguration::builder()
         .workers(8)
@@ -86,13 +145,8 @@ fn bench_gpu_vs_cpu(c: &mut Criterion) {
         return;
     }
 
-    // 64 MB of compressible data
-    let data: Vec<u8> = b"gpu benchmark data for parallel compression"
-        .iter()
-        .cycle()
-        .take(64 * 1024 * 1024)
-        .copied()
-        .collect();
+    // 64 MB realistic corpus for GPU vs CPU comparison
+    let data = generate_corpus(64 * 1024 * 1024, 0x1234_5678_9ABC_DEF0);
 
     let mut group = c.benchmark_group("gpu_vs_cpu");
     group.throughput(Throughput::Bytes(data.len() as u64));
@@ -144,9 +198,17 @@ criterion_main!(benches);
 //   crush-parallel (level 6):  80,330,673 bytes
 //   Ratio (crush / gzip):      1.00102 — within 0.1% of gzip ✓ (target: ≤ 1.05)
 //
-//   Note: Highly synthetic data (random word sequences) produced ~7-17% larger output
-//   because parallel blocks restart the LZ77 dictionary, losing cross-block back-references.
-//   For realistic workloads with mostly local patterns, crush-parallel matches gzip within 1%.
+//   Note: Parallel block compression restarts the LZ77 dictionary at each block boundary,
+//   losing cross-block back-references. For workloads with mostly local repetition (source
+//   code, logs) this is negligible; for files with long-range patterns a larger block size
+//   recovers the gap.
+//
+// Data generation note:
+//   All throughput benchmarks use generate_corpus() — a seeded XorShift64 generator that
+//   mixes code-vocabulary tokens with pseudo-random ASCII bytes to simulate ~2–4x
+//   compressible real-world data. The old cycle() approach produced near-perfectly
+//   repetitive input and measured DEFLATE at close to memcpy speed, which was not
+//   representative of actual workloads.
 //
 // SC-001/SC-003/SC-004 Throughput targets (run `cargo bench` to verify):
 //   Compression:   >500 MB/s at 8 cores, 1MB blocks

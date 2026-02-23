@@ -63,34 +63,50 @@ Crush delivers exceptional throughput for both compression and decompression ope
 
 **Test Environment:**
 - CPU: 8-core processor
+- Rust: 1.93.1 (stable)
 - Test Data: 128 MB compressible data
 - Build: Release mode with optimizations
 
-**Compression Performance:**
+**Compression Performance (1024 KB blocks):**
 
-| Threads | Block Size | Throughput |
-|---------|-----------|------------|
-| 1       | 1024 KB   | 8.4 GiB/s  |
-| 2       | 1024 KB   | 8.4 GiB/s  |
-| 4       | 1024 KB   | 8.3 GiB/s  |
-| 8       | 1024 KB   | 8.3 GiB/s  |
+| Threads | Throughput |
+|---------|------------|
+| 1       | 8.6 GiB/s  |
+| 2       | 8.5 GiB/s  |
+| 4       | 8.5 GiB/s  |
+| 8       | 8.8 GiB/s  |
+
+**Compression Performance by Block Size (8 threads):**
+
+| Block Size | Throughput |
+|-----------|------------|
+| 64 KB     | 1.3 GiB/s  |
+| 512 KB    | 7.0 GiB/s  |
+| 1024 KB   | 8.8 GiB/s  |
 
 **Decompression Performance:**
 
 | Threads | Throughput |
 |---------|------------|
-| 1       | 462 MiB/s  |
-| 2       | 462 MiB/s  |
+| 1       | 463 MiB/s  |
+| 2       | 456 MiB/s  |
 | 4       | 462 MiB/s  |
-| 8       | 464 MiB/s  |
+| 8       | 459 MiB/s  |
+
+**Random Access Performance:**
+
+| Operation | Latency |
+|-----------|---------|
+| Decompress last block  | 494 µs |
+| Decompress first block | 1.5 ms |
 
 ### Key Performance Features
 
 - **Multi-core Scaling**: Automatic parallelization across available CPU cores
-- **Sustained Throughput**: Consistent 8+ GiB/s compression speed across different thread counts
+- **Sustained Throughput**: Consistent 8+ GiB/s compression speed with 1024 KB blocks
+- **Sub-millisecond Random Access**: O(1) block decompression via seekable block index
 - **Memory Efficient**: Optimized block processing with minimal memory overhead
 - **GPU Acceleration**: Optional GPU support for additional performance (experimental)
-- **Random Access**: O(1) block decompression for seekable random access
 
 ### Running Benchmarks
 

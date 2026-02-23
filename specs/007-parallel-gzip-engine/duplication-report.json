@@ -1,0 +1,51 @@
+{
+  "analysis_date": "2026-02-23",
+  "target_directory": "crush-parallel/src/",
+  "minimum_threshold_lines": 20,
+  "tool": "jscpd (via detect-duplicates.ps1)",
+  "summary": {
+    "crush_parallel_src": {
+      "clone_groups_found": 0,
+      "total_duplicated_lines": 0,
+      "files_analyzed": [
+        "crush-parallel/src/block.rs",
+        "crush-parallel/src/config.rs",
+        "crush-parallel/src/engine.rs",
+        "crush-parallel/src/format.rs",
+        "crush-parallel/src/gpu/mod.rs",
+        "crush-parallel/src/gpu/worker.rs",
+        "crush-parallel/src/index.rs",
+        "crush-parallel/src/lib.rs"
+      ],
+      "verdict": "CLEAN - No code patterns longer than 20 lines found in crush-parallel/src/"
+    },
+    "whole_project_context": {
+      "clone_groups_found": 6,
+      "total_duplicated_lines": 185,
+      "overall_duplication_percentage": 1.88,
+      "duplications_outside_target": [
+        {
+          "location": "crush-core/src/plugin/registry.rs (lines 265-455)",
+          "description": "Three test-only InvalidPlugin struct definitions with identical compress/decompress/detect boilerplate (~32-35 lines each). Test-only duplication; not a production concern.",
+          "refactoring_priority": "low"
+        },
+        {
+          "location": "crush-core/src/decompression.rs vs crush-core/src/inspection.rs",
+          "description": "CRC32 validation logic (21 lines) duplicated between decompression and inspection paths.",
+          "refactoring_priority": "medium"
+        },
+        {
+          "location": "crush-cli/tests/compress.rs (lines 153-214)",
+          "description": "mtime preservation test repeated for macOS and Linux variants (27 lines each). Platform-specific test variants; acceptable duplication.",
+          "refactoring_priority": "low"
+        },
+        {
+          "location": "crush-cli/benches/cli_startup.rs vs crush-cli/benches/help_command.rs",
+          "description": "Identical crush_binary() helper function (43 lines) duplicated across two benchmark files.",
+          "refactoring_priority": "medium"
+        }
+      ]
+    }
+  },
+  "conclusion": "No refactoring required in crush-parallel/src/ — zero duplications detected above the 20-line threshold. The duplications detected in the wider project are outside the scope of this feature (007-parallel-gzip-engine) and are noted for future cleanup."
+}

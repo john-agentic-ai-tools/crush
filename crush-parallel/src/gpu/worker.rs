@@ -26,7 +26,7 @@ impl GpuWorker {
 
     async fn new_async() -> Option<Self> {
         // Create wgpu instance
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
             backends: wgpu::Backends::all(),
             ..Default::default()
         });
@@ -38,19 +38,19 @@ impl GpuWorker {
                 compatible_surface: None,
                 force_fallback_adapter: false,
             })
-            .await?;
+            .await
+            .ok()?;
 
         // Request device and queue
         let (device, queue) = adapter
-            .request_device(
-                &wgpu::DeviceDescriptor {
-                    label: Some("Crush GPU Device"),
-                    required_features: wgpu::Features::empty(),
-                    required_limits: wgpu::Limits::default(),
-                    memory_hints: wgpu::MemoryHints::Performance,
-                },
-                None,
-            )
+            .request_device(&wgpu::DeviceDescriptor {
+                label: Some("Crush GPU Device"),
+                required_features: wgpu::Features::empty(),
+                required_limits: wgpu::Limits::default(),
+                memory_hints: wgpu::MemoryHints::Performance,
+                experimental_features: wgpu::ExperimentalFeatures::disabled(),
+                trace: wgpu::Trace::Off,
+            })
             .await
             .ok()?;
 
@@ -104,7 +104,7 @@ impl GpuWorker {
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Crush Pipeline Layout"),
             bind_group_layouts: &[&bind_group_layout],
-            push_constant_ranges: &[],
+            immediate_size: 0,
         });
 
         // Create compute pipeline
@@ -245,12 +245,18 @@ impl GpuWorker {
         self.queue.submit(Some(encoder.finish()));
 
         // Wait for GPU to finish
-        self.device.poll(wgpu::MaintainBase::Wait);
+        let _ = self.device.poll(wgpu::PollType::Wait {
+            submission_index: None,
+            timeout: None,
+        });
 
         // Read back metadata to get actual output size
         let metadata_slice = metadata_staging.slice(..);
         metadata_slice.map_async(wgpu::MapMode::Read, |_| {});
-        self.device.poll(wgpu::MaintainBase::Wait);
+        let _ = self.device.poll(wgpu::PollType::Wait {
+            submission_index: None,
+            timeout: None,
+        });
 
         let metadata_view = metadata_slice.get_mapped_range();
         let output_size = u32::from_le_bytes([
@@ -265,7 +271,10 @@ impl GpuWorker {
         // Read back output data
         let output_slice = staging_buffer.slice(..);
         output_slice.map_async(wgpu::MapMode::Read, |_| {});
-        self.device.poll(wgpu::MaintainBase::Wait);
+        let _ = self.device.poll(wgpu::PollType::Wait {
+            submission_index: None,
+            timeout: None,
+        });
 
         let data = output_slice.get_mapped_range();
         let result = data[..output_size as usize].to_vec();
