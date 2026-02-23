@@ -17,6 +17,19 @@ use crate::format::BlockFlags;
 use crate::gpu::worker::GpuWorker;
 
 // ---------------------------------------------------------------------------
+// Thread pool helper
+// ---------------------------------------------------------------------------
+
+/// Run `f` inside the thread pool from `config`, or the global rayon pool when
+/// `config.workers == 0`.
+fn with_pool<T: Send>(config: &EngineConfiguration, f: impl FnOnce() -> T + Send) -> T {
+    match &config.thread_pool {
+        Some(pool) => pool.install(f),
+        None => f(),
+    }
+}
+
+// ---------------------------------------------------------------------------
 // GPU compression helper
 // ---------------------------------------------------------------------------
 
@@ -81,34 +94,36 @@ pub fn compress(input: &[u8], config: &EngineConfiguration) -> Result<Vec<u8>> {
     #[cfg(feature = "gpu")]
     let gpu_fallback = Arc::new(AtomicBool::new(false));
 
-    // Compress all blocks in parallel
-    let results: Vec<Result<crate::block::CompressedBlock>> = blocks
-        .par_iter()
-        .enumerate()
-        .map(|(i, chunk)| {
-            if cancelled.load(Ordering::Acquire) {
-                return Err(CrushError::Cancelled);
-            }
+    // Compress all blocks in parallel (respects config.workers via dedicated pool)
+    let results: Vec<Result<crate::block::CompressedBlock>> = with_pool(config, || {
+        blocks
+            .par_iter()
+            .enumerate()
+            .map(|(i, chunk)| {
+                if cancelled.load(Ordering::Acquire) {
+                    return Err(CrushError::Cancelled);
+                }
 
-            // Try GPU compression if available and not yet fallen back
-            #[cfg(feature = "gpu")]
-            if let Some(ref worker) = gpu_worker {
-                if !gpu_fallback.load(Ordering::Acquire) {
-                    match compress_block_gpu(worker, chunk, i, config) {
-                        Ok(block) => return Ok(block),
-                        Err(e) => {
-                            // GPU failed, fall back to CPU for remaining blocks
-                            gpu_fallback.store(true, Ordering::Release);
-                            eprintln!("GPU compression failed, falling back to CPU: {e:?}");
+                // Try GPU compression if available and not yet fallen back
+                #[cfg(feature = "gpu")]
+                if let Some(ref worker) = gpu_worker {
+                    if !gpu_fallback.load(Ordering::Acquire) {
+                        match compress_block_gpu(worker, chunk, i, config) {
+                            Ok(block) => return Ok(block),
+                            Err(e) => {
+                                // GPU failed, fall back to CPU for remaining blocks
+                                gpu_fallback.store(true, Ordering::Release);
+                                eprintln!("GPU compression failed, falling back to CPU: {e:?}");
+                            }
                         }
                     }
                 }
-            }
 
-            // CPU fallback
-            compress_block(chunk, i, config)
-        })
-        .collect();
+                // CPU fallback
+                compress_block(chunk, i, config)
+            })
+            .collect()
+    });
 
     // Check for errors / cancellation
     // block count fits usize: validated against u32::MAX in the index write path
@@ -345,15 +360,17 @@ pub fn decompress_from_reader<R: Read + Seek>(
         .collect::<Result<Vec<_>>>()?;
 
     // Phase 2: Decompress in parallel — no reader access needed.
-    let results: Vec<Result<(usize, Vec<u8>)>> = raw_blocks
-        .par_iter()
-        .enumerate()
-        .map(|(i, (header, payload))| {
-            let decompressed =
-                decompress_block_payload(header, payload, i as u64, checksums_enabled)?;
-            Ok((i, decompressed))
-        })
-        .collect();
+    let results: Vec<Result<(usize, Vec<u8>)>> = with_pool(config, || {
+        raw_blocks
+            .par_iter()
+            .enumerate()
+            .map(|(i, (header, payload))| {
+                let decompressed =
+                    decompress_block_payload(header, payload, i as u64, checksums_enabled)?;
+                Ok((i, decompressed))
+            })
+            .collect()
+    });
 
     // Re-assemble in order
     let total_blocks_usize = usize::try_from(total_blocks)

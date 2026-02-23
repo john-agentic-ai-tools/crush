@@ -3,7 +3,7 @@
 use crate::config::EngineConfiguration;
 use crate::format::{BlockFlags, BlockHeader};
 use crush_core::error::{CrushError, Result};
-use flate2::{Compress, Compression, Decompress, FlushCompress, FlushDecompress, Status};
+use libdeflater::{CompressionLvl, Compressor, Decompressor};
 
 /// Result of compressing a single block.
 pub struct CompressedBlock {
@@ -37,36 +37,29 @@ pub fn compress_block(
         ))
     })?;
 
-    // Attempt DEFLATE compression
-    let level = Compression::new(u32::from(config.compression_level));
-    let mut deflater = Compress::new(level, false);
-    // Conservative DEFLATE upper-bound: zlib's compressBound formula adds ~0.03%
-    // plus 13 bytes, but dynamic Huffman tables can add up to a few hundred bytes
-    // across multiple internal deflate blocks.  12.5% + 1 KiB headroom covers all
-    // compression levels safely without looping/retrying.
-    let buf_size = in_len.saturating_add(in_len >> 3).saturating_add(1024);
-    let mut compressed = vec![0u8; buf_size];
-
-    let status = deflater
-        .compress(input, &mut compressed, FlushCompress::Finish)
-        .map_err(|e| {
-            CrushError::InvalidFormat(format!("DEFLATE encode error at block {block_index}: {e}"))
-        })?;
-
-    if status != Status::StreamEnd {
-        return Err(CrushError::InvalidFormat(format!(
-            "DEFLATE encode did not reach StreamEnd at block {block_index}"
-        )));
-    }
-
-    let bytes_written = usize::try_from(deflater.total_out()).map_err(|_| {
-        CrushError::InvalidFormat(format!(
-            "DEFLATE total_out overflows usize at block {block_index}"
+    // Map 0-9 compression level to libdeflater's CompressionLvl (valid range 0-12).
+    let lvl = CompressionLvl::new(i32::from(config.compression_level)).map_err(|_| {
+        CrushError::InvalidConfig(format!(
+            "invalid compression level {}",
+            config.compression_level
         ))
     })?;
+
+    let mut compressor = Compressor::new(lvl);
+    // deflate_compress_bound gives the exact worst-case output size — no over-allocation.
+    let buf_size = compressor.deflate_compress_bound(in_len);
+    let mut compressed = vec![0u8; buf_size];
+
+    let bytes_written = compressor
+        .deflate_compress(input, &mut compressed)
+        .map_err(|e| {
+            CrushError::InvalidFormat(format!(
+                "DEFLATE encode error at block {block_index}: {e:?}"
+            ))
+        })?;
     compressed.truncate(bytes_written);
 
-    // Fall back to raw storage if compressed is not smaller enough.
+    // Fall back to raw storage if compressed output is not smaller enough.
     // Precision loss from usize→f64 is acceptable for this ratio heuristic.
     #[allow(clippy::cast_precision_loss)]
     let use_stored =
@@ -118,27 +111,15 @@ pub fn decompress_block_payload(
         #[allow(clippy::cast_possible_truncation)]
         let expected_size = header.uncompressed_size as usize;
         let mut out = vec![0u8; expected_size];
-        let mut decompress = Decompress::new(false);
+        let mut decompressor = Decompressor::new();
 
-        let status = decompress
-            .decompress(payload, &mut out, FlushDecompress::Finish)
+        let bytes_out = decompressor
+            .deflate_decompress(payload, &mut out)
             .map_err(|e| {
                 CrushError::InvalidFormat(format!(
-                    "DEFLATE decode error at block {block_index}: {e}"
+                    "DEFLATE decode error at block {block_index}: {e:?}"
                 ))
             })?;
-
-        if status != Status::StreamEnd {
-            return Err(CrushError::InvalidFormat(format!(
-                "DEFLATE decode did not reach StreamEnd at block {block_index}"
-            )));
-        }
-
-        let bytes_out = usize::try_from(decompress.total_out()).map_err(|_| {
-            CrushError::InvalidFormat(format!(
-                "DEFLATE total_out overflows usize at block {block_index}"
-            ))
-        })?;
         out.truncate(bytes_out);
         out
     };

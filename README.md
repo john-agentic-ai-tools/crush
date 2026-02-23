@@ -62,50 +62,54 @@ Crush delivers exceptional throughput for both compression and decompression ope
 ### Benchmark Results
 
 **Test Environment:**
-- CPU: 8-core processor
 - Rust: 1.93.1 (stable)
-- Test Data: 128 MB compressible data
+- Test Data: 128 MB realistic corpus (source-code / log-file character distribution, ~2–4x compressible)
 - Build: Release mode with optimizations
 
-**Compression Performance (1024 KB blocks):**
+**Compression Scaling (64 KB blocks):**
 
-| Threads | Throughput |
-|---------|------------|
-| 1       | 8.6 GiB/s  |
-| 2       | 8.5 GiB/s  |
-| 4       | 8.5 GiB/s  |
-| 8       | 8.8 GiB/s  |
+| Workers | Throughput  | Scaling |
+|---------|-------------|---------|
+| 1       | 92 MiB/s    | 1.0×    |
+| 2       | 181 MiB/s   | 1.97×   |
+| 4       | 347 MiB/s   | 3.77×   |
+| 8       | 576 MiB/s   | 6.26×   |
+| default (all cores) | 983 MiB/s | — |
 
-**Compression Performance by Block Size (8 threads):**
+Compression scales near-linearly with thread count. `workers=0` (default) uses all available logical CPUs.
 
-| Block Size | Throughput |
-|-----------|------------|
-| 64 KB     | 1.3 GiB/s  |
-| 512 KB    | 7.0 GiB/s  |
-| 1024 KB   | 8.8 GiB/s  |
+**Compression Performance by Block Size (default workers):**
+
+| Block Size | Throughput  |
+|-----------|-------------|
+| 64 KB     | 983 MiB/s   |
+| 512 KB    | 957 MiB/s   |
+| 1024 KB   | 941 MiB/s   |
 
 **Decompression Performance:**
 
-| Threads | Throughput |
-|---------|------------|
-| 1       | 463 MiB/s  |
-| 2       | 456 MiB/s  |
-| 4       | 462 MiB/s  |
-| 8       | 459 MiB/s  |
+| Workers | Throughput  |
+|---------|-------------|
+| 1       | 312 MiB/s   |
+| 2       | 375 MiB/s   |
+| 4       | 417 MiB/s   |
+| 8       | 439 MiB/s   |
+| default (all cores) | 435 MiB/s |
 
-**Random Access Performance:**
+**Random Access Performance** (64 MB corpus, 1 MB blocks):
 
-| Operation | Latency |
-|-----------|---------|
-| Decompress last block  | 494 µs |
-| Decompress first block | 1.5 ms |
+| Operation              | Latency  |
+|------------------------|----------|
+| Decompress last block  | ~1.12 ms |
+| Decompress first block | ~1.12 ms |
 
 ### Key Performance Features
 
-- **Multi-core Scaling**: Automatic parallelization across available CPU cores
-- **Sustained Throughput**: Consistent 8+ GiB/s compression speed with 1024 KB blocks
-- **Sub-millisecond Random Access**: O(1) block decompression via seekable block index
-- **Memory Efficient**: Optimized block processing with minimal memory overhead
+- **Near-linear compression scaling**: throughput doubles with each doubling of worker count up to CPU core count
+- **SIMD-accelerated DEFLATE**: powered by libdeflater for maximum per-thread throughput (~4× faster than pure-Rust backends)
+- **Configurable parallelism**: `workers(n)` limits CPU usage for background tasks; `workers(0)` (default) uses all cores
+- **Consistent Random Access**: O(1) block decompression via seekable block index (~1 ms per block)
+- **Memory Efficient**: Exact worst-case buffer sizing eliminates over-allocation
 - **GPU Acceleration**: Optional GPU support for additional performance (experimental)
 
 ### Running Benchmarks
@@ -814,4 +818,4 @@ This project is licensed under [LICENSE] - see the LICENSE file for details.
 
 - Inspired by [pigz](https://zlib.net/pigz/) by Mark Adler
 - Built with [Rust](https://www.rust-lang.org/)
-- Compression algorithms from [flate2](https://github.com/rust-lang/flate2-rs)
+- DEFLATE implementation via [libdeflater](https://github.com/ebiggers/libdeflate) (SIMD-optimized)

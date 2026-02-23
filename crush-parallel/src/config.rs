@@ -37,6 +37,9 @@ pub struct ProgressEvent {
 pub struct EngineConfiguration {
     /// Number of rayon worker threads. `0` = rayon default (logical CPU count).
     pub workers: usize,
+    /// Dedicated rayon thread pool built from `workers`. `None` when `workers == 0`
+    /// (falls back to the global rayon pool).
+    pub(crate) thread_pool: Option<Arc<rayon::ThreadPool>>,
     /// Uncompressed block size in bytes. Range: 64 KB – 256 MB.
     pub block_size: u32,
     /// DEFLATE compression level 0–9.
@@ -58,6 +61,7 @@ impl Default for EngineConfiguration {
     fn default() -> Self {
         Self {
             workers: 0,
+            thread_pool: None,
             block_size: 1_048_576, // 1 MB
             compression_level: 6,
             max_expansion_ratio: 1.0,
@@ -153,7 +157,7 @@ impl EngineConfigurationBuilder {
     /// Returns [`crush_core::error::CrushError::InvalidConfig`] if any field is out of range.
     pub fn build(self) -> crush_core::error::Result<EngineConfiguration> {
         use crush_core::error::CrushError;
-        let cfg = self.inner;
+        let mut cfg = self.inner;
         if cfg.block_size < 65_536 || cfg.block_size > 268_435_456 {
             return Err(CrushError::InvalidConfig(format!(
                 "block_size {} is out of range [65536, 268435456]",
@@ -175,6 +179,13 @@ impl EngineConfigurationBuilder {
             return Err(CrushError::InvalidConfig(
                 "max_decompression_ratio must be > 0.0".to_owned(),
             ));
+        }
+        if cfg.workers > 0 {
+            let pool = rayon::ThreadPoolBuilder::new()
+                .num_threads(cfg.workers)
+                .build()
+                .map_err(|e| CrushError::InvalidConfig(format!("thread pool: {e}")))?;
+            cfg.thread_pool = Some(Arc::new(pool));
         }
         Ok(cfg)
     }

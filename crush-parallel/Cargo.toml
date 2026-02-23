@@ -19,7 +19,7 @@ gpu = ["dep:wgpu", "dep:pollster", "dep:bytemuck"]
 [dependencies]
 crush-core = { version = "0.2.0", path = "../crush-core" }
 rayon = { workspace = true }
-flate2 = { workspace = true }
+libdeflater = { workspace = true }
 crc32fast = { workspace = true }
 memmap2 = { workspace = true }
 thiserror = { workspace = true }

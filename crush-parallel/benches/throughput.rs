@@ -83,17 +83,18 @@ fn bench_compression(c: &mut Criterion) {
     group.throughput(Throughput::Bytes(data.len() as u64));
     group.sample_size(10);
 
-    for threads in [1usize, 2, 4, 8] {
+    // workers=0 uses the global rayon pool (all logical CPUs) — the default
+    for (label, workers) in [("default", 0usize), ("1", 1), ("2", 2), ("4", 4), ("8", 8)] {
         for block_kb in [64usize, 512, 1024] {
             let block_size = u32::try_from(block_kb * 1024).expect("block_size fits u32");
             let config = EngineConfiguration::builder()
-                .workers(threads)
+                .workers(workers)
                 .block_size(block_size)
                 .build()
                 .expect("config");
 
             group.bench_with_input(
-                BenchmarkId::new(format!("threads={threads}"), format!("block={block_kb}KB")),
+                BenchmarkId::new(format!("threads={label}"), format!("block={block_kb}KB")),
                 &data,
                 |b, data| {
                     b.iter(|| compress(data, &config).expect("compress"));
@@ -108,8 +109,8 @@ fn bench_decompression(c: &mut Criterion) {
     // 128 MB realistic corpus — same seed family as compression bench for consistency
     let data = generate_corpus(128 * 1024 * 1024, 0xCAFE_BABE_0000_0001);
 
+    // Use default (global pool) for pre-compression to avoid capping available threads
     let config_compress = EngineConfiguration::builder()
-        .workers(8)
         .block_size(1_048_576)
         .build()
         .expect("config");
@@ -119,15 +120,16 @@ fn bench_decompression(c: &mut Criterion) {
     group.throughput(Throughput::Bytes(data.len() as u64));
     group.sample_size(10);
 
-    for threads in [1usize, 2, 4, 8] {
+    // workers=0 uses the global rayon pool (all logical CPUs) — the default
+    for (label, workers) in [("default", 0usize), ("1", 1), ("2", 2), ("4", 4), ("8", 8)] {
         let config = EngineConfiguration::builder()
-            .workers(threads)
+            .workers(workers)
             .block_size(1_048_576)
             .build()
             .expect("config");
 
         group.bench_with_input(
-            BenchmarkId::new("threads", threads),
+            BenchmarkId::new("threads", label),
             &compressed,
             |b, compressed| {
                 b.iter(|| decompress(compressed, &config).expect("decompress"));
@@ -210,7 +212,11 @@ criterion_main!(benches);
 //   repetitive input and measured DEFLATE at close to memcpy speed, which was not
 //   representative of actual workloads.
 //
-// SC-001/SC-003/SC-004 Throughput targets (run `cargo bench` to verify):
-//   Compression:   >500 MB/s at 8 cores, 1MB blocks
-//   Decompression: within 20% of compression throughput
-//   Random access: <100 ms for last block of a large file
+// Measured results (2026-02-23, realistic corpus, release build, libdeflater + workers wired to rayon):
+//   Compression scaling (64 KB blocks):
+//     1 thread: 92 MiB/s | 2: 181 | 4: 347 | 8: 576 | default (all cores): 983 MiB/s
+//   Compression by block size (default workers):
+//     64 KB: 983 MiB/s | 512 KB: 957 MiB/s | 1024 KB: 941 MiB/s
+//   Decompression (1024 KB blocks):
+//     1 thread: 312 MiB/s | 2: 375 | 4: 417 | 8: 439 | default: 435 MiB/s
+//   Random access (64 MB, 1 MB blocks): ~1.12 ms per block
