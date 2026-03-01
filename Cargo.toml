@@ -4,10 +4,12 @@ members = [
     "crush-core",
     "crush-cli",
     "crush-parallel",
+    "crush-gpu",
 ]
 exclude = [
     "crush-core/fuzz",
     "crush-parallel/fuzz",
+    "crush-gpu/fuzz",
 ]
 
 [workspace.package]
@@ -27,6 +29,9 @@ crc32fast = "1.4"
 memmap2 = "0.9"
 thiserror = "2.0.18"
 criterion = "0.8.2"
+wgpu = "28.0"
+bytemuck = "1.14"
+pollster = "0.4"
 
 [profile.dev]
 opt-level = 0
