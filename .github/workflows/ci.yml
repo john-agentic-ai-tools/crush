@@ -50,7 +50,10 @@ jobs:
           shared-key: lint
 
       - name: Run Clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
+        # Note: --all-features is not used because the crush-gpu "cuda" feature
+        # requires the CUDA toolkit at build time (cudarc build script).
+        # CI does not have CUDA installed. Default features cover wgpu backend.
+        run: cargo clippy --all-targets -- -D warnings
 
   build_matrix:
     name: Build (${{ matrix.os }} / ${{ matrix.rust }})
@@ -80,7 +83,8 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main' }}
 
       - name: Build
-        run: cargo build --all-targets --all-features
+        # Exclude --all-features: crush-gpu "cuda" feature requires CUDA toolkit.
+        run: cargo build --all-targets
 
   test:
     name: Test (${{ matrix.os }})
@@ -102,7 +106,8 @@ jobs:
       - uses: taiki-e/install-action@nextest
 
       - name: Run tests with nextest
-        run: cargo nextest run --all-features --profile ci --config-file .config/nextest.toml
+        # Exclude --all-features: crush-gpu "cuda" feature requires CUDA toolkit.
+        run: cargo nextest run --profile ci --config-file .config/nextest.toml
 
       - name: Upload test results
         if: always()
