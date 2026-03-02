@@ -8,6 +8,13 @@ db-path = "~/.cargo/advisory-db"
 version = 2
 # Warn on yanked crates
 yanked = "deny"
+# Ignored advisories — transitive dependencies we cannot control
+ignore = [
+    # paste 1.0.15 (unmaintained) — transitive dep via wgpu 28 → wgpu-hal → metal.
+    # We cannot remove it; paste is pulled in by the metal crate (macOS backend).
+    # Remove this exemption when wgpu upgrades to a metal version that drops paste.
+    "RUSTSEC-2024-0436",
+]
 
 [licenses]
 # Confidence threshold for license detection

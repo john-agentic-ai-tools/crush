@@ -1,0 +1,50 @@
+[package]
+name = "crush-gpu"
+version = "0.1.0"
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "GPU-accelerated tile-based compression engine with 32-way parallel decompression"
+
+[lib]
+name = "crush_gpu"
+path = "src/lib.rs"
+
+[features]
+default = []
+cuda = ["dep:cudarc"]
+
+[dependencies]
+crush-core = { version = "0.2.0", path = "../crush-core" }
+wgpu = { workspace = true }
+bytemuck = { workspace = true, features = ["derive"] }
+pollster = { workspace = true }
+crc32fast = { workspace = true }
+memmap2 = { workspace = true }
+rayon = { workspace = true }
+thiserror = { workspace = true }
+linkme = { workspace = true }
+cudarc = { version = "0.16", optional = true }
+
+[dev-dependencies]
+criterion = { workspace = true }
+proptest = "1.5"
+tempfile = "3.8"
+
+[[bench]]
+name = "throughput"
+harness = false
+
+[[bench]]
+name = "ratio"
+harness = false
+
+[lints.clippy]
+all = "deny"
+pedantic = "warn"
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+panic_in_result_fn = "deny"
