@@ -144,8 +144,9 @@ jobs:
 
       - name: Generate coverage data
         run: |
-          # Exclude GPU feature from coverage (requires hardware, tests auto-skip in CI)
-          cargo llvm-cov nextest --features '' --lcov --output-path lcov.info --profile ci --config-file .config/nextest.toml
+          # Exclude crush-gpu from coverage: its tests require GPU hardware that
+          # CI runners don't have, so all GPU code paths show as uncovered.
+          cargo llvm-cov nextest --workspace --exclude crush-gpu --lcov --output-path lcov.info --profile ci --config-file .config/nextest.toml
 
       - name: Check coverage threshold
         run: |
