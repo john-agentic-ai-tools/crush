@@ -54,9 +54,10 @@ jobs:
 
             echo "Checking $CRATE@$LOCAL_VERSION..."
 
-            # Query crates.io
+            # Query crates.io (User-Agent required by their API policy)
             HTTP_STATUS=$(curl -s -o /tmp/crate.json -w "%{http_code}" \
-              "https://crates.io/api/v1/crates/$CRATE/versions")
+              -H "User-Agent: crush-release-ci (https://github.com/john-agentic-ai-tools/crush)" \
+              "https://crates.io/api/v1/crates/$CRATE")
 
             if [ "$HTTP_STATUS" = "404" ]; then
               echo "  -> First publish (crate not on crates.io)"
