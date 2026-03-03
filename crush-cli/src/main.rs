@@ -1,3 +1,4 @@
+mod algorithm;
 mod cli;
 mod commands;
 mod config;
@@ -6,6 +7,10 @@ mod feedback;
 mod logging;
 mod output;
 mod signal;
+
+// Force crush-parallel to be linked into the binary so the linkme
+// distributed-slice plugin registration runs at startup.
+use crush_parallel as _;
 
 use clap::Parser;
 use cli::{Cli, Commands};

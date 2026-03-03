@@ -27,6 +27,59 @@ pub enum CrushError {
     /// Operation was cancelled by user (Ctrl+C) or programmatically
     #[error("Operation cancelled")]
     Cancelled,
+
+    /// Configuration validation failed (e.g. `block_size` out of range)
+    #[error("Invalid configuration: {0}")]
+    InvalidConfig(String),
+
+    /// The compressed file was produced by a different engine version.
+    /// Decompression is refused; the user must use the named producer version.
+    #[error("Version mismatch: file was produced by engine {file_version}, current engine is {current_version}")]
+    VersionMismatch {
+        /// Version string of the engine that produced the file.
+        file_version: String,
+        /// Version string of the currently running engine.
+        current_version: String,
+    },
+
+    /// File header magic bytes do not match the expected `CRSH` signature.
+    #[error("Invalid format: {0}")]
+    InvalidFormat(String),
+
+    /// A block's CRC32 checksum does not match the stored value.
+    #[error(
+        "Checksum mismatch at block {block_index}: expected {expected:#010x}, got {actual:#010x}"
+    )]
+    ChecksumMismatch {
+        /// Zero-based index of the corrupt block.
+        block_index: u64,
+        /// CRC32 value stored in the block header.
+        expected: u32,
+        /// CRC32 value computed from the decompressed payload.
+        actual: u32,
+    },
+
+    /// Decompressed output would exceed the caller's configured expansion limit.
+    #[error(
+        "Expansion limit exceeded at block {block_index}: decompressed size would exceed limit"
+    )]
+    ExpansionLimitExceeded {
+        /// Zero-based index of the block that would exceed the limit.
+        block_index: u64,
+    },
+
+    /// The block index is missing, corrupted, or truncated.
+    #[error("Block index corrupted or truncated: {0}")]
+    IndexCorrupted(String),
+}
+
+impl CrushError {
+    /// Returns `true` if this error represents a user-initiated or
+    /// programmatic cancellation (distinct from a compression failure).
+    #[must_use]
+    pub fn is_cancelled(&self) -> bool {
+        matches!(self, Self::Cancelled)
+    }
 }
 
 /// Plugin-specific errors

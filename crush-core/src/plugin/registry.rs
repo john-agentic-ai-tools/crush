@@ -205,6 +205,51 @@ pub(crate) fn get_default_plugin() -> Option<&'static dyn CompressionAlgorithm> 
 mod tests {
     use super::*;
 
+    /// Macro that creates a one-shot `InvalidPlugin` with the given metadata fields,
+    /// leaks it, and returns a `&'static dyn CompressionAlgorithm`.
+    ///
+    /// Each invocation creates a fresh struct in its own scope, so multiple
+    /// expansions in different test functions do not conflict.
+    macro_rules! make_invalid_plugin {
+        ($name:expr, $version:expr, $magic:expr, $throughput:expr, $ratio:expr) => {{
+            struct InvalidPlugin;
+            impl CompressionAlgorithm for InvalidPlugin {
+                fn name(&self) -> &'static str {
+                    "test_invalid"
+                }
+                fn metadata(&self) -> PluginMetadata {
+                    PluginMetadata {
+                        name: $name,
+                        version: $version,
+                        magic_number: $magic,
+                        throughput: $throughput,
+                        compression_ratio: $ratio,
+                        description: "Test",
+                    }
+                }
+                fn compress(
+                    &self,
+                    _input: &[u8],
+                    _cancel_flag: std::sync::Arc<std::sync::atomic::AtomicBool>,
+                ) -> crate::error::Result<Vec<u8>> {
+                    Ok(vec![])
+                }
+                fn decompress(
+                    &self,
+                    _input: &[u8],
+                    _cancel_flag: std::sync::Arc<std::sync::atomic::AtomicBool>,
+                ) -> crate::error::Result<Vec<u8>> {
+                    Ok(vec![])
+                }
+                fn detect(&self, _file_header: &[u8]) -> bool {
+                    false
+                }
+            }
+            let plugin: &'static dyn CompressionAlgorithm = Box::leak(Box::new(InvalidPlugin));
+            plugin
+        }};
+    }
+
     #[test]
     #[allow(clippy::unwrap_used)]
     fn test_init_plugins() {
@@ -250,48 +295,8 @@ mod tests {
     #[test]
     #[allow(clippy::unwrap_used)]
     fn test_registry_validation_empty_name() {
-        use crate::plugin::PluginMetadata;
-
-        struct InvalidPlugin;
-        impl CompressionAlgorithm for InvalidPlugin {
-            fn name(&self) -> &'static str {
-                "test_invalid"
-            }
-
-            fn metadata(&self) -> PluginMetadata {
-                PluginMetadata {
-                    name: "", // Empty name
-                    version: "1.0.0",
-                    magic_number: [0x43, 0x52, 0x01, 0xFF],
-                    throughput: 100.0,
-                    compression_ratio: 0.5,
-                    description: "Test",
-                }
-            }
-
-            fn compress(
-                &self,
-                _input: &[u8],
-                _cancel_flag: std::sync::Arc<std::sync::atomic::AtomicBool>,
-            ) -> Result<Vec<u8>> {
-                Ok(vec![])
-            }
-
-            fn decompress(
-                &self,
-                _input: &[u8],
-                _cancel_flag: std::sync::Arc<std::sync::atomic::AtomicBool>,
-            ) -> Result<Vec<u8>> {
-                Ok(vec![])
-            }
-
-            fn detect(&self, _file_header: &[u8]) -> bool {
-                false
-            }
-        }
-
         let mut registry = PluginRegistry::new();
-        let plugin: &'static dyn CompressionAlgorithm = Box::leak(Box::new(InvalidPlugin));
+        let plugin = make_invalid_plugin!("", "1.0.0", [0x43, 0x52, 0x01, 0xFF], 100.0, 0.5);
         let result = registry.register(plugin);
 
         assert!(result.is_err());
@@ -302,48 +307,8 @@ mod tests {
     #[test]
     #[allow(clippy::unwrap_used)]
     fn test_registry_validation_empty_version() {
-        use crate::plugin::PluginMetadata;
-
-        struct InvalidPlugin;
-        impl CompressionAlgorithm for InvalidPlugin {
-            fn name(&self) -> &'static str {
-                "test_invalid"
-            }
-
-            fn metadata(&self) -> PluginMetadata {
-                PluginMetadata {
-                    name: "test",
-                    version: "", // Empty version
-                    magic_number: [0x43, 0x52, 0x01, 0xFE],
-                    throughput: 100.0,
-                    compression_ratio: 0.5,
-                    description: "Test",
-                }
-            }
-
-            fn compress(
-                &self,
-                _input: &[u8],
-                _cancel_flag: std::sync::Arc<std::sync::atomic::AtomicBool>,
-            ) -> Result<Vec<u8>> {
-                Ok(vec![])
-            }
-
-            fn decompress(
-                &self,
-                _input: &[u8],
-                _cancel_flag: std::sync::Arc<std::sync::atomic::AtomicBool>,
-            ) -> Result<Vec<u8>> {
-                Ok(vec![])
-            }
-
-            fn detect(&self, _file_header: &[u8]) -> bool {
-                false
-            }
-        }
-
         let mut registry = PluginRegistry::new();
-        let plugin: &'static dyn CompressionAlgorithm = Box::leak(Box::new(InvalidPlugin));
+        let plugin = make_invalid_plugin!("test", "", [0x43, 0x52, 0x01, 0xFE], 100.0, 0.5);
         let result = registry.register(plugin);
 
         assert!(result.is_err());
@@ -354,48 +319,9 @@ mod tests {
     #[test]
     #[allow(clippy::unwrap_used)]
     fn test_registry_validation_invalid_throughput() {
-        use crate::plugin::PluginMetadata;
-
-        struct InvalidPlugin;
-        impl CompressionAlgorithm for InvalidPlugin {
-            fn name(&self) -> &'static str {
-                "test_invalid"
-            }
-
-            fn metadata(&self) -> PluginMetadata {
-                PluginMetadata {
-                    name: "test",
-                    version: "1.0.0",
-                    magic_number: [0x43, 0x52, 0x01, 0xFD],
-                    throughput: -10.0, // Invalid throughput
-                    compression_ratio: 0.5,
-                    description: "Test",
-                }
-            }
-
-            fn compress(
-                &self,
-                _input: &[u8],
-                _cancel_flag: std::sync::Arc<std::sync::atomic::AtomicBool>,
-            ) -> Result<Vec<u8>> {
-                Ok(vec![])
-            }
-
-            fn decompress(
-                &self,
-                _input: &[u8],
-                _cancel_flag: std::sync::Arc<std::sync::atomic::AtomicBool>,
-            ) -> Result<Vec<u8>> {
-                Ok(vec![])
-            }
-
-            fn detect(&self, _file_header: &[u8]) -> bool {
-                false
-            }
-        }
-
         let mut registry = PluginRegistry::new();
-        let plugin: &'static dyn CompressionAlgorithm = Box::leak(Box::new(InvalidPlugin));
+        // Negative throughput is invalid
+        let plugin = make_invalid_plugin!("test", "1.0.0", [0x43, 0x52, 0x01, 0xFD], -10.0, 0.5);
         let result = registry.register(plugin);
 
         assert!(result.is_err());
@@ -406,48 +332,9 @@ mod tests {
     #[test]
     #[allow(clippy::unwrap_used)]
     fn test_registry_validation_invalid_compression_ratio() {
-        use crate::plugin::PluginMetadata;
-
-        struct InvalidPlugin;
-        impl CompressionAlgorithm for InvalidPlugin {
-            fn name(&self) -> &'static str {
-                "test_invalid"
-            }
-
-            fn metadata(&self) -> PluginMetadata {
-                PluginMetadata {
-                    name: "test",
-                    version: "1.0.0",
-                    magic_number: [0x43, 0x52, 0x01, 0xFC],
-                    throughput: 100.0,
-                    compression_ratio: 1.5, // Invalid ratio > 1.0
-                    description: "Test",
-                }
-            }
-
-            fn compress(
-                &self,
-                _input: &[u8],
-                _cancel_flag: std::sync::Arc<std::sync::atomic::AtomicBool>,
-            ) -> Result<Vec<u8>> {
-                Ok(vec![])
-            }
-
-            fn decompress(
-                &self,
-                _input: &[u8],
-                _cancel_flag: std::sync::Arc<std::sync::atomic::AtomicBool>,
-            ) -> Result<Vec<u8>> {
-                Ok(vec![])
-            }
-
-            fn detect(&self, _file_header: &[u8]) -> bool {
-                false
-            }
-        }
-
         let mut registry = PluginRegistry::new();
-        let plugin: &'static dyn CompressionAlgorithm = Box::leak(Box::new(InvalidPlugin));
+        // Ratio > 1.0 is invalid
+        let plugin = make_invalid_plugin!("test", "1.0.0", [0x43, 0x52, 0x01, 0xFC], 100.0, 1.5);
         let result = registry.register(plugin);
 
         assert!(result.is_err());

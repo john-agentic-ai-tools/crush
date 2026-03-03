@@ -1,7 +1,7 @@
+use crate::decompression::read_crc32_block;
 use crate::error::{PluginError, Result, ValidationError};
 use crate::plugin::registry::get_plugin_by_magic;
 use crate::plugin::{CrushHeader, FileMetadata};
-use crc32fast::Hasher;
 use serde::Serialize;
 
 #[derive(Debug, Serialize)]
@@ -41,25 +41,8 @@ pub fn inspect(input: &[u8]) -> Result<InspectResult> {
     let mut crc_valid = false;
 
     if header.has_crc32() {
-        if input.len() < payload_start + 4 {
-            return Err(ValidationError::InvalidHeader(
-                "Truncated: CRC32 flag set but no CRC32 data".to_string(),
-            )
-            .into());
-        }
-        let stored_crc = u32::from_le_bytes([
-            input[payload_start],
-            input[payload_start + 1],
-            input[payload_start + 2],
-            input[payload_start + 3],
-        ]);
-        payload_start += 4;
-
-        let payload_for_crc = &input[payload_start..];
-        let mut hasher = Hasher::new();
-        hasher.update(payload_for_crc);
-        let computed_crc = hasher.finalize();
-
+        let (stored_crc, computed_crc, new_start) = read_crc32_block(input, payload_start)?;
+        payload_start = new_start;
         crc_valid = stored_crc == computed_crc;
     }
 

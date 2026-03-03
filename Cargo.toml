@@ -3,9 +3,13 @@ resolver = "2"
 members = [
     "crush-core",
     "crush-cli",
+    "crush-parallel",
+    "crush-gpu",
 ]
 exclude = [
     "crush-core/fuzz",
+    "crush-parallel/fuzz",
+    "crush-gpu/fuzz",
 ]
 
 [workspace.package]
@@ -19,10 +23,15 @@ homepage = "https://github.com/john-agentic-ai-tools/crush"
 linkme = "0.3"
 crossbeam = "0.8"
 rayon = "1.10"
-flate2 = "1.1"
+flate2 = { version = "1.1", features = ["zlib"] }
+libdeflater = "1.25.2"
 crc32fast = "1.4"
-thiserror = "2.0.0"
+memmap2 = "0.9"
+thiserror = "2.0.18"
 criterion = "0.8.2"
+wgpu = "28.0"
+bytemuck = "1.14"
+pollster = "0.4"
 
 [profile.dev]
 opt-level = 0

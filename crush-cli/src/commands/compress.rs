@@ -1,3 +1,4 @@
+use crate::algorithm::{select_algorithm, DEFAULT_PARALLEL_THRESHOLD_BYTES};
 use crate::cli::CompressArgs;
 use crate::commands::utils;
 use crate::error::{CliError, Result};
@@ -57,19 +58,25 @@ fn compress_stdin(args: &CompressArgs, interrupted: Arc<dyn CancellationToken>) 
         return Err(CliError::Interrupted);
     }
 
+    // Select algorithm: streaming mode (unknown size) → parallel-deflate
+    let selected_algo = select_algorithm(
+        None,
+        args.plugin.as_deref(),
+        DEFAULT_PARALLEL_THRESHOLD_BYTES,
+    );
+    info!(
+        "Selected algorithm: {} (streaming, input size unknown)",
+        selected_algo
+    );
+
     // Prepare compression options (no file metadata for stdin)
     let mut options = CompressionOptions::default()
         .with_weights(args.level.to_weights())
         .with_cancel_token(Arc::clone(&interrupted));
 
-    if let Some(ref plugin) = args.plugin {
-        debug!("Using manually selected plugin: {}", plugin);
-        options = options.with_plugin(plugin);
-    } else {
-        debug!(
-            "Using automatic plugin selection with level: {:?}",
-            args.level
-        );
+    if selected_algo != "default" {
+        debug!("Applying plugin selection: {}", selected_algo);
+        options = options.with_plugin(selected_algo);
     }
 
     if let Some(timeout_secs) = args.timeout {
@@ -117,15 +124,13 @@ fn compress_stdin(args: &CompressArgs, interrupted: Arc<dyn CancellationToken>) 
     let compression_ratio = utils::calculate_compression_ratio(input_size, output_size);
     let throughput_mbps = utils::calculate_throughput_mbps(input_size, duration);
 
-    let plugin_used = args.plugin.clone().unwrap_or_else(|| "auto".to_string());
-
     // Log performance metrics (but don't print to stdout/stderr if using stdout mode)
     debug!(
         input_size,
         output_size,
         compression_ratio,
         throughput_mbps,
-        plugin = %plugin_used,
+        plugin = %selected_algo,
         "Stdin compression: throughput {:.2} MB/s, ratio {:.1}%",
         throughput_mbps,
         compression_ratio
@@ -136,7 +141,7 @@ fn compress_stdin(args: &CompressArgs, interrupted: Arc<dyn CancellationToken>) 
         compression_ratio,
         throughput_mbps,
         duration_secs = duration.as_secs_f64(),
-        plugin = %plugin_used,
+        plugin = %selected_algo,
         "Compressed stdin: {} bytes -> {} bytes ({:.1}% reduction) in {:.3}s at {:.2} MB/s",
         input_size,
         output_size,
@@ -180,11 +185,12 @@ fn compress_file(
     // Create progress indicator for larger files (but not when writing to stdout)
     let show_progress = std::io::stderr().is_terminal() && !args.stdout;
     let spinner = if show_progress && input_size > 1024 * 1024 {
-        let pb = ProgressBar::new_spinner();
+        let pb = ProgressBar::new(input_size);
         pb.set_style(
-            ProgressStyle::default_spinner()
-                .template("{spinner:.green} Compressing {msg}...")
-                .expect("Invalid spinner template"),
+            ProgressStyle::default_bar()
+                .template("{spinner:.green} Compressing {msg} [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({eta})")
+                .expect("Invalid progress bar template")
+                .progress_chars("=>-"),
         );
         pb.set_message(input_path.display().to_string());
         pb.enable_steady_tick(Duration::from_millis(100));
@@ -192,6 +198,17 @@ fn compress_file(
     } else {
         None
     };
+
+    // Select algorithm based on file size threshold (FR-016)
+    let selected_algo = select_algorithm(
+        Some(input_size),
+        args.plugin.as_deref(),
+        DEFAULT_PARALLEL_THRESHOLD_BYTES,
+    );
+    info!(
+        "Selected algorithm: {} for {} byte input (threshold: {} bytes)",
+        selected_algo, input_size, DEFAULT_PARALLEL_THRESHOLD_BYTES
+    );
 
     // Prepare compression options with metadata
     let file_meta = FileMetadata {
@@ -208,14 +225,9 @@ fn compress_file(
         .with_file_metadata(file_meta)
         .with_cancel_token(Arc::clone(&interrupted));
 
-    if let Some(ref plugin) = args.plugin {
-        debug!("Using manually selected plugin: {}", plugin);
-        options = options.with_plugin(plugin);
-    } else {
-        debug!(
-            "Using automatic plugin selection with level: {:?}",
-            args.level
-        );
+    if selected_algo != "default" {
+        debug!("Applying plugin selection: {}", selected_algo);
+        options = options.with_plugin(selected_algo);
     }
 
     if let Some(timeout_secs) = args.timeout {
@@ -282,8 +294,8 @@ fn compress_file(
     let compression_ratio = utils::calculate_compression_ratio(input_size, output_size);
     let throughput_mbps = utils::calculate_throughput_mbps(input_size, duration);
 
-    // Get plugin name from options (default to "auto" if not specified)
-    let plugin_used = args.plugin.clone().unwrap_or_else(|| "auto".to_string());
+    // Report the algorithm that was selected (explicit or auto-selected)
+    let plugin_used = selected_algo.to_string();
 
     // Log performance metrics with structured fields
     debug!(

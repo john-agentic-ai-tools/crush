@@ -1,33 +1,33 @@
 # Crush
 
-Crush is a Rust-based port of pigz that adds support for hardware acceleration and a plugin architecture for file-format-specific compression extensions.
+Crush is a high-performance parallel compression toolkit written in Rust. It combines multi-threaded CPU compression with GPU-accelerated decompression through a pluggable architecture, delivering throughput that scales from single-core workloads to discrete GPUs.
 
-It is designed for high-throughput data pipelines, particularly in AI and ML workflows where large datasets are frequently ingested from internet sources. Fast compression enables files to be compressed quickly, transferred efficiently over the network, and decompressed with minimal overhead, reducing end-to-end data ingestion time.
+Crush is designed for high-throughput data pipelines, particularly in AI and ML workflows where large datasets are frequently compressed, transferred over the network, and decompressed. By pairing near-linear CPU scaling with GDeflate-based GPU decompression, Crush minimizes end-to-end data ingestion time at every stage of the pipeline.
 
 ## Why Crush?
 
-Modern AI and ML pipelines move massive amounts of data, often across networks and from untrusted or bandwidth-constrained sources. In these environments, compression speed matters just as much as compression ratio.
+Modern data pipelines move massive amounts of data — training sets, model checkpoints, log archives — often across networks and under tight latency budgets. Traditional compression tools force a choice between speed and flexibility. Crush eliminates that tradeoff.
 
 Crush is built to:
 
-- Maximize throughput using parallel compression and hardware acceleration
-- Reduce network transfer time by compressing data as early as possible in the pipeline
-- Adapt to data formats through a plugin model that enables format-aware compression strategies
-- Integrate cleanly with Rust-based systems, offering safety, performance, and predictable behavior
-
-By focusing on fast, extensible compression rather than one-size-fits-all algorithms, Crush helps data pipelines move faster without becoming a bottleneck.
+- **Scale with hardware** — parallel CPU compression across all cores, GPU-accelerated decompression via Vulkan/Metal/DX12
+- **Adapt to data** — plugin architecture enables format-aware compression strategies; automatic entropy analysis routes data to the best algorithm
+- **Stay out of the way** — automatic GPU detection with CPU fallback, cooperative cancellation, and pipeline-friendly stdin/stdout
+- **Be safe and predictable** — memory-safe Rust, CRC32 integrity checks, RAII cleanup of partial files, no `.unwrap()` in production code
 
 ## Features
 
 ### Core Capabilities
 
-- **High-Performance Compression**: Multi-threaded parallel compression matching or exceeding pigz performance
-- **Plugin Architecture**: Extensible system supporting multiple compression algorithms
+- **Parallel CPU Compression**: Multi-threaded compression scaling near-linearly to all available cores (983 MiB/s on 8+ cores)
+- **GPU-Accelerated Decompression**: GDeflate-based GPU decompression via Vulkan/Metal/DX12 with batched dispatch and automatic CPU fallback
+- **Plugin Architecture**: Extensible system supporting multiple compression algorithms with automatic scoring and selection
+- **Random Access**: O(1) tile-based decompression for seeking into large archives without full decompression
 - **Metadata Preservation**: Automatically preserves file modification times and Unix permissions
 - **Pipeline Integration**: Full stdin/stdout support for seamless Unix pipeline integration
-- **Configuration Management**: Per-user configuration with environment variable overrides
+- **Configuration Management**: Per-user TOML configuration with environment variable overrides
 
-### Graceful Cancellation (New!)
+### Graceful Cancellation
 
 Crush supports graceful cancellation of long-running operations via **Ctrl+C** (SIGINT):
 
@@ -54,6 +54,133 @@ crush compress large_dataset.bin
 - No manual cleanup of incomplete files
 - Safe interruption without corruption or partial files
 - Ideal for interactive use and long-running batch jobs
+
+## Performance
+
+Crush delivers exceptional throughput for both compression and decompression operations.
+
+### Benchmark Results
+
+**Test Environment:**
+- Rust: 1.93.1 (stable)
+- CPU: Multi-core (benchmarks use all available cores by default)
+- GPU: NVIDIA GeForce RTX 3060 Ti (Vulkan)
+- Build: Release mode with optimizations
+
+#### CPU Compression (crush-core, 128 MB corpus)
+
+**Compression Scaling (64 KB blocks):**
+
+| Workers | Throughput  | Scaling |
+|---------|-------------|---------|
+| 1       | 92 MiB/s    | 1.0×    |
+| 2       | 181 MiB/s   | 1.97×   |
+| 4       | 347 MiB/s   | 3.77×   |
+| 8       | 576 MiB/s   | 6.26×   |
+| default (all cores) | 983 MiB/s | — |
+
+Compression scales near-linearly with thread count. `workers=0` (default) uses all available logical CPUs.
+
+**Compression Performance by Block Size (default workers):**
+
+| Block Size | Throughput  |
+|-----------|-------------|
+| 64 KB     | 983 MiB/s   |
+| 512 KB    | 957 MiB/s   |
+| 1024 KB   | 941 MiB/s   |
+
+#### CPU Decompression (crush-core)
+
+| Workers | Throughput  |
+|---------|-------------|
+| 1       | 312 MiB/s   |
+| 2       | 375 MiB/s   |
+| 4       | 417 MiB/s   |
+| 8       | 439 MiB/s   |
+| default (all cores) | 435 MiB/s |
+
+#### GPU Decompression (crush-gpu, GDeflate)
+
+GPU decompression uses batched dispatch — all tiles are submitted in a single GPU command to eliminate per-tile host-GPU synchronization overhead.
+
+| Corpus | GPU | CPU | Winner |
+|--------|-----|-----|--------|
+| log-1MB | 137 MiB/s | 329 MiB/s | CPU |
+| binary-1MB | 86 MiB/s | 126 MiB/s | CPU |
+| mixed-1MB | 87 MiB/s | 181 MiB/s | CPU |
+| mixed-10MB | **344 MiB/s** | 186 MiB/s | **GPU 1.85x** |
+
+GPU decompression outperforms CPU at larger data sizes (>2-4 MB) where the fixed dispatch overhead is amortized across many tiles. For smaller data, CPU is faster.
+
+**GPU Compression Throughput (GDeflate, CPU-side):**
+
+| Corpus | Throughput |
+|--------|-----------|
+| log-text-1MB | 178 MiB/s |
+| binary-1MB | 70 MiB/s |
+| mixed-1MB | 99 MiB/s |
+| mixed-10MB | 104 MiB/s |
+
+**Random Access Performance** (64 MB corpus, 1 MB blocks):
+
+| Operation              | Latency  |
+|------------------------|----------|
+| Decompress last block  | ~1.12 ms |
+| Decompress first block | ~1.12 ms |
+
+### Key Performance Features
+
+- **Near-linear compression scaling**: throughput doubles with each doubling of worker count up to CPU core count
+- **SIMD-accelerated DEFLATE**: powered by libdeflater for maximum per-thread throughput (~4x faster than pure-Rust backends)
+- **GPU-accelerated decompression**: batched GDeflate dispatch via wgpu (Vulkan/Metal/DX12) with automatic CPU fallback
+- **Configurable parallelism**: `workers(n)` limits CPU usage for background tasks; `workers(0)` (default) uses all cores
+- **Consistent Random Access**: O(1) block decompression via seekable block index (~1 ms per block)
+- **Memory Efficient**: Exact worst-case buffer sizing eliminates over-allocation
+
+### Running Benchmarks
+
+```bash
+# Run crush-core compression/decompression benchmarks
+cargo bench -p crush-core --bench throughput
+
+# Run random access benchmarks
+cargo bench -p crush-core --bench random_access
+
+# Run GPU decompression throughput benchmarks (requires compatible GPU)
+cargo bench -p crush-gpu --bench throughput
+
+# Run GPU compression ratio benchmarks
+cargo bench -p crush-gpu --bench ratio
+```
+
+### Comparing Against gzip/pigz
+
+To compare crush against standard compression tools:
+
+```bash
+# Build crush first
+cargo build --release
+
+# Run comparison script (Linux/Mac/WSL)
+bash benchmark-compare.sh
+
+# Manual comparison example
+echo "Test data..." > test.txt
+
+# Crush
+time ./target/release/crush compress test.txt
+ls -lh test.txt.crush
+
+# gzip --fast (comparable compression ratio to crush)
+time gzip --fast --keep test.txt
+ls -lh test.txt.gz
+
+# pigz (parallel gzip)
+time pigz --keep test.txt
+ls -lh test.txt.gz
+```
+
+**Note**: Crush currently optimizes for speed over compression ratio. For fairest comparisons, compare against `gzip --fast` rather than default gzip, as they have similar compression ratios while crush provides significantly higher throughput.
 
 ## Installation
 
@@ -468,7 +595,8 @@ Commands:
 
 1. **Use pipelines**: Compress/decompress in-memory without writing intermediate files
 2. **Parallel processing**: Crush automatically uses multiple threads for large files
-3. **Hardware acceleration**: Plugins can utilize CPU-specific instructions (when available)
+3. **GPU decompression**: For datasets larger than ~2-4 MB, GPU decompression (auto-detected) outperforms CPU
+4. **SIMD acceleration**: CPU compression uses libdeflater's SIMD-optimized DEFLATE implementation
 
 ### Optimize Compression Ratio vs Speed
 
@@ -643,6 +771,18 @@ crush/
 │   │   ├── inspection.rs
 │   │   └── plugin/      # Plugin system
 │   └── Cargo.toml
+├── crush-gpu/           # GPU-accelerated compression engine
+│   ├── src/
+│   │   ├── lib.rs       # Plugin registration
+│   │   ├── engine.rs    # Compress/decompress API
+│   │   ├── backend/     # GPU backends (wgpu, CUDA)
+│   │   ├── shader/      # WGSL compute shaders
+│   │   ├── format.rs    # CGPU binary file format
+│   │   ├── gdeflate.rs  # GDeflate algorithm
+│   │   ├── scorer.rs    # GPU eligibility scoring
+│   │   └── entropy.rs   # Shannon entropy analysis
+│   ├── benches/         # Criterion benchmarks
+│   └── Cargo.toml
 ├── crush-cli/           # CLI application
 │   ├── src/
 │   │   ├── main.rs
@@ -665,8 +805,9 @@ cargo build
 cargo build --release
 
 # Build specific crate
-cargo build -p crush-cli
 cargo build -p crush-core
+cargo build -p crush-gpu
+cargo build -p crush-cli
 ```
 
 ### Testing
@@ -676,8 +817,9 @@ cargo build -p crush-core
 cargo test
 
 # Run specific test suite
-cargo test -p crush-cli
 cargo test -p crush-core
+cargo test -p crush-gpu
+cargo test -p crush-cli
 
 # Run integration tests only
 cargo test --test '*'
@@ -689,9 +831,14 @@ cargo test --test '*'
 # Run all benchmarks
 cargo bench
 
-# Run specific benchmark
-cargo bench --bench cli_startup
-cargo bench --bench help_command
+# CPU compression/decompression throughput
+cargo bench -p crush-core --bench throughput
+
+# GPU decompression throughput (requires compatible GPU)
+cargo bench -p crush-gpu --bench throughput
+
+# CLI startup benchmarks
+cargo bench -p crush-cli --bench cli_startup
 ```
 
 ### Code Quality
@@ -719,4 +866,6 @@ This project is licensed under [LICENSE] - see the LICENSE file for details.
 
 - Inspired by [pigz](https://zlib.net/pigz/) by Mark Adler
 - Built with [Rust](https://www.rust-lang.org/)
-- Compression algorithms from [flate2](https://github.com/rust-lang/flate2-rs)
+- DEFLATE implementation via [libdeflater](https://github.com/ebiggers/libdeflate) (SIMD-optimized)
+- GPU compute via [wgpu](https://wgpu.rs/) (cross-platform Vulkan/Metal/DX12)
+- GDeflate format based on [Microsoft DirectStorage GDeflate](https://github.com/microsoft/DirectStorage)
