@@ -5,11 +5,6 @@ on:
     branches:
       - 'release/**'
   workflow_dispatch:
-    inputs:
-      version:
-        description: 'Version to release (e.g., 0.1.0)'
-        required: true
-        type: string
 
 concurrency:
   group: release-${{ github.ref }}
@@ -24,69 +19,82 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  validate_version:
-    name: Validate Version
+  detect_publishable_crates:
+    name: Detect Publishable Crates
     runs-on: ubuntu-latest
     outputs:
-      version: ${{ steps.get_version.outputs.version }}
+      crates_to_publish: ${{ steps.detect.outputs.crates_to_publish }}
+      release_version: ${{ steps.detect.outputs.release_version }}
+      has_publishable: ${{ steps.detect.outputs.has_publishable }}
     steps:
       - uses: actions/checkout@v4
 
-      - name: Get version from Cargo.toml or input
-        id: get_version
+      - name: Detect crates needing publication
+        id: detect
         run: |
-          if [ -n "${{ github.event.inputs.version }}" ]; then
-            VERSION="${{ github.event.inputs.version }}"
-          else
-            # Read from crush-core (workspace root has no [package] version)
-            VERSION=$(grep -m1 '^version' crush-core/Cargo.toml | sed 's/.*"\(.*\)".*/\1/')
-          fi
-          echo "version=${VERSION}" >> $GITHUB_OUTPUT
-          echo "Detected version: ${VERSION}"
+          # Ordered by dependency (publish in this order)
+          CRATES="crush-core crush-parallel crush-gpu crush-cli"
+          PUBLISH_LIST="[]"
 
-      - name: Validate semver format
-        run: |
-          VERSION="${{ steps.get_version.outputs.version }}"
-          if ! echo "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?(\+[a-zA-Z0-9.]+)?$'; then
-            echo "Error: Version '$VERSION' is not valid semver"
-            exit 1
-          fi
-          echo "Version '$VERSION' is valid semver"
-
-      - name: Check version uniqueness on crates.io
-        run: |
-          VERSION="${{ steps.get_version.outputs.version }}"
-
-          # Check both workspace crates (workspace root has no [package] name)
-          for CRATE_NAME in crush-core crush-cli; do
-            echo "Checking ${CRATE_NAME}..."
-
-            # Query crates.io API for existing versions
-            HTTP_STATUS=$(curl -s -o /tmp/crates_response.json -w "%{http_code}" \
-              "https://crates.io/api/v1/crates/${CRATE_NAME}/versions")
-
-            if [ "$HTTP_STATUS" = "404" ]; then
-              echo "Crate '${CRATE_NAME}' not found on crates.io (first publish)"
+          for CRATE in $CRATES; do
+            # Skip crates that don't exist locally
+            if [ ! -f "$CRATE/Cargo.toml" ]; then
+              echo "Skipping $CRATE (no Cargo.toml found)"
               continue
             fi
 
-            if [ "$HTTP_STATUS" != "200" ]; then
-              echo "Warning: Could not verify version uniqueness for '${CRATE_NAME}' (HTTP ${HTTP_STATUS})"
-              continue
-            fi
+            # Read local version from Cargo.toml
+            LOCAL_VERSION=$(grep -m1 '^version' "$CRATE/Cargo.toml" | sed 's/.*"\(.*\)".*/\1/')
 
-            # Check if version already exists
-            if jq -e ".versions[] | select(.num == \"$VERSION\")" /tmp/crates_response.json > /dev/null 2>&1; then
-              echo "Error: Version '${VERSION}' of '${CRATE_NAME}' already exists on crates.io"
+            # Validate semver format
+            if ! echo "$LOCAL_VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?(\+[a-zA-Z0-9.]+)?$'; then
+              echo "::error::Version '$LOCAL_VERSION' in $CRATE/Cargo.toml is not valid semver"
               exit 1
             fi
 
-            echo "Version '${VERSION}' of '${CRATE_NAME}' is unique on crates.io"
+            echo "Checking $CRATE@$LOCAL_VERSION..."
+
+            # Query crates.io (User-Agent required by their API policy)
+            HTTP_STATUS=$(curl -s -o /tmp/crate.json -w "%{http_code}" \
+              -H "User-Agent: crush-release-ci (https://github.com/john-agentic-ai-tools/crush)" \
+              "https://crates.io/api/v1/crates/$CRATE")
+
+            if [ "$HTTP_STATUS" = "404" ]; then
+              echo "  -> First publish (crate not on crates.io)"
+              PUBLISH_LIST=$(echo "$PUBLISH_LIST" | jq --arg c "$CRATE" '. + [$c]')
+            elif [ "$HTTP_STATUS" = "200" ]; then
+              EXISTS=$(jq -e --arg v "$LOCAL_VERSION" '.versions[] | select(.num == $v)' /tmp/crate.json 2>/dev/null)
+              if [ -z "$EXISTS" ]; then
+                echo "  -> New version (will publish)"
+                PUBLISH_LIST=$(echo "$PUBLISH_LIST" | jq --arg c "$CRATE" '. + [$c]')
+              else
+                echo "  -> Skip (v$LOCAL_VERSION already on crates.io)"
+              fi
+            else
+              echo "::warning::Could not query crates.io for $CRATE (HTTP $HTTP_STATUS), assuming needs publish"
+              PUBLISH_LIST=$(echo "$PUBLISH_LIST" | jq --arg c "$CRATE" '. + [$c]')
+            fi
           done
+
+          # Fail if nothing to publish
+          COUNT=$(echo "$PUBLISH_LIST" | jq length)
+          if [ "$COUNT" = "0" ]; then
+            echo "::error::No crates need publishing. Bump versions in Cargo.toml first."
+            exit 1
+          fi
+
+          echo "Crates to publish: $(echo "$PUBLISH_LIST" | jq -c)"
+
+          # Canonical release version = crush-core version
+          RELEASE_VERSION=$(grep -m1 '^version' crush-core/Cargo.toml | sed 's/.*"\(.*\)".*/\1/')
+
+          echo "crates_to_publish=$(echo $PUBLISH_LIST | jq -c)" >> $GITHUB_OUTPUT
+          echo "release_version=$RELEASE_VERSION" >> $GITHUB_OUTPUT
+          echo "has_publishable=true" >> $GITHUB_OUTPUT
 
   run_ci:
     name: Run CI Checks
-    needs: [validate_version]
+    needs: [detect_publishable_crates]
     uses: ./.github/workflows/ci.yml
     permissions:
       contents: read
@@ -95,7 +103,7 @@ jobs:
 
   build_musl_static:
     name: Build Static Linux Binary
-    needs: [validate_version, run_ci]
+    needs: [detect_publishable_crates, run_ci]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -131,7 +139,7 @@ jobs:
 
       - name: Package binary
         run: |
-          VERSION="${{ needs.validate_version.outputs.version }}"
+          VERSION="${{ needs.detect_publishable_crates.outputs.release_version }}"
           mkdir -p dist
           cp target/x86_64-unknown-linux-musl/release/crush dist/
           cd dist
@@ -141,7 +149,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: crush-${{ needs.validate_version.outputs.version }}-x86_64-unknown-linux-musl
+          name: crush-${{ needs.detect_publishable_crates.outputs.release_version }}-x86_64-unknown-linux-musl
           path: |
             dist/crush-*.tar.gz
             dist/crush-*.sha256
@@ -149,18 +157,21 @@ jobs:
 
   publish:
     name: Publish to crates.io
-    needs: [validate_version, run_ci, build_musl_static]
+    needs: [detect_publishable_crates, run_ci, build_musl_static]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
       - uses: dtolnay/rust-toolchain@stable
 
-      - name: Dry-run publish
+      - name: Dry-run publishable crates
         run: |
-          # Only dry-run crush-core — crush-cli depends on crush-core being
-          # on crates.io, so its dry-run fails until core is published
-          cargo publish --dry-run -p crush-core
+          CRATES_JSON='${{ needs.detect_publishable_crates.outputs.crates_to_publish }}'
+          # Dry-run only the first crate (downstream crates may fail dry-run
+          # if they depend on unpublished upstream crates)
+          FIRST_CRATE=$(echo "$CRATES_JSON" | jq -r '.[0]')
+          echo "Dry-run publishing $FIRST_CRATE..."
+          cargo publish --dry-run -p "$FIRST_CRATE"
 
       - name: Authenticate with crates.io
         id: crates_auth
@@ -207,33 +218,46 @@ jobs:
         env:
           FALLBACK_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
-      - name: Publish crush-core to crates.io
-        run: cargo publish -p crush-core
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ steps.crates_auth.outputs.token }}
-
-      - name: Wait for crates.io index update
-        run: sleep 30
-
-      - name: Publish crush-cli to crates.io
-        run: cargo publish -p crush-cli
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ steps.crates_auth.outputs.token }}
-
-      - name: Retry publish on failure
-        if: failure()
+      - name: Publish crates in dependency order
         run: |
-          echo "Retrying publish after 30 seconds..."
-          sleep 30
-          cargo publish -p crush-core || true
-          sleep 10
-          cargo publish -p crush-cli
+          CRATES_JSON='${{ needs.detect_publishable_crates.outputs.crates_to_publish }}'
+          PUBLISHED=0
+          DEP_ORDER=(crush-core crush-parallel crush-gpu crush-cli)
+          TOTAL=${#DEP_ORDER[@]}
+
+          # Iterate in dependency order
+          for i in "${!DEP_ORDER[@]}"; do
+            CRATE="${DEP_ORDER[$i]}"
+            if echo "$CRATES_JSON" | jq -e --arg c "$CRATE" 'index($c) != null' > /dev/null 2>&1; then
+              echo "Publishing $CRATE..."
+              cargo publish -p "$CRATE"
+              PUBLISHED=$((PUBLISHED + 1))
+
+              # Wait for crates.io index propagation if more crates need publishing after this one
+              NEED_WAIT=false
+              for j in $(seq $((i + 1)) $((TOTAL - 1))); do
+                NEXT="${DEP_ORDER[$j]}"
+                if echo "$CRATES_JSON" | jq -e --arg c "$NEXT" 'index($c) != null' > /dev/null 2>&1; then
+                  NEED_WAIT=true
+                  break
+                fi
+              done
+              if [ "$NEED_WAIT" = "true" ]; then
+                echo "Waiting 30s for crates.io index propagation..."
+                sleep 30
+              fi
+            else
+              echo "Skipping $CRATE (already published)"
+            fi
+          done
+
+          echo "Published $PUBLISHED crate(s)"
         env:
-          CARGO_REGISTRY_TOKEN: ${{ steps.crates_auth.outputs.token || secrets.CARGO_REGISTRY_TOKEN }}
+          CARGO_REGISTRY_TOKEN: ${{ steps.crates_auth.outputs.token }}
 
   create_github_release:
     name: Create GitHub Release
-    needs: [validate_version, publish, build_musl_static]
+    needs: [detect_publishable_crates, publish, build_musl_static]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -243,14 +267,14 @@ jobs:
       - name: Download musl artifact
         uses: actions/download-artifact@v4
         with:
-          name: crush-${{ needs.validate_version.outputs.version }}-x86_64-unknown-linux-musl
+          name: crush-${{ needs.detect_publishable_crates.outputs.release_version }}-x86_64-unknown-linux-musl
           path: dist/
 
       - name: Create GitHub Release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          VERSION="${{ needs.validate_version.outputs.version }}"
+          VERSION="${{ needs.detect_publishable_crates.outputs.release_version }}"
 
           gh release create "v${VERSION}" \
             --title "v${VERSION}" \
@@ -260,7 +284,7 @@ jobs:
 
   pr_to_develop:
     name: Create PR to develop
-    needs: [validate_version, create_github_release]
+    needs: [detect_publishable_crates, create_github_release]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -271,7 +295,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          VERSION="${{ needs.validate_version.outputs.version }}"
+          VERSION="${{ needs.detect_publishable_crates.outputs.release_version }}"
           RELEASE_BRANCH="${GITHUB_REF#refs/heads/}"
 
           BODY=$(cat <<EOF
@@ -297,7 +321,7 @@ jobs:
 
   merge_to_main:
     name: Create PR to main
-    needs: [validate_version, create_github_release]
+    needs: [detect_publishable_crates, create_github_release]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -308,7 +332,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          VERSION="${{ needs.validate_version.outputs.version }}"
+          VERSION="${{ needs.detect_publishable_crates.outputs.release_version }}"
           RELEASE_BRANCH="${GITHUB_REF#refs/heads/}"
 
           BODY=$(cat <<EOF
