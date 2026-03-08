@@ -131,6 +131,10 @@ pub struct CompressArgs {
     /// GPU device index to use for GPU-accelerated compression
     #[arg(long, value_name = "INDEX")]
     pub gpu_device: Option<u32>,
+
+    /// GPU compute backend to use (default: auto)
+    #[arg(long, value_name = "BACKEND", default_value = "auto")]
+    pub gpu_backend: GpuBackend,
 }
 
 /// Decompress command arguments
@@ -181,6 +185,10 @@ pub struct DecompressArgs {
     /// GPU device index to use for GPU-accelerated decompression
     #[arg(long, value_name = "INDEX")]
     pub gpu_device: Option<u32>,
+
+    /// GPU compute backend to use (default: auto)
+    #[arg(long, value_name = "BACKEND", default_value = "auto")]
+    pub gpu_backend: GpuBackend,
 }
 
 /// Inspect command arguments
@@ -351,4 +359,15 @@ pub enum OutputFormat {
 pub enum LogFormat {
     Human,
     Json,
+}
+
+/// GPU compute backend selection
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum GpuBackend {
+    /// Auto-select: try CUDA first, then wgpu
+    Auto,
+    /// Force CUDA backend (requires NVIDIA GPU + CUDA toolkit)
+    Cuda,
+    /// Force wgpu backend (Vulkan / Metal / DX12)
+    Wgpu,
 }

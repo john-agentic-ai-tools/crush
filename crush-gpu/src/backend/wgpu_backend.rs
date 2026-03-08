@@ -22,10 +22,6 @@ const GDEFLATE_SHADER: &str = include_str!("../shader/gdeflate_decompress.wgsl")
 /// that survive TDR as well.
 const GPU_POLL_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// Maximum number of tiles to batch into a single GPU submission.
-/// 512 tiles × ~200KB GPU buffers ≈ 100MB, well within `GPU_MEMORY_BUDGET` (256MB).
-const MAX_TILES_PER_BATCH: usize = 512;
-
 /// wgpu-backed GPU compute backend.
 ///
 /// Holds two compute pipelines: one for LZ77 (v1) and one for `GDeflate` (v2).
@@ -456,45 +452,6 @@ impl WgpuBackend {
 
         Ok((out_bytes, parse_ss_lengths(&len_bytes, n)))
     }
-
-    /// De-interleave sub-stream outputs back to the original tile byte order.
-    fn deinterleave(
-        raw_output: &[u8],
-        ss_lengths: &[u32],
-        sub_stream_count: u32,
-        uncompressed_size: u32,
-    ) -> Vec<u8> {
-        let n = sub_stream_count as usize;
-        let max_per_ss = (uncompressed_size as usize).div_ceil(n);
-
-        // Extract each sub-stream's decoded bytes.
-        let sub_streams: Vec<&[u8]> = (0..n)
-            .map(|i| {
-                let start = i * max_per_ss;
-                let len = ss_lengths[i] as usize;
-                let end = (start + len).min(raw_output.len());
-                let actual_start = start.min(raw_output.len());
-                &raw_output[actual_start..end]
-            })
-            .collect();
-
-        // De-interleave: byte i of the original tile came from sub-stream i%n,
-        // position i/n within that sub-stream.
-        let mut output = Vec::with_capacity(uncompressed_size as usize);
-        let max_len = sub_streams.iter().map(|s| s.len()).max().unwrap_or(0);
-        for j in 0..max_len {
-            for ss in &sub_streams {
-                if j < ss.len() {
-                    output.push(ss[j]);
-                }
-                if output.len() == uncompressed_size as usize {
-                    return output;
-                }
-            }
-        }
-
-        output
-    }
 }
 
 /// GPU buffers for a single `GDeflate` tile dispatch.
@@ -786,7 +743,7 @@ impl WgpuBackend {
 
     /// Inner dispatch loop for `GDeflate` tiles — batched for throughput.
     ///
-    /// Processes tiles in chunks of `MAX_TILES_PER_BATCH`, checking for
+    /// Processes tiles in chunks of `super::MAX_TILES_PER_BATCH`, checking for
     /// cancellation between batches. Each batch is dispatched as a single
     /// GPU submission to minimize host-GPU synchronization overhead.
     fn decompress_tiles_gdeflate_inner(
@@ -795,7 +752,7 @@ impl WgpuBackend {
         cancel: &AtomicBool,
     ) -> Result<Vec<Vec<u8>>> {
         let mut results = Vec::with_capacity(tiles.len());
-        for batch in tiles.chunks(MAX_TILES_PER_BATCH) {
+        for batch in tiles.chunks(super::MAX_TILES_PER_BATCH) {
             if cancel.load(Ordering::Relaxed) {
                 return Err(CrushError::Cancelled);
             }
@@ -824,7 +781,7 @@ impl WgpuBackend {
 
             let (raw_output, ss_lengths) = self.dispatch_tile(tile, tile_index)?;
 
-            let decompressed = Self::deinterleave(
+            let decompressed = super::deinterleave(
                 &raw_output,
                 &ss_lengths,
                 u32::from(tile.sub_stream_count),

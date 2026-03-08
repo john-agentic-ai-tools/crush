@@ -183,20 +183,24 @@ for plugin in list_plugins() {
 
 ## GPU Backend
 
-### Supported APIs
+### Backends
 
-| API | Platform | Status |
-|-----|----------|--------|
-| Vulkan 1.2+ | Windows, Linux | Supported |
-| Metal 2+ | macOS | Supported |
-| DX12 | Windows | Supported |
-| CUDA | NVIDIA (optional) | Feature-gated |
+| Backend | API | Feature flag | GPU vendor |
+|---------|-----|-------------|------------|
+| wgpu | Vulkan 1.2+ / Metal 2+ / DX12 | *(default)* | Any supported GPU |
+| CUDA | CUDA 13.x via nvrtc | `cuda` | NVIDIA (compute capability 7.0+) |
+
+Backend selection priority (with `--gpu-backend auto`, the default):
+1. CUDA (if `cuda` feature enabled and NVIDIA GPU present)
+2. wgpu (Vulkan on Windows/Linux, Metal on macOS)
+
+Override at runtime: `crush compress --gpu-backend cuda` or `--gpu-backend wgpu`.
 
 ### Requirements
 
 - 2 GB+ VRAM (discrete GPU recommended)
 - Vulkan, Metal, or DX12 driver
-- CUDA feature requires `cudarc` dependency
+- CUDA backend additionally requires [NVIDIA CUDA Toolkit](https://developer.nvidia.com/cuda-downloads) 13.x and Visual Studio 2022 Build Tools (Windows)
 
 ### GPU Eligibility
 
@@ -229,7 +233,10 @@ cargo test --package crush-gpu
 # Build
 cargo build -p crush-gpu
 
-# Test
+# Build with CUDA support
+cargo build -p crush-gpu --features cuda
+
+# Test (standard — no GPU required for CI)
 cargo test -p crush-gpu
 
 # Clippy
@@ -238,6 +245,57 @@ cargo clippy -p crush-gpu --all-targets -- -D warnings
 # Docs
 cargo doc -p crush-gpu --no-deps
 ```
+
+### CUDA Testing
+
+CUDA tests are feature-gated behind `#[cfg(feature = "cuda")]` and require:
+
+1. An NVIDIA GPU with >= 2 GB VRAM
+2. CUDA Toolkit nvrtc DLLs on `PATH`
+
+On Windows with CUDA 13.1, add the runtime libraries to your shell:
+
+```bash
+# Git Bash / MSYS2
+export PATH="/c/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v13.1/bin/x64:$PATH"
+```
+
+```powershell
+# PowerShell
+$env:PATH = "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.1\bin\x64;$env:PATH"
+```
+
+Then run:
+
+```bash
+cargo test -p crush-gpu --features cuda -- cuda --nocapture
+```
+
+This executes 10 CUDA-specific tests:
+
+- LZ77 roundtrip (small, 64 KB, multi-tile)
+- GDeflate roundtrip (multiple sizes, batch)
+- Cancellation (pre-set and mid-batch)
+- CUDA vs CPU output parity
+- Backend info validation
+
+### Full Local GPU Verification
+
+```bash
+export PATH="/c/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v13.1/bin/x64:$PATH"
+
+# All crush-gpu tests (wgpu + CUDA)
+cargo test -p crush-gpu --features cuda --nocapture
+
+# Clippy (CUDA mode)
+cargo clippy -p crush-gpu --features cuda --all-targets -- -D warnings
+```
+
+### CI Notes
+
+GitHub Actions free tier has no GPU. CI runs `cargo clippy --all-targets -- -D warnings` and `cargo test` without the `cuda` feature. GPU and CUDA tests are local-only.
+
+> **Note:** `nvcc` does not need to be on `PATH` at build time. The `cudarc` crate uses the explicit `cuda-13010` feature flag instead of auto-detecting the CUDA version.
 
 ## License
 

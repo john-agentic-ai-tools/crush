@@ -134,6 +134,60 @@ pub const MIN_VRAM_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 /// GPU memory budget for decompression dispatch in bytes (256 MB).
 pub const GPU_MEMORY_BUDGET: u64 = 256 * 1024 * 1024;
 
+/// Maximum number of tiles to batch into a single GPU submission.
+/// 512 tiles × ~200KB GPU buffers ≈ 100MB, well within `GPU_MEMORY_BUDGET` (256MB).
+pub const MAX_TILES_PER_BATCH: usize = 512;
+
+// ---------------------------------------------------------------------------
+// Shared helpers
+// ---------------------------------------------------------------------------
+
+/// De-interleave sub-stream outputs back to the original tile byte order.
+///
+/// The LZ77 GPU kernel decompresses each sub-stream independently into a
+/// separate region of the output buffer. This function reconstructs the
+/// original byte order by round-robin reading from each sub-stream:
+/// byte `i` of the original tile came from sub-stream `i % n`, position
+/// `i / n` within that sub-stream.
+#[must_use]
+pub fn deinterleave(
+    raw_output: &[u8],
+    ss_lengths: &[u32],
+    sub_stream_count: u32,
+    uncompressed_size: u32,
+) -> Vec<u8> {
+    let n = sub_stream_count as usize;
+    let max_per_ss = (uncompressed_size as usize).div_ceil(n);
+
+    // Extract each sub-stream's decoded bytes.
+    let sub_streams: Vec<&[u8]> = (0..n)
+        .map(|i| {
+            let start = i * max_per_ss;
+            let len = ss_lengths[i] as usize;
+            let end = (start + len).min(raw_output.len());
+            let actual_start = start.min(raw_output.len());
+            &raw_output[actual_start..end]
+        })
+        .collect();
+
+    // De-interleave: byte i of the original tile came from sub-stream i%n,
+    // position i/n within that sub-stream.
+    let mut output = Vec::with_capacity(uncompressed_size as usize);
+    let max_len = sub_streams.iter().map(|s| s.len()).max().unwrap_or(0);
+    for j in 0..max_len {
+        for ss in &sub_streams {
+            if j < ss.len() {
+                output.push(ss[j]);
+            }
+            if output.len() == uncompressed_size as usize {
+                return output;
+            }
+        }
+    }
+
+    output
+}
+
 // ---------------------------------------------------------------------------
 // Backend auto-discovery (cached)
 // ---------------------------------------------------------------------------
@@ -146,15 +200,41 @@ pub const GPU_MEMORY_BUDGET: u64 = 256 * 1024 * 1024;
 /// we avoid these issues and match how games and other GPU applications work.
 static CACHED_BACKEND: OnceLock<Option<Arc<dyn ComputeBackend>>> = OnceLock::new();
 
+/// Attempt to create a CUDA backend, returning `None` on failure.
+#[cfg(feature = "cuda")]
+fn try_cuda() -> Option<Arc<dyn ComputeBackend>> {
+    match cuda::CudaBackend::try_new() {
+        Ok(Some(backend)) => Some(Arc::new(backend) as Arc<dyn ComputeBackend>),
+        Ok(None) => None,
+        Err(e) => {
+            eprintln!("crush-gpu: CUDA backend init failed: {e}");
+            None
+        }
+    }
+}
+
+/// Attempt to create a wgpu backend, returning `None` on failure.
+fn try_wgpu() -> Option<Arc<dyn ComputeBackend>> {
+    match wgpu_backend::WgpuBackend::try_new() {
+        Ok(Some(backend)) => Some(Arc::new(backend) as Arc<dyn ComputeBackend>),
+        Ok(None) => None,
+        Err(e) => {
+            eprintln!("crush-gpu: wgpu backend init failed: {e}");
+            None
+        }
+    }
+}
+
 /// Discover the best available GPU backend, caching the result.
 ///
 /// The backend is created once and reused for the process lifetime.
 /// If the GPU device becomes lost during use, the engine's `catch_unwind`
 /// safety net converts the error and falls back to CPU decompression.
 ///
-/// Selection priority:
-/// 1. CUDA (if `cuda` feature enabled and NVIDIA GPU present)
-/// 2. wgpu with Vulkan/Metal/DX12
+/// Backend selection is controlled by [`crate::get_config()`]`.backend`:
+/// - `Auto`: try CUDA first (if feature enabled), then wgpu
+/// - `Cuda`: only try CUDA
+/// - `Wgpu`: only try wgpu
 ///
 /// Returns `Ok(None)` if no compatible GPU is found.
 ///
@@ -163,23 +243,35 @@ static CACHED_BACKEND: OnceLock<Option<Arc<dyn ComputeBackend>>> = OnceLock::new
 /// This function always returns `Ok`. GPU initialization errors are
 /// handled internally and result in `Ok(None)` (no GPU available).
 pub fn discover_gpu() -> Result<Option<Arc<dyn ComputeBackend>>> {
-    let cached = CACHED_BACKEND.get_or_init(|| {
-        // 1. Try CUDA first (if feature enabled) — fastest path for NVIDIA GPUs.
-        #[cfg(feature = "cuda")]
-        {
-            if let Ok(Some(backend)) = cuda::CudaBackend::try_new() {
-                return Some(Arc::new(backend) as Arc<dyn ComputeBackend>);
-            }
-        }
+    use crate::BackendPreference;
 
-        // 2. Try wgpu (Vulkan / Metal / DX12)
-        match wgpu_backend::WgpuBackend::try_new() {
-            Ok(Some(backend)) => Some(Arc::new(backend) as Arc<dyn ComputeBackend>),
-            Ok(None) => None,
-            Err(e) => {
-                eprintln!("crush-gpu: GPU backend init failed: {e}");
-                None
+    let cached = CACHED_BACKEND.get_or_init(|| {
+        let pref = crate::get_config().backend;
+
+        match pref {
+            BackendPreference::Auto => {
+                #[cfg(feature = "cuda")]
+                {
+                    if let Some(backend) = try_cuda() {
+                        return Some(backend);
+                    }
+                }
+                try_wgpu()
             }
+            BackendPreference::Cuda => {
+                #[cfg(feature = "cuda")]
+                {
+                    try_cuda()
+                }
+                #[cfg(not(feature = "cuda"))]
+                {
+                    eprintln!(
+                        "crush-gpu: CUDA backend requested but `cuda` feature is not enabled"
+                    );
+                    None
+                }
+            }
+            BackendPreference::Wgpu => try_wgpu(),
         }
     });
 

@@ -32,6 +32,18 @@ pub const PLUGIN_MAGIC: [u8; 4] = [0x43, 0x52, 0x01, 0x03];
 // Process-global GPU plugin configuration
 // ============================================================================
 
+/// Which GPU compute backend to prefer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum BackendPreference {
+    /// Auto-select: try CUDA first (if feature enabled), then wgpu.
+    #[default]
+    Auto,
+    /// Force the CUDA backend (requires `cuda` feature + NVIDIA GPU).
+    Cuda,
+    /// Force the wgpu backend (Vulkan / Metal / DX12).
+    Wgpu,
+}
+
 /// Process-global GPU plugin configuration.
 ///
 /// Set once at CLI startup via [`configure()`]. The GPU plugin reads these
@@ -43,6 +55,8 @@ pub struct GpuPluginConfig {
     pub force_cpu: bool,
     /// Specific GPU device to use. `None` means auto-select best available.
     pub device_index: Option<u32>,
+    /// Which GPU compute backend to prefer.
+    pub backend: BackendPreference,
 }
 
 /// Cached process-global GPU plugin configuration.
@@ -64,6 +78,7 @@ pub fn get_config() -> &'static GpuPluginConfig {
     static DEFAULT_CONFIG: GpuPluginConfig = GpuPluginConfig {
         force_cpu: false,
         device_index: None,
+        backend: BackendPreference::Auto,
     };
     GPU_PLUGIN_CONFIG.get().unwrap_or(&DEFAULT_CONFIG)
 }

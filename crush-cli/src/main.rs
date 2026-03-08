@@ -62,14 +62,20 @@ fn run() -> Result<()> {
 
     // Configure GPU plugin: merge config file values with CLI flags (CLI wins)
     {
-        let (cli_force_cpu, cli_gpu_device) = match &cli.command {
-            Commands::Compress(args) => (false, args.gpu_device),
-            Commands::Decompress(args) => (args.force_cpu, args.gpu_device),
-            _ => (false, None),
+        let (cli_force_cpu, cli_gpu_device, cli_gpu_backend) = match &cli.command {
+            Commands::Compress(args) => (false, args.gpu_device, args.gpu_backend),
+            Commands::Decompress(args) => (args.force_cpu, args.gpu_device, args.gpu_backend),
+            _ => (false, None, cli::GpuBackend::Auto),
+        };
+        let backend = match cli_gpu_backend {
+            cli::GpuBackend::Auto => crush_gpu::BackendPreference::Auto,
+            cli::GpuBackend::Cuda => crush_gpu::BackendPreference::Cuda,
+            cli::GpuBackend::Wgpu => crush_gpu::BackendPreference::Wgpu,
         };
         crush_gpu::configure(crush_gpu::GpuPluginConfig {
             force_cpu: cli_force_cpu || config.gpu.force_cpu,
             device_index: cli_gpu_device.or(config.gpu.device),
+            backend,
         });
     }
 
