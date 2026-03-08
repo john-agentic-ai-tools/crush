@@ -41,13 +41,27 @@
 - [ ] I have pulled the latest changes from `develop`
 - [ ] My branch is up to date with the target branch
 
-## Code Quality Gates
+## Code Quality Gates (CI)
 
 - [ ] `cargo fmt --all -- --check` passes
-- [ ] `cargo clippy --all-targets --all-features -- -D warnings` passes
-- [ ] `cargo test` passes
+- [ ] `cargo clippy --all-targets -- -D warnings` passes
+- [ ] `cargo nextest run` passes
 - [ ] `cargo bench` completes (if benchmarks exist)
 - [ ] No unsafe code introduced (or justified with safety comments)
+
+## GPU / Local-Only Testing
+
+<!-- CI runners do not have GPU hardware. The checks below MUST be run on a
+     dev machine with a GPU before merging any PR that touches crush-gpu or
+     crush-cli GPU integration code. Skip this section if the PR does not
+     affect GPU code paths. -->
+
+- [ ] N/A — this PR does not touch GPU code paths
+- [ ] `cargo clippy --all-targets --all-features -- -D warnings` passes (includes `cuda` feature)
+- [ ] `cargo nextest run -p crush-gpu` passes
+- [ ] `cargo nextest run -p crush-cli` passes (GPU integration in CLI)
+- [ ] `cargo bench -p crush-gpu` shows no regression
+- [ ] GPU compression/decompression round-trips verified on real hardware
 
 ## Additional Context
 
