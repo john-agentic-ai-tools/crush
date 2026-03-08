@@ -15,6 +15,9 @@ pub struct Config {
 
     #[serde(default)]
     pub logging: LoggingConfig,
+
+    #[serde(default)]
+    pub gpu: GpuConfig,
 }
 
 impl Config {
@@ -131,6 +134,21 @@ impl Default for LoggingConfig {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct GpuConfig {
+    /// Enable GPU-accelerated compression for auto-selection
+    #[serde(default)]
+    pub enabled: bool,
+
+    /// Preferred GPU device index (None = auto-select)
+    #[serde(default)]
+    pub device: Option<u32>,
+
+    /// Force CPU-only decompression
+    #[serde(default, rename = "force-cpu")]
+    pub force_cpu: bool,
+}
+
 // Default value helpers for serde
 fn default_plugin() -> String {
     "auto".to_string()
@@ -199,6 +217,21 @@ pub fn merge_env_vars(mut config: Config) -> Result<Config> {
             "logging.file" => {
                 config.logging.file = value;
             }
+            "gpu.enabled" => {
+                config.gpu.enabled = value
+                    .parse()
+                    .map_err(|_| CliError::Config(format!("Invalid boolean value: {}", value)))?;
+            }
+            "gpu.device" => {
+                config.gpu.device = Some(value.parse().map_err(|_| {
+                    CliError::Config(format!("Invalid GPU device index: {}", value))
+                })?);
+            }
+            "gpu.force.cpu" | "gpu.forcecpu" | "gpu.force-cpu" => {
+                config.gpu.force_cpu = value
+                    .parse()
+                    .map_err(|_| CliError::Config(format!("Invalid boolean value: {}", value)))?;
+            }
             _ => {} // Ignore unknown env vars
         }
     }
@@ -230,6 +263,24 @@ pub fn merge_cli_args(mut config: Config, args: &Cli) -> Result<Config> {
     // Log file
     if let Some(ref log_file) = args.log_file {
         config.logging.file = log_file.to_string_lossy().to_string();
+    }
+
+    // GPU flags from subcommands override config
+    match &args.command {
+        crate::cli::Commands::Compress(compress_args) => {
+            if let Some(device) = compress_args.gpu_device {
+                config.gpu.device = Some(device);
+            }
+        }
+        crate::cli::Commands::Decompress(decompress_args) => {
+            if decompress_args.force_cpu {
+                config.gpu.force_cpu = true;
+            }
+            if let Some(device) = decompress_args.gpu_device {
+                config.gpu.device = Some(device);
+            }
+        }
+        _ => {}
     }
 
     Ok(config)
@@ -320,6 +371,12 @@ pub fn get_config_value(config: &Config, key: &str) -> Result<String> {
         ("logging", "format") => Ok(config.logging.format.clone()),
         ("logging", "level") => Ok(config.logging.level.clone()),
         ("logging", "file") => Ok(config.logging.file.clone()),
+        ("gpu", "enabled") => Ok(config.gpu.enabled.to_string()),
+        ("gpu", "device") => Ok(config
+            .gpu
+            .device
+            .map_or_else(|| "auto".to_string(), |d| d.to_string())),
+        ("gpu", "force-cpu") | ("gpu", "force_cpu") => Ok(config.gpu.force_cpu.to_string()),
         _ => Err(CliError::Config(format!(
             "Invalid config key: '{}.{}' (unknown key)",
             section, field
@@ -408,6 +465,34 @@ pub fn set_config_value(config: &mut Config, key: &str, value: &str) -> Result<(
         ("logging", "file") => {
             config.logging.file = value.to_string();
         }
+        ("gpu", "enabled") => {
+            config.gpu.enabled = value.parse().map_err(|_| {
+                CliError::Config(format!(
+                    "Invalid boolean value: '{}' (must be true or false)",
+                    value
+                ))
+            })?;
+        }
+        ("gpu", "device") => {
+            if value == "auto" || value.is_empty() {
+                config.gpu.device = None;
+            } else {
+                config.gpu.device = Some(value.parse().map_err(|_| {
+                    CliError::Config(format!(
+                        "Invalid GPU device index: '{}' (must be a number or 'auto')",
+                        value
+                    ))
+                })?);
+            }
+        }
+        ("gpu", "force-cpu") | ("gpu", "force_cpu") => {
+            config.gpu.force_cpu = value.parse().map_err(|_| {
+                CliError::Config(format!(
+                    "Invalid boolean value: '{}' (must be true or false)",
+                    value
+                ))
+            })?;
+        }
         _ => {
             return Err(CliError::Config(format!(
                 "Invalid config key: '{}.{}' (unknown key)",
@@ -444,6 +529,7 @@ mod tests {
                 level: "debug".to_string(),
                 file: "/tmp/crush.log".to_string(),
             },
+            gpu: GpuConfig::default(),
         };
         assert!(custom_config.validate().is_ok());
     }

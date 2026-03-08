@@ -348,6 +348,15 @@ pub fn format_plugin_list_json(
     Ok(())
 }
 
+/// Format and print GPU device information for `plugins info gpu-deflate`
+pub fn format_gpu_device_info(info: &crush_gpu::GpuInfo) {
+    println!("  GPU Device:");
+    println!("    Name:      {}", info.name);
+    println!("    Vendor:    {}", info.vendor);
+    println!("    VRAM:      {} MB", info.vram_bytes / (1024 * 1024));
+    println!("    Backend:   {}", info.api_backend);
+}
+
 /// Format and print detailed plugin information
 pub fn format_plugin_info(plugin: &crush_core::plugin::PluginMetadata) {
     println!("Plugin: {}", plugin.name);

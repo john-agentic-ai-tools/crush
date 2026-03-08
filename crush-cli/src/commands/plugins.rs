@@ -40,6 +40,23 @@ pub fn run(args: &PluginsArgs) -> Result<()> {
             // Display detailed information
             output::format_plugin_info(plugin);
 
+            // For gpu-deflate, show GPU device details
+            if plugin.name.eq_ignore_ascii_case("gpu-deflate") {
+                println!();
+                match crush_gpu::discover_gpu() {
+                    Ok(Some(backend)) => {
+                        output::format_gpu_device_info(backend.gpu_info());
+                    }
+                    Ok(None) => {
+                        println!("  GPU Device:  Not available (no compatible GPU detected)");
+                        println!("  Note:        CPU fallback will be used for decompression of GPU-compressed files.");
+                    }
+                    Err(e) => {
+                        println!("  GPU Device:  Error during detection: {}", e);
+                    }
+                }
+            }
+
             Ok(())
         }
 

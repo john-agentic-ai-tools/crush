@@ -15,6 +15,7 @@ path = "src/main.rs"
 [dependencies]
 crush-core = { version = "0.2.0", path = "../crush-core" }
 crush-parallel = { version = "0.1.0", path = "../crush-parallel" }
+crush-gpu = { version = "0.1.0", path = "../crush-gpu" }
 clap = { version = "4", features = ["derive"] }
 indicatif = "0.18"
 termcolor = "1.4"

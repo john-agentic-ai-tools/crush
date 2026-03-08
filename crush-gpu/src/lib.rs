@@ -14,16 +14,63 @@ pub mod scorer;
 pub mod vectorize;
 
 use std::sync::atomic::AtomicBool;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use crush_core::error::Result;
 use crush_core::plugin::{CompressionAlgorithm, PluginMetadata, COMPRESSION_ALGORITHMS};
 use linkme::distributed_slice;
 
+// Re-export GPU device discovery types for CLI `plugins info` usage.
+pub use backend::{discover_gpu, GpuInfo, GpuVendor};
+
 /// Magic number for the gpu-deflate plugin in the crush-core outer format.
 ///
 /// Format: `[0x43, 0x52, 0x01, plugin_id]` = `"CR"` + version 1 + plugin ID 0x03.
 pub const PLUGIN_MAGIC: [u8; 4] = [0x43, 0x52, 0x01, 0x03];
+
+// ============================================================================
+// Process-global GPU plugin configuration
+// ============================================================================
+
+/// Process-global GPU plugin configuration.
+///
+/// Set once at CLI startup via [`configure()`]. The GPU plugin reads these
+/// settings when constructing [`engine::EngineConfig`] for compression and
+/// decompression.
+#[derive(Debug, Clone, Default)]
+pub struct GpuPluginConfig {
+    /// If `true`, never attempt GPU decompression — always use CPU fallback.
+    pub force_cpu: bool,
+    /// Specific GPU device to use. `None` means auto-select best available.
+    pub device_index: Option<u32>,
+}
+
+/// Cached process-global GPU plugin configuration.
+static GPU_PLUGIN_CONFIG: OnceLock<GpuPluginConfig> = OnceLock::new();
+
+/// Configure the GPU plugin with CLI/config-derived settings.
+///
+/// Must be called before any compression/decompression operations.
+/// Can only be called once per process (uses `OnceLock` internally).
+/// Subsequent calls are silently ignored.
+pub fn configure(config: GpuPluginConfig) {
+    let _ = GPU_PLUGIN_CONFIG.set(config);
+}
+
+/// Get the current GPU plugin configuration.
+///
+/// Returns a reference to the default config if [`configure()`] was never called.
+pub fn get_config() -> &'static GpuPluginConfig {
+    static DEFAULT_CONFIG: GpuPluginConfig = GpuPluginConfig {
+        force_cpu: false,
+        device_index: None,
+    };
+    GPU_PLUGIN_CONFIG.get().unwrap_or(&DEFAULT_CONFIG)
+}
+
+// ============================================================================
+// Plugin implementation
+// ============================================================================
 
 /// Crush-gpu plugin implementation registered into the crush-core plugin registry.
 struct GpuDeflatePlugin;
@@ -51,7 +98,11 @@ impl CompressionAlgorithm for GpuDeflatePlugin {
     }
 
     fn decompress(&self, input: &[u8], cancel_flag: Arc<AtomicBool>) -> Result<Vec<u8>> {
-        let config = engine::EngineConfig::default();
+        let plugin_cfg = get_config();
+        let config = engine::EngineConfig {
+            force_cpu: plugin_cfg.force_cpu,
+            ..engine::EngineConfig::default()
+        };
         engine::decompress(input, &config, &cancel_flag)
     }
 

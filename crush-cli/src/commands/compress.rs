@@ -14,16 +14,20 @@ use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tracing::{debug, info, instrument, trace};
+use tracing::{debug, info, instrument, trace, warn};
 
-pub fn run(args: &CompressArgs, interrupted: Arc<dyn CancellationToken>) -> Result<()> {
+pub fn run(
+    args: &CompressArgs,
+    interrupted: Arc<dyn CancellationToken>,
+    gpu_enabled: bool,
+) -> Result<()> {
     // Check if reading from stdin (no input files provided)
     if args.input.is_empty() {
-        compress_stdin(args, interrupted)?;
+        compress_stdin(args, interrupted, gpu_enabled)?;
     } else {
         // Process each input file
         for input_path in &args.input {
-            compress_file(input_path, args, interrupted.clone())?;
+            compress_file(input_path, args, interrupted.clone(), gpu_enabled)?;
         }
     }
     Ok(())
@@ -31,7 +35,11 @@ pub fn run(args: &CompressArgs, interrupted: Arc<dyn CancellationToken>) -> Resu
 
 /// Compress data from stdin
 #[instrument(skip(args, interrupted))]
-fn compress_stdin(args: &CompressArgs, interrupted: Arc<dyn CancellationToken>) -> Result<()> {
+fn compress_stdin(
+    args: &CompressArgs,
+    interrupted: Arc<dyn CancellationToken>,
+    gpu_enabled: bool,
+) -> Result<()> {
     info!("Compressing from stdin");
 
     // Check for cancellation before starting
@@ -63,6 +71,7 @@ fn compress_stdin(args: &CompressArgs, interrupted: Arc<dyn CancellationToken>) 
         None,
         args.plugin.as_deref(),
         DEFAULT_PARALLEL_THRESHOLD_BYTES,
+        gpu_enabled,
     );
     info!(
         "Selected algorithm: {} (streaming, input size unknown)",
@@ -158,6 +167,7 @@ fn compress_file(
     input_path: &Path,
     args: &CompressArgs,
     interrupted: Arc<dyn CancellationToken>,
+    gpu_enabled: bool,
 ) -> Result<()> {
     info!("Starting compression of {}", input_path.display());
     // Check for cancellation before starting
@@ -199,11 +209,23 @@ fn compress_file(
         None
     };
 
+    // Warn if --gpu-device is specified without --plugin gpu-deflate
+    if args.gpu_device.is_some() {
+        let is_gpu_plugin = args
+            .plugin
+            .as_deref()
+            .is_some_and(|p| p.eq_ignore_ascii_case("gpu-deflate"));
+        if !is_gpu_plugin {
+            warn!("--gpu-device has no effect without --plugin gpu-deflate");
+        }
+    }
+
     // Select algorithm based on file size threshold (FR-016)
     let selected_algo = select_algorithm(
         Some(input_size),
         args.plugin.as_deref(),
         DEFAULT_PARALLEL_THRESHOLD_BYTES,
+        gpu_enabled,
     );
     info!(
         "Selected algorithm: {} for {} byte input (threshold: {} bytes)",

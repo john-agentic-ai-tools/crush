@@ -92,6 +92,30 @@ fn decompress_stdin(_args: &DecompressArgs, interrupted: Arc<dyn CancellationTok
     // Check for interrupt after reading
     utils::check_cancelled(&interrupted)?;
 
+    // Detect plugin from header magic bytes for logging
+    let detected_plugin = if compressed_data.len() >= 4 {
+        let magic = [
+            compressed_data[0],
+            compressed_data[1],
+            compressed_data[2],
+            compressed_data[3],
+        ];
+        crush_core::list_plugins()
+            .iter()
+            .find(|p| p.magic_number == magic)
+            .map(|p| p.name.to_string())
+            .unwrap_or_else(|| "unknown".to_string())
+    } else {
+        "unknown".to_string()
+    };
+    info!(
+        plugin = %detected_plugin,
+        input_size,
+        "Decompressing stdin with plugin '{}' ({} bytes)",
+        detected_plugin,
+        input_size
+    );
+
     // Start timing
     let start = Instant::now();
 
@@ -197,6 +221,35 @@ fn decompress_file(
 
     // Start timing
     let start = Instant::now();
+
+    // Detect plugin from header magic bytes for logging
+    let detected_plugin = if compressed_data.len() >= 4 {
+        let magic = [
+            compressed_data[0],
+            compressed_data[1],
+            compressed_data[2],
+            compressed_data[3],
+        ];
+        crush_core::list_plugins()
+            .iter()
+            .find(|p| p.magic_number == magic)
+            .map(|p| p.name.to_string())
+            .unwrap_or_else(|| "unknown".to_string())
+    } else {
+        "unknown".to_string()
+    };
+    info!(
+        plugin = %detected_plugin,
+        input_size,
+        "Decompressing with plugin '{}' ({} bytes)",
+        detected_plugin,
+        input_size
+    );
+
+    // Log when --force-cpu is active for GPU-compressed files
+    if args.force_cpu && detected_plugin == "gpu-deflate" {
+        info!("--force-cpu active: using CPU fallback for GPU-compressed file");
+    }
 
     // Decompress (either full file or single block)
     let (decompressed_data, metadata) = if let Some(block_n) = args.block {

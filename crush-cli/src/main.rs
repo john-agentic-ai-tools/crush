@@ -8,8 +8,9 @@ mod logging;
 mod output;
 mod signal;
 
-// Force crush-parallel to be linked into the binary so the linkme
+// Force crush-parallel and crush-gpu to be linked into the binary so the linkme
 // distributed-slice plugin registration runs at startup.
+use crush_gpu as _;
 use crush_parallel as _;
 
 use clap::Parser;
@@ -59,9 +60,22 @@ fn run() -> Result<()> {
     let interrupted = signal::setup_handler()
         .map_err(|e| error::CliError::Config(format!("Failed to set up signal handler: {}", e)))?;
 
+    // Configure GPU plugin: merge config file values with CLI flags (CLI wins)
+    {
+        let (cli_force_cpu, cli_gpu_device) = match &cli.command {
+            Commands::Compress(args) => (false, args.gpu_device),
+            Commands::Decompress(args) => (args.force_cpu, args.gpu_device),
+            _ => (false, None),
+        };
+        crush_gpu::configure(crush_gpu::GpuPluginConfig {
+            force_cpu: cli_force_cpu || config.gpu.force_cpu,
+            device_index: cli_gpu_device.or(config.gpu.device),
+        });
+    }
+
     // Dispatch to appropriate command
     match &cli.command {
-        Commands::Compress(args) => commands::compress::run(args, interrupted),
+        Commands::Compress(args) => commands::compress::run(args, interrupted, config.gpu.enabled),
         Commands::Decompress(args) => commands::decompress::run(args, interrupted),
         Commands::Inspect(args) => commands::inspect::run(args),
         Commands::Config(args) => commands::config::run(args),
