@@ -1,6 +1,6 @@
 [package]
 name = "crush-gpu"
-version = "0.1.0"
+version = "0.1.1"
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
@@ -26,7 +26,7 @@ memmap2 = { workspace = true }
 rayon = { workspace = true }
 thiserror = { workspace = true }
 linkme = { workspace = true }
-cudarc = { version = "0.16", optional = true }
+cudarc = { version = "0.19.3", optional = true }
 
 [dev-dependencies]
 criterion = { workspace = true }
