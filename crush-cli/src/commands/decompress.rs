@@ -3,7 +3,7 @@ use crate::commands::utils;
 use crate::error::{CliError, Result};
 use crate::output::{self, DecompressionResult};
 use crush_core::cancel::CancellationToken;
-use crush_core::decompress;
+use crush_core::decompress_with_cancel;
 use crush_core::plugin::FileMetadata;
 use filetime::{set_file_mtime, FileTime};
 use indicatif::{ProgressBar, ProgressStyle};
@@ -54,11 +54,15 @@ fn decompress_single_block(
     }
 }
 
-pub fn run(args: &DecompressArgs, interrupted: Arc<dyn CancellationToken>) -> Result<()> {
+pub fn run(
+    args: &DecompressArgs,
+    interrupted: Arc<dyn CancellationToken>,
+    cancel_flag: Arc<std::sync::atomic::AtomicBool>,
+) -> Result<()> {
     // Check if reading from stdin (no input files and stdout mode)
     if args.input.is_empty() {
         if args.stdout {
-            decompress_stdin(args, interrupted)?;
+            decompress_stdin(args, interrupted, cancel_flag)?;
         } else {
             return Err(CliError::InvalidInput(
                 "No input files specified. Use --stdout with stdin, or provide file paths."
@@ -68,15 +72,19 @@ pub fn run(args: &DecompressArgs, interrupted: Arc<dyn CancellationToken>) -> Re
     } else {
         // Process each input file
         for input_path in &args.input {
-            decompress_file(input_path, args, interrupted.clone())?;
+            decompress_file(input_path, args, interrupted.clone(), cancel_flag.clone())?;
         }
     }
     Ok(())
 }
 
 /// Decompress data from stdin
-#[instrument(skip(_args, interrupted))]
-fn decompress_stdin(_args: &DecompressArgs, interrupted: Arc<dyn CancellationToken>) -> Result<()> {
+#[instrument(skip(_args, interrupted, cancel_flag))]
+fn decompress_stdin(
+    _args: &DecompressArgs,
+    interrupted: Arc<dyn CancellationToken>,
+    cancel_flag: Arc<std::sync::atomic::AtomicBool>,
+) -> Result<()> {
     info!("Decompressing from stdin");
 
     // Check for interrupt before starting
@@ -119,9 +127,9 @@ fn decompress_stdin(_args: &DecompressArgs, interrupted: Arc<dyn CancellationTok
     // Start timing
     let start = Instant::now();
 
-    // Decompress
+    // Decompress (with cancel flag connected to Ctrl+C)
     trace!("Starting decompression operation");
-    let result = decompress(&compressed_data)?;
+    let result = decompress_with_cancel(&compressed_data, cancel_flag)?;
     let decompressed_data = result.data;
 
     // Stop timing
@@ -164,11 +172,12 @@ fn decompress_stdin(_args: &DecompressArgs, interrupted: Arc<dyn CancellationTok
     Ok(())
 }
 
-#[instrument(skip(args, interrupted), fields(file = %input_path.display()))]
+#[instrument(skip(args, interrupted, cancel_flag), fields(file = %input_path.display()))]
 fn decompress_file(
     input_path: &Path,
     args: &DecompressArgs,
     interrupted: Arc<dyn CancellationToken>,
+    cancel_flag: Arc<std::sync::atomic::AtomicBool>,
 ) -> Result<()> {
     info!("Starting decompression of {}", input_path.display());
     // Check for interrupt before starting
@@ -257,9 +266,9 @@ fn decompress_file(
         trace!("Starting random access decompression for block {}", block_n);
         decompress_single_block(&compressed_data, block_n)?
     } else {
-        // Full decompression
+        // Full decompression (with cancel flag connected to Ctrl+C)
         trace!("Starting full decompression operation");
-        let result = decompress(&compressed_data)?;
+        let result = decompress_with_cancel(&compressed_data, cancel_flag)?;
         (result.data, result.metadata)
     };
 

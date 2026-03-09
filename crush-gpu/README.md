@@ -7,6 +7,7 @@ GPU-accelerated tile-based compression engine with 32-way parallel decompression
 `crush-gpu` is the GPU acceleration crate for the [Crush](https://github.com/john-agentic-ai-tools/crush) compression toolkit. It implements a [GDeflate](https://github.com/microsoft/DirectStorage/blob/main/GDeflate/GDeflate_spec.pdf)-inspired compression format designed for massively parallel GPU decompression.
 
 Key design principles:
+
 - **64 KB independent tiles** enable parallel processing and random access
 - **32-way sub-stream parallelism** matches GPU warp/wavefront width
 - **Batched GPU dispatch** minimizes host-GPU synchronization overhead
@@ -50,6 +51,7 @@ Key design principles:
 ### GPU Decompression Throughput (Batched Dispatch)
 
 **Test Environment:**
+
 - GPU: NVIDIA GeForce RTX 3060 Ti (Vulkan)
 - Rust: 1.93.1 (stable), release mode
 
@@ -191,6 +193,7 @@ for plugin in list_plugins() {
 | CUDA | CUDA 13.x via nvrtc | `cuda` | NVIDIA (compute capability 7.0+) |
 
 Backend selection priority (with `--gpu-backend auto`, the default):
+
 1. CUDA (if `cuda` feature enabled and NVIDIA GPU present)
 2. wgpu (Vulkan on Windows/Linux, Metal on macOS)
 

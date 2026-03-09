@@ -11,6 +11,7 @@ use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, OnceLock};
 
 use crush_core::error::Result;
+use tracing::{debug, info, trace, warn};
 
 // ---------------------------------------------------------------------------
 // GpuVendor
@@ -200,26 +201,85 @@ pub fn deinterleave(
 /// we avoid these issues and match how games and other GPU applications work.
 static CACHED_BACKEND: OnceLock<Option<Arc<dyn ComputeBackend>>> = OnceLock::new();
 
-/// Attempt to create a CUDA backend, returning `None` on failure.
+/// Attempt to create a CUDA backend.
+///
+/// Wrapped in `catch_unwind` because cudarc's nvrtc loading panics if the
+/// NVIDIA Runtime Compiler library is not installed (e.g. `nvrtc.dll` on
+/// Windows, `libnvrtc.so` on Linux).
+///
+/// Returns `Ok(backend)` on success, `Err(message)` explaining why CUDA
+/// is unavailable on failure.
 #[cfg(feature = "cuda")]
-fn try_cuda() -> Option<Arc<dyn ComputeBackend>> {
-    match cuda::CudaBackend::try_new() {
-        Ok(Some(backend)) => Some(Arc::new(backend) as Arc<dyn ComputeBackend>),
-        Ok(None) => None,
-        Err(e) => {
-            eprintln!("crush-gpu: CUDA backend init failed: {e}");
-            None
+fn try_cuda() -> std::result::Result<Arc<dyn ComputeBackend>, String> {
+    debug!("Probing CUDA backend...");
+
+    // Temporarily silence the default panic hook so the user doesn't see
+    // Rust's "thread panicked at ..." noise when nvrtc is missing.
+    let prev_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(|_| {}));
+
+    let result = std::panic::catch_unwind(cuda::CudaBackend::try_new);
+
+    // Restore the original panic hook.
+    std::panic::set_hook(prev_hook);
+
+    match result {
+        Ok(Ok(Some(backend))) => {
+            let gi = backend.gpu_info();
+            info!(
+                gpu = %gi.name,
+                vram_mb = gi.vram_bytes / 1024 / 1024,
+                "CUDA backend ready: {}",
+                gi.name
+            );
+            Ok(Arc::new(backend) as Arc<dyn ComputeBackend>)
+        }
+        Ok(Ok(None)) => {
+            debug!("CUDA probe: no compatible NVIDIA GPU found");
+            Err("no compatible NVIDIA GPU found".to_owned())
+        }
+        Ok(Err(e)) => {
+            debug!("CUDA probe failed: {e}");
+            Err(format!("{e}"))
+        }
+        Err(panic_info) => {
+            let msg = panic_info
+                .downcast_ref::<String>()
+                .map(String::as_str)
+                .or_else(|| panic_info.downcast_ref::<&str>().copied())
+                .unwrap_or("unknown panic");
+            warn!("CUDA probe panicked (nvrtc likely missing): {msg}");
+            Err(format!(
+                "CUDA runtime compiler (nvrtc) not found. \
+                 Install the CUDA Toolkit to enable CUDA decompression. \
+                 Detail: {msg}"
+            ))
         }
     }
 }
 
 /// Attempt to create a wgpu backend, returning `None` on failure.
 fn try_wgpu() -> Option<Arc<dyn ComputeBackend>> {
+    debug!("Probing wgpu backend...");
     match wgpu_backend::WgpuBackend::try_new() {
-        Ok(Some(backend)) => Some(Arc::new(backend) as Arc<dyn ComputeBackend>),
-        Ok(None) => None,
+        Ok(Some(backend)) => {
+            let gi = backend.gpu_info();
+            info!(
+                gpu = %gi.name,
+                api = %gi.api_backend,
+                vram_mb = gi.vram_bytes / 1024 / 1024,
+                "wgpu backend ready: {} ({})",
+                gi.name,
+                gi.api_backend
+            );
+            Some(Arc::new(backend) as Arc<dyn ComputeBackend>)
+        }
+        Ok(None) => {
+            debug!("wgpu probe: no compatible GPU found");
+            None
+        }
         Err(e) => {
-            eprintln!("crush-gpu: wgpu backend init failed: {e}");
+            warn!("wgpu backend init failed: {e}");
             None
         }
     }
@@ -243,37 +303,70 @@ fn try_wgpu() -> Option<Arc<dyn ComputeBackend>> {
 /// This function always returns `Ok`. GPU initialization errors are
 /// handled internally and result in `Ok(None)` (no GPU available).
 pub fn discover_gpu() -> Result<Option<Arc<dyn ComputeBackend>>> {
+    use crush_core::error::{CrushError, PluginError};
+
     use crate::BackendPreference;
 
-    let cached = CACHED_BACKEND.get_or_init(|| {
-        let pref = crate::get_config().backend;
+    // We cannot return errors from inside `get_or_init`, so we do a two-step:
+    // first check if the cached value already exists, then handle the init
+    // with potential errors.
+    if let Some(cached) = CACHED_BACKEND.get() {
+        trace!("Using cached GPU backend");
+        return Ok(cached.clone());
+    }
 
-        match pref {
-            BackendPreference::Auto => {
-                #[cfg(feature = "cuda")]
-                {
-                    if let Some(backend) = try_cuda() {
-                        return Some(backend);
+    let pref = crate::get_config().backend;
+    info!(preference = ?pref, "Discovering GPU backend (preference: {pref:?})");
+
+    let backend: Option<Arc<dyn ComputeBackend>> = match pref {
+        BackendPreference::Auto => {
+            #[cfg(feature = "cuda")]
+            {
+                match try_cuda() {
+                    Ok(backend) => Some(backend),
+                    Err(msg) => {
+                        info!("CUDA unavailable ({msg}), trying wgpu");
+                        try_wgpu()
                     }
                 }
+            }
+            #[cfg(not(feature = "cuda"))]
+            {
+                debug!("CUDA feature not compiled in, trying wgpu only");
                 try_wgpu()
             }
-            BackendPreference::Cuda => {
-                #[cfg(feature = "cuda")]
-                {
-                    try_cuda()
-                }
-                #[cfg(not(feature = "cuda"))]
-                {
-                    eprintln!(
-                        "crush-gpu: CUDA backend requested but `cuda` feature is not enabled"
-                    );
-                    None
+        }
+        BackendPreference::Cuda => {
+            #[cfg(feature = "cuda")]
+            {
+                match try_cuda() {
+                    Ok(backend) => Some(backend),
+                    Err(msg) => {
+                        return Err(CrushError::from(PluginError::OperationFailed(format!(
+                            "CUDA backend requested but unavailable: {msg}"
+                        ))));
+                    }
                 }
             }
-            BackendPreference::Wgpu => try_wgpu(),
+            #[cfg(not(feature = "cuda"))]
+            {
+                return Err(CrushError::from(PluginError::OperationFailed(
+                    "CUDA backend not included in this build. \
+                     Reinstall with: cargo install crush-cli --features cuda"
+                        .to_owned(),
+                )));
+            }
         }
-    });
+        BackendPreference::Wgpu => try_wgpu(),
+    };
 
-    Ok(cached.clone())
+    if let Some(ref b) = backend {
+        info!(backend = b.name(), "GPU backend selected: {}", b.name());
+    } else {
+        info!("No GPU backend available, will use CPU fallback");
+    }
+
+    // Cache the result (race-safe: if another thread beat us, use their value).
+    let _ = CACHED_BACKEND.set(backend.clone());
+    Ok(CACHED_BACKEND.get().cloned().flatten())
 }

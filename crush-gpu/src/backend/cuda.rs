@@ -8,8 +8,11 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-use cudarc::driver::{CudaContext, CudaFunction, CudaStream, LaunchConfig, PushKernelArg};
+use cudarc::driver::{
+    CudaContext, CudaFunction, CudaSlice, CudaStream, LaunchConfig, PushKernelArg,
+};
 use cudarc::nvrtc::compile_ptx;
+use tracing::{debug, info, trace, warn};
 
 use crush_core::error::{CrushError, PluginError, Result};
 
@@ -51,12 +54,15 @@ impl CudaBackend {
     /// Returns an error if CUDA probing encounters an unexpected failure.
     pub fn try_new() -> Result<Option<Self>> {
         // Attempt to initialize CUDA context via cudarc (v0.19+ API).
+        debug!("Creating CUDA context on device 0...");
         let Ok(ctx) = CudaContext::new(0) else {
+            debug!("CUDA context creation failed, no NVIDIA GPU available");
             return Ok(None);
         };
 
         // Query device properties.
         let name = ctx.name().unwrap_or_else(|_| "NVIDIA GPU".to_owned());
+        debug!(gpu = %name, "CUDA context created: {name}");
 
         // `total_mem` is an unsafe free function in cudarc v0.19.
         let vram_bytes = unsafe { cudarc::driver::result::device::total_mem(ctx.cu_device()) }
@@ -65,35 +71,51 @@ impl CudaBackend {
         let vram_bytes_u64 =
             u64::try_from(vram_bytes).map_err(|e| PluginError::OperationFailed(e.to_string()))?;
 
+        let vram_mb = vram_bytes_u64 / 1024 / 1024;
         if vram_bytes_u64 < MIN_VRAM_BYTES {
+            debug!(
+                vram_mb,
+                "Insufficient VRAM ({vram_mb} MB), need {} MB",
+                MIN_VRAM_BYTES / 1024 / 1024
+            );
             return Ok(None);
         }
+        debug!(vram_mb, "VRAM: {vram_mb} MB");
 
         // Compile CUDA kernels via nvrtc.
+        debug!("Compiling LZ77 kernel via nvrtc...");
         let lz77_ptx = compile_ptx(LZ77_KERNEL_SRC).map_err(|e| {
             PluginError::OperationFailed(format!("CUDA LZ77 kernel compilation failed: {e}"))
         })?;
+        debug!("LZ77 kernel compiled OK");
 
+        debug!("Compiling GDeflate kernel via nvrtc...");
         let gdeflate_ptx = compile_ptx(GDEFLATE_KERNEL_SRC).map_err(|e| {
             PluginError::OperationFailed(format!("CUDA GDeflate kernel compilation failed: {e}"))
         })?;
+        debug!("GDeflate kernel compiled OK");
 
         // Load modules and extract kernel functions.
+        debug!("Loading LZ77 module...");
         let lz77_module = ctx
             .load_module(lz77_ptx)
             .map_err(|e| driver_err("CUDA load LZ77 module", e))?;
         let lz77_function = lz77_module
             .load_function("lz77_decompress_tile")
             .map_err(|e| driver_err("CUDA load LZ77 function", e))?;
+        debug!("LZ77 module loaded OK");
 
+        debug!("Loading GDeflate module...");
         let gdeflate_module = ctx
             .load_module(gdeflate_ptx)
             .map_err(|e| driver_err("CUDA load GDeflate module", e))?;
         let gdeflate_function = gdeflate_module
             .load_function("gdeflate_decompress_tile")
             .map_err(|e| driver_err("CUDA load GDeflate function", e))?;
+        debug!("GDeflate module loaded OK");
 
         let stream = ctx.default_stream();
+        info!(gpu = %name, vram_mb, "CUDA backend initialized: {name} ({vram_mb} MB)");
 
         let info = GpuInfo {
             name,
@@ -216,78 +238,103 @@ impl CudaBackend {
         Ok((output_bytes, lengths_host))
     }
 
-    /// Dispatch a single `GDeflate` tile on the GPU and return decompressed bytes.
-    fn dispatch_gdeflate_tile(&self, tile: &CompressedTile) -> Result<Vec<u8>> {
+    /// Dispatch a batch of `GDeflate` tiles asynchronously, sync once, then read
+    /// back all results.
+    ///
+    /// CUDA kernel launches are asynchronous — `launch()` just queues work on
+    /// the stream. By launching all tiles before calling `synchronize()` once,
+    /// the GPU can overlap kernel execution with memory transfers, giving
+    /// dramatically better throughput than sync-per-tile.
+    fn dispatch_gdeflate_batch(&self, tiles: &[CompressedTile]) -> Result<Vec<Vec<u8>>> {
         let max_tile_size: u32 = crate::format::DEFAULT_TILE_SIZE;
-        if tile.uncompressed_size > max_tile_size.saturating_mul(2) {
-            return Err(CrushError::InvalidFormat(format!(
-                "tile uncompressed_size {} exceeds maximum {}",
-                tile.uncompressed_size,
-                max_tile_size * 2,
-            )));
-        }
-
-        // Pad compressed data to u32 alignment.
-        let mut padded_data = tile.data.clone();
-        while !padded_data.len().is_multiple_of(4) {
-            padded_data.push(0);
-        }
-
-        // Build GDeflateMeta matching the CUDA struct layout.
-        let meta: [u32; 4] = [
-            u32::try_from(padded_data.len())
-                .map_err(|e| PluginError::OperationFailed(e.to_string()))?,
-            tile.uncompressed_size,
-            0, // _pad0
-            0, // _pad1
-        ];
-
-        let comp_words: &[u32] = bytemuck::cast_slice(&padded_data);
-        let output_words = (tile.uncompressed_size as usize).div_ceil(4);
-
-        // Upload to GPU.
-        let d_meta = self
-            .stream
-            .clone_htod(&meta)
-            .map_err(|e| driver_err("CUDA upload GDeflate meta", e))?;
-        let d_compressed = self
-            .stream
-            .clone_htod(comp_words)
-            .map_err(|e| driver_err("CUDA upload GDeflate compressed", e))?;
-        let mut d_output = self
-            .stream
-            .alloc_zeros::<u32>(output_words.max(1))
-            .map_err(|e| driver_err("CUDA alloc GDeflate output", e))?;
-
-        // Launch kernel: 1 block of 32 threads.
         let cfg = LaunchConfig {
             grid_dim: (1, 1, 1),
             block_dim: (32, 1, 1),
             shared_mem_bytes: 0,
         };
-        unsafe {
-            self.stream
-                .launch_builder(&self.gdeflate_function)
-                .arg(&d_meta)
-                .arg(&d_compressed)
-                .arg(&mut d_output)
-                .launch(cfg)
-                .map_err(|e| driver_err("CUDA launch GDeflate kernel", e))?;
+
+        // Phase 1: Upload data and launch kernels (all async on stream).
+        // Keep device buffers alive until after synchronize.
+        let mut d_metas: Vec<CudaSlice<u32>> = Vec::with_capacity(tiles.len());
+        let mut d_compresseds: Vec<CudaSlice<u32>> = Vec::with_capacity(tiles.len());
+        let mut d_outputs: Vec<CudaSlice<u32>> = Vec::with_capacity(tiles.len());
+        let mut uncomp_sizes: Vec<u32> = Vec::with_capacity(tiles.len());
+
+        for tile in tiles {
+            if tile.uncompressed_size > max_tile_size.saturating_mul(2) {
+                return Err(CrushError::InvalidFormat(format!(
+                    "tile uncompressed_size {} exceeds maximum {}",
+                    tile.uncompressed_size,
+                    max_tile_size * 2,
+                )));
+            }
+
+            // Pad compressed data to u32 alignment.
+            let mut padded_data = tile.data.clone();
+            while !padded_data.len().is_multiple_of(4) {
+                padded_data.push(0);
+            }
+
+            let meta: [u32; 4] = [
+                u32::try_from(padded_data.len())
+                    .map_err(|e| PluginError::OperationFailed(e.to_string()))?,
+                tile.uncompressed_size,
+                0,
+                0,
+            ];
+
+            let comp_words: &[u32] = bytemuck::cast_slice(&padded_data);
+            let output_words = (tile.uncompressed_size as usize).div_ceil(4);
+
+            let d_meta = self
+                .stream
+                .clone_htod(&meta)
+                .map_err(|e| driver_err("CUDA upload GDeflate meta", e))?;
+            let d_compressed = self
+                .stream
+                .clone_htod(comp_words)
+                .map_err(|e| driver_err("CUDA upload GDeflate compressed", e))?;
+            let mut d_output = self
+                .stream
+                .alloc_zeros::<u32>(output_words.max(1))
+                .map_err(|e| driver_err("CUDA alloc GDeflate output", e))?;
+
+            unsafe {
+                self.stream
+                    .launch_builder(&self.gdeflate_function)
+                    .arg(&d_meta)
+                    .arg(&d_compressed)
+                    .arg(&mut d_output)
+                    .launch(cfg)
+                    .map_err(|e| driver_err("CUDA launch GDeflate kernel", e))?;
+            }
+
+            d_metas.push(d_meta);
+            d_compresseds.push(d_compressed);
+            d_outputs.push(d_output);
+            uncomp_sizes.push(tile.uncompressed_size);
         }
 
-        // Synchronize and read back.
+        // Phase 2: Single synchronize for the entire batch.
         self.stream
             .synchronize()
-            .map_err(|e| driver_err("CUDA sync after GDeflate", e))?;
+            .map_err(|e| driver_err("CUDA sync after GDeflate batch", e))?;
 
-        let output_words_host: Vec<u32> = self
-            .stream
-            .clone_dtoh(&d_output)
-            .map_err(|e| driver_err("CUDA readback GDeflate output", e))?;
+        // Phase 3: Read back all results.
+        let mut results = Vec::with_capacity(tiles.len());
+        for (d_output, size) in d_outputs.iter().zip(uncomp_sizes.iter()) {
+            let output_words_host: Vec<u32> = self
+                .stream
+                .clone_dtoh(d_output)
+                .map_err(|e| driver_err("CUDA readback GDeflate output", e))?;
 
-        let output_bytes: Vec<u8> = bytemuck::cast_slice(&output_words_host).to_vec();
-        let size = tile.uncompressed_size as usize;
-        Ok(output_bytes[..size.min(output_bytes.len())].to_vec())
+            let output_bytes: Vec<u8> = bytemuck::cast_slice(&output_words_host).to_vec();
+            let sz = *size as usize;
+            results.push(output_bytes[..sz.min(output_bytes.len())].to_vec());
+        }
+
+        // Device buffers (d_metas, d_compresseds) are dropped here after readback.
+        Ok(results)
     }
 }
 
@@ -346,16 +393,54 @@ impl ComputeBackend for CudaBackend {
         tiles: &[CompressedTile],
         cancel: &AtomicBool,
     ) -> Result<Vec<Vec<u8>>> {
+        let total_tiles = tiles.len();
+        let num_batches = total_tiles.div_ceil(MAX_TILES_PER_BATCH);
+        info!(
+            total_tiles,
+            num_batches,
+            batch_size = MAX_TILES_PER_BATCH,
+            "CUDA GDeflate: decompressing {total_tiles} tiles in {num_batches} batches"
+        );
+        let start = std::time::Instant::now();
+
         std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let mut results = Vec::with_capacity(tiles.len());
-            for batch in tiles.chunks(MAX_TILES_PER_BATCH) {
+            for (batch_idx, batch) in tiles.chunks(MAX_TILES_PER_BATCH).enumerate() {
                 if cancel.load(Ordering::Relaxed) {
+                    warn!("CUDA decompression cancelled at batch {batch_idx}");
                     return Err(CrushError::Cancelled);
                 }
-                for tile in batch {
-                    results.push(self.dispatch_gdeflate_tile(tile)?);
+                trace!(
+                    batch = batch_idx,
+                    batch_tiles = batch.len(),
+                    tiles_done = results.len(),
+                    "CUDA batch {batch_idx}/{num_batches} ({} tiles in batch)",
+                    batch.len()
+                );
+
+                // Dispatch entire batch with single sync.
+                let batch_results = self.dispatch_gdeflate_batch(batch)?;
+                results.extend(batch_results);
+
+                if batch_idx % 10 == 0 || batch_idx + 1 == num_batches {
+                    let elapsed = start.elapsed().as_secs_f64();
+                    let done = results.len();
+                    #[allow(clippy::cast_precision_loss)]
+                    let pct = done as f64 / total_tiles as f64 * 100.0;
+                    debug!(
+                        batch = batch_idx,
+                        tiles_done = done,
+                        elapsed_secs = elapsed,
+                        "CUDA progress: {done}/{total_tiles} tiles ({pct:.1}%) in {elapsed:.1}s"
+                    );
                 }
             }
+            let elapsed = start.elapsed().as_secs_f64();
+            info!(
+                total_tiles,
+                elapsed_secs = elapsed,
+                "CUDA GDeflate: all {total_tiles} tiles decompressed in {elapsed:.1}s"
+            );
             Ok(results)
         }))
         .unwrap_or_else(|e| {

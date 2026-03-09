@@ -27,6 +27,7 @@ rayon = { workspace = true }
 thiserror = { workspace = true }
 linkme = { workspace = true }
 cudarc = { version = "0.19.3", optional = true, features = ["cuda-13010"] }
+tracing = "0.1"
 
 [dev-dependencies]
 criterion = { workspace = true }

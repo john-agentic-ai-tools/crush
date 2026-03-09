@@ -57,8 +57,10 @@ fn run() -> Result<()> {
     logging::init_logging(log_level, &config.logging.format, log_file_path);
 
     // Setup signal handler
-    let interrupted = signal::setup_handler()
+    let signal_state = signal::setup_handler()
         .map_err(|e| error::CliError::Config(format!("Failed to set up signal handler: {}", e)))?;
+    let interrupted = signal_state.token;
+    let cancel_flag = signal_state.cancel_flag;
 
     // Configure GPU plugin: merge config file values with CLI flags (CLI wins)
     {
@@ -82,7 +84,7 @@ fn run() -> Result<()> {
     // Dispatch to appropriate command
     match &cli.command {
         Commands::Compress(args) => commands::compress::run(args, interrupted, config.gpu.enabled),
-        Commands::Decompress(args) => commands::decompress::run(args, interrupted),
+        Commands::Decompress(args) => commands::decompress::run(args, interrupted, cancel_flag),
         Commands::Inspect(args) => commands::inspect::run(args),
         Commands::Config(args) => commands::config::run(args),
         Commands::Plugins(args) => commands::plugins::run(args),
