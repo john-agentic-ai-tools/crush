@@ -8,9 +8,7 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-use cudarc::driver::{
-    CudaContext, CudaFunction, CudaSlice, CudaStream, LaunchConfig, PushKernelArg,
-};
+use cudarc::driver::{CudaContext, CudaFunction, CudaStream, LaunchConfig, PushKernelArg};
 use cudarc::nvrtc::compile_ptx;
 use tracing::{debug, info, trace, warn};
 
@@ -238,27 +236,31 @@ impl CudaBackend {
         Ok((output_bytes, lengths_host))
     }
 
-    /// Dispatch a batch of `GDeflate` tiles asynchronously, sync once, then read
-    /// back all results.
+    /// Dispatch a batch of `GDeflate` tiles as a **single multi-block kernel
+    /// launch** — one CUDA block per tile, all tiles execute in parallel across
+    /// all SMs.
     ///
-    /// CUDA kernel launches are asynchronous — `launch()` just queues work on
-    /// the stream. By launching all tiles before calling `synchronize()` once,
-    /// the GPU can overlap kernel execution with memory transfers, giving
-    /// dramatically better throughput than sync-per-tile.
+    /// Data layout on the GPU:
+    /// - `tile_metas`:     `[GDeflateMeta; N]` — per-tile payload/uncompressed sizes
+    /// - `compressed_buf`: concatenated u32 words from all tiles
+    /// - `output_buf`:     concatenated output space for all tiles (u32-aligned)
+    /// - `comp_offsets`:   `[u32; N]` — word offset into `compressed_buf` for each tile
+    /// - `out_offsets`:    `[u32; N]` — word offset into `output_buf` for each tile
+    ///
+    /// Launch: `grid_dim = (N, 1, 1), block_dim = (32, 1, 1)`.
+    #[allow(clippy::too_many_lines)]
     fn dispatch_gdeflate_batch(&self, tiles: &[CompressedTile]) -> Result<Vec<Vec<u8>>> {
         let max_tile_size: u32 = crate::format::DEFAULT_TILE_SIZE;
-        let cfg = LaunchConfig {
-            grid_dim: (1, 1, 1),
-            block_dim: (32, 1, 1),
-            shared_mem_bytes: 0,
-        };
+        let num_tiles = tiles.len();
 
-        // Phase 1: Upload data and launch kernels (all async on stream).
-        // Keep device buffers alive until after synchronize.
-        let mut d_metas: Vec<CudaSlice<u32>> = Vec::with_capacity(tiles.len());
-        let mut d_compresseds: Vec<CudaSlice<u32>> = Vec::with_capacity(tiles.len());
-        let mut d_outputs: Vec<CudaSlice<u32>> = Vec::with_capacity(tiles.len());
-        let mut uncomp_sizes: Vec<u32> = Vec::with_capacity(tiles.len());
+        // Phase 1: Build concatenated host buffers.
+        // GDeflateMeta struct: { payload_size: u32, uncompressed_size: u32, _pad0: u32, _pad1: u32 }
+        let mut h_metas: Vec<u32> = Vec::with_capacity(num_tiles * 4);
+        let mut h_compressed: Vec<u32> = Vec::new();
+        let mut h_comp_offsets: Vec<u32> = Vec::with_capacity(num_tiles);
+        let mut h_out_offsets: Vec<u32> = Vec::with_capacity(num_tiles);
+        let mut uncomp_sizes: Vec<u32> = Vec::with_capacity(num_tiles);
+        let mut total_output_words: u32 = 0;
 
         for tile in tiles {
             if tile.uncompressed_size > max_tile_size.saturating_mul(2) {
@@ -275,65 +277,111 @@ impl CudaBackend {
                 padded_data.push(0);
             }
 
-            let meta: [u32; 4] = [
-                u32::try_from(padded_data.len())
-                    .map_err(|e| PluginError::OperationFailed(e.to_string()))?,
-                tile.uncompressed_size,
-                0,
-                0,
-            ];
+            let payload_size = u32::try_from(padded_data.len())
+                .map_err(|e| PluginError::OperationFailed(e.to_string()))?;
 
+            // GDeflateMeta for this tile.
+            h_metas.push(payload_size);
+            h_metas.push(tile.uncompressed_size);
+            h_metas.push(0); // _pad0
+            h_metas.push(0); // _pad1
+
+            // Compressed data offset (in u32 words).
+            let comp_offset = u32::try_from(h_compressed.len())
+                .map_err(|e| PluginError::OperationFailed(e.to_string()))?;
+            h_comp_offsets.push(comp_offset);
+
+            // Append compressed words.
             let comp_words: &[u32] = bytemuck::cast_slice(&padded_data);
-            let output_words = (tile.uncompressed_size as usize).div_ceil(4);
+            h_compressed.extend_from_slice(comp_words);
 
-            let d_meta = self
-                .stream
-                .clone_htod(&meta)
-                .map_err(|e| driver_err("CUDA upload GDeflate meta", e))?;
-            let d_compressed = self
-                .stream
-                .clone_htod(comp_words)
-                .map_err(|e| driver_err("CUDA upload GDeflate compressed", e))?;
-            let mut d_output = self
-                .stream
-                .alloc_zeros::<u32>(output_words.max(1))
-                .map_err(|e| driver_err("CUDA alloc GDeflate output", e))?;
+            // Output offset (in u32 words).
+            h_out_offsets.push(total_output_words);
+            let output_words_for_tile =
+                u32::try_from((tile.uncompressed_size as usize).div_ceil(4).max(1))
+                    .map_err(|e| PluginError::OperationFailed(e.to_string()))?;
+            total_output_words = total_output_words
+                .checked_add(output_words_for_tile)
+                .ok_or_else(|| {
+                    CrushError::InvalidFormat(
+                        "total output buffer size overflow in GDeflate batch".to_owned(),
+                    )
+                })?;
 
-            unsafe {
-                self.stream
-                    .launch_builder(&self.gdeflate_function)
-                    .arg(&d_meta)
-                    .arg(&d_compressed)
-                    .arg(&mut d_output)
-                    .launch(cfg)
-                    .map_err(|e| driver_err("CUDA launch GDeflate kernel", e))?;
-            }
-
-            d_metas.push(d_meta);
-            d_compresseds.push(d_compressed);
-            d_outputs.push(d_output);
             uncomp_sizes.push(tile.uncompressed_size);
         }
 
-        // Phase 2: Single synchronize for the entire batch.
+        // Phase 2: Upload all buffers to GPU.
+        let d_metas = self
+            .stream
+            .clone_htod(&h_metas)
+            .map_err(|e| driver_err("CUDA upload GDeflate metas", e))?;
+        let d_compressed = self
+            .stream
+            .clone_htod(&h_compressed)
+            .map_err(|e| driver_err("CUDA upload GDeflate compressed", e))?;
+        let mut d_output = self
+            .stream
+            .alloc_zeros::<u32>(total_output_words as usize)
+            .map_err(|e| driver_err("CUDA alloc GDeflate output", e))?;
+        let d_comp_offsets = self
+            .stream
+            .clone_htod(&h_comp_offsets)
+            .map_err(|e| driver_err("CUDA upload GDeflate comp_offsets", e))?;
+        let d_out_offsets = self
+            .stream
+            .clone_htod(&h_out_offsets)
+            .map_err(|e| driver_err("CUDA upload GDeflate out_offsets", e))?;
+
+        // Phase 3: Single kernel launch — one block per tile.
+        let num_tiles_u32 =
+            u32::try_from(num_tiles).map_err(|e| PluginError::OperationFailed(e.to_string()))?;
+        let cfg = LaunchConfig {
+            grid_dim: (num_tiles_u32, 1, 1),
+            block_dim: (32, 1, 1),
+            shared_mem_bytes: 0,
+        };
+        trace!(
+            num_tiles,
+            total_compressed_words = h_compressed.len(),
+            total_output_words,
+            "CUDA GDeflate: launching {num_tiles} blocks"
+        );
+
+        unsafe {
+            self.stream
+                .launch_builder(&self.gdeflate_function)
+                .arg(&d_metas)
+                .arg(&d_compressed)
+                .arg(&mut d_output)
+                .arg(&d_comp_offsets)
+                .arg(&d_out_offsets)
+                .launch(cfg)
+                .map_err(|e| driver_err("CUDA launch GDeflate kernel", e))?;
+        }
+
+        // Phase 4: Single synchronize.
         self.stream
             .synchronize()
             .map_err(|e| driver_err("CUDA sync after GDeflate batch", e))?;
 
-        // Phase 3: Read back all results.
-        let mut results = Vec::with_capacity(tiles.len());
-        for (d_output, size) in d_outputs.iter().zip(uncomp_sizes.iter()) {
-            let output_words_host: Vec<u32> = self
-                .stream
-                .clone_dtoh(d_output)
-                .map_err(|e| driver_err("CUDA readback GDeflate output", e))?;
+        // Phase 5: Read back the single large output buffer and split per tile.
+        let all_output_words: Vec<u32> = self
+            .stream
+            .clone_dtoh(&d_output)
+            .map_err(|e| driver_err("CUDA readback GDeflate output", e))?;
+        let all_output_bytes: &[u8] = bytemuck::cast_slice(&all_output_words);
 
-            let output_bytes: Vec<u8> = bytemuck::cast_slice(&output_words_host).to_vec();
-            let sz = *size as usize;
-            results.push(output_bytes[..sz.min(output_bytes.len())].to_vec());
+        let mut results = Vec::with_capacity(num_tiles);
+        for (i, &size) in uncomp_sizes.iter().enumerate() {
+            let word_offset = h_out_offsets[i] as usize;
+            let byte_offset = word_offset * 4;
+            let sz = size as usize;
+            let end = (byte_offset + sz).min(all_output_bytes.len());
+            let start = byte_offset.min(all_output_bytes.len());
+            results.push(all_output_bytes[start..end].to_vec());
         }
 
-        // Device buffers (d_metas, d_compresseds) are dropped here after readback.
         Ok(results)
     }
 }

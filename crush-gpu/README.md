@@ -29,7 +29,7 @@ Key design principles:
                                           │
                                     ┌─────▼──────────┐
                                     │  shader/        │
-                                    │  WGSL compute   │
+                                    │  WGSL + CUDA    │
                                     └────────────────-┘
 ```
 
@@ -48,39 +48,51 @@ Key design principles:
 
 ## Performance
 
-### GPU Decompression Throughput (Batched Dispatch)
+### GPU Decompression Throughput
 
 **Test Environment:**
 
-- GPU: NVIDIA GeForce RTX 3060 Ti (Vulkan)
+- GPU: NVIDIA GeForce RTX 3060 Ti (8 GB VRAM, 38 SMs)
 - Rust: 1.93.1 (stable), release mode
+
+#### Benchmark Results (Criterion, wgpu Vulkan backend)
 
 | Corpus | GPU Throughput | CPU Throughput | Winner |
 |--------|---------------|----------------|--------|
-| log-1MB | 137 MiB/s | 329 MiB/s | CPU (small data) |
-| binary-1MB | 86 MiB/s | 126 MiB/s | CPU (small data) |
-| mixed-1MB | 87 MiB/s | 181 MiB/s | CPU (small data) |
-| mixed-10MB | **344 MiB/s** | 186 MiB/s | **GPU 1.85x** |
+| log-1MB | 141 MiB/s | 319 MiB/s | CPU (small data) |
+| binary-1MB | 85 MiB/s | 126 MiB/s | CPU (small data) |
+| mixed-1MB | 87 MiB/s | 176 MiB/s | CPU (small data) |
+| mixed-10MB | **355 MiB/s** | 179 MiB/s | **GPU 1.98x** |
 
 GPU decompression outperforms CPU at larger data sizes where the per-tile dispatch overhead is amortized. The crossover point is around 2-4 MB.
 
-### Batched vs Per-Tile Dispatch
+#### Real-World Large File Performance (1.8 GB compressed, ~62K tiles)
 
-Batching multiple tiles into a single GPU submission eliminates per-tile host-GPU synchronization overhead:
+| Backend | Throughput | vs CPU |
+|---------|-----------|--------|
+| **CUDA (multi-block)** | **560 MiB/s** | **3.1x** |
+| wgpu (Vulkan) | 386 MiB/s | 2.2x |
+| CPU (all cores) | 179 MiB/s | baseline |
 
-| Dispatch Mode | 1 MB (16 tiles) | Improvement |
-|---------------|-----------------|-------------|
-| Per-tile (old) | ~5-12 MiB/s | baseline |
-| Batched (current) | **120+ MiB/s** | **10-24x** |
+CUDA's multi-block kernel launch (`grid_dim = num_tiles`) distributes tiles across all 38 SMs simultaneously. For large files with thousands of tiles, CUDA achieves 1.45x over wgpu and 3.1x over CPU.
+
+### Multi-Block vs Per-Tile Dispatch
+
+The CUDA backend uses a single multi-block kernel launch per batch (up to 512 tiles). Each CUDA block (32 threads) processes one tile, enabling all SMs to work in parallel:
+
+| Dispatch Mode | Throughput (large file) | Improvement |
+|---------------|------------------------|-------------|
+| Per-tile sequential | ~10 MiB/s | baseline |
+| Multi-block (current) | **560 MiB/s** | **56x** |
 
 ### Compression Throughput (CPU)
 
 | Corpus | Throughput |
 |--------|-----------|
-| log-text-1MB | 178 MiB/s |
-| binary-1MB | 70 MiB/s |
-| mixed-1MB | 99 MiB/s |
-| mixed-10MB | 104 MiB/s |
+| log-text-1MB | 179 MiB/s |
+| binary-1MB | 69 MiB/s |
+| mixed-1MB | 98 MiB/s |
+| mixed-10MB | 100 MiB/s |
 
 ## File Format (CGPU)
 

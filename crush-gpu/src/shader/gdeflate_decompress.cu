@@ -2,11 +2,14 @@
 //
 // Port of gdeflate_decompress.wgsl to CUDA C for nvrtc runtime compilation.
 //
-// Decompresses a single GDeflate-encoded tile using 32 cooperative threads.
+// Decompresses GDeflate-encoded tiles using 32 cooperative threads per tile.
 // Each thread reads its own sub-stream (Huffman decode in parallel).
 // Thread 0 coordinates sequential output writing (required for LZ back-refs).
 //
-// GDeflate payload layout in `compressed`:
+// Batched: each CUDA block (blockIdx.x) processes one tile independently.
+// Launch with grid_dim = (num_tiles, 1, 1), block_dim = (32, 1, 1).
+//
+// GDeflate payload layout in each tile's compressed data:
 //   [128 bytes] initial u32 state per stream (32 × 4 bytes)
 //   [variable]  interleaved u32 words: stream0[1], stream1[1], ..., stream31[1],
 //               stream0[2], stream1[2], ..., etc.
@@ -177,7 +180,7 @@ __device__ unsigned int read_output_byte(const unsigned int* output_buf,
 }
 
 // -----------------------------------------------------------------------
-// Shared memory for inter-thread symbol communication
+// Shared memory for inter-thread symbol communication (per-block)
 // -----------------------------------------------------------------------
 
 __shared__ unsigned int g_sym[32];
@@ -187,13 +190,18 @@ __shared__ unsigned int g_out_pos;
 __shared__ unsigned int g_done;
 
 // -----------------------------------------------------------------------
-// Entry point
+// Entry point — batched: one CUDA block per tile
 // -----------------------------------------------------------------------
+//
+// Launch with grid_dim = (num_tiles, 1, 1), block_dim = (32, 1, 1).
+// Each block uses blockIdx.x to find its tile's metadata and data.
 
 extern "C" __global__ void gdeflate_decompress_tile(
-    const GDeflateMeta* __restrict__ tile_meta,
-    const unsigned int* __restrict__ compressed,
-    unsigned int* __restrict__ output_buf
+    const GDeflateMeta* __restrict__ tile_metas,
+    const unsigned int* __restrict__ compressed_buf,
+    unsigned int* __restrict__ output_buf,
+    const unsigned int* __restrict__ comp_offsets,
+    const unsigned int* __restrict__ out_offsets
 ) {
     // DEFLATE length/distance lookup tables.
     // Declared as function-local const arrays so they are compiled directly
@@ -224,6 +232,12 @@ extern "C" __global__ void gdeflate_decompress_tile(
         7, 7, 8, 8, 9, 9, 10, 10,
         11, 11, 12, 12, 13, 13
     };
+
+    // Per-block tile selection via blockIdx.x.
+    unsigned int tile_id = blockIdx.x;
+    const GDeflateMeta* tile_meta = &tile_metas[tile_id];
+    const unsigned int* compressed = compressed_buf + comp_offsets[tile_id];
+    unsigned int* output = output_buf + out_offsets[tile_id];
 
     unsigned int tid = threadIdx.x;
     unsigned int uncompressed_size = tile_meta->uncompressed_size;
@@ -314,7 +328,7 @@ extern "C" __global__ void gdeflate_decompress_tile(
                 if (s < 256u) {
                     // Literal byte
                     if (g_out_pos < uncompressed_size) {
-                        write_output_byte(output_buf, g_out_pos, s);
+                        write_output_byte(output, g_out_pos, s);
                         g_out_pos += 1u;
                     }
                 } else if (s == 256u) {
@@ -329,8 +343,8 @@ extern "C" __global__ void gdeflate_decompress_tile(
                         for (unsigned int j = 0u; j < length; j++) {
                             if (g_out_pos < uncompressed_size) {
                                 unsigned int bv = read_output_byte(
-                                    output_buf, src + j);
-                                write_output_byte(output_buf, g_out_pos, bv);
+                                    output, src + j);
+                                write_output_byte(output, g_out_pos, bv);
                                 g_out_pos += 1u;
                             }
                         }
