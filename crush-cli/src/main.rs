@@ -8,8 +8,9 @@ mod logging;
 mod output;
 mod signal;
 
-// Force crush-parallel to be linked into the binary so the linkme
+// Force crush-parallel and crush-gpu to be linked into the binary so the linkme
 // distributed-slice plugin registration runs at startup.
+use crush_gpu as _;
 use crush_parallel as _;
 
 use clap::Parser;
@@ -56,13 +57,34 @@ fn run() -> Result<()> {
     logging::init_logging(log_level, &config.logging.format, log_file_path);
 
     // Setup signal handler
-    let interrupted = signal::setup_handler()
+    let signal_state = signal::setup_handler()
         .map_err(|e| error::CliError::Config(format!("Failed to set up signal handler: {}", e)))?;
+    let interrupted = signal_state.token;
+    let cancel_flag = signal_state.cancel_flag;
+
+    // Configure GPU plugin: merge config file values with CLI flags (CLI wins)
+    {
+        let (cli_force_cpu, cli_gpu_device, cli_gpu_backend) = match &cli.command {
+            Commands::Compress(args) => (false, args.gpu_device, args.gpu_backend),
+            Commands::Decompress(args) => (args.force_cpu, args.gpu_device, args.gpu_backend),
+            _ => (false, None, cli::GpuBackend::Auto),
+        };
+        let backend = match cli_gpu_backend {
+            cli::GpuBackend::Auto => crush_gpu::BackendPreference::Auto,
+            cli::GpuBackend::Cuda => crush_gpu::BackendPreference::Cuda,
+            cli::GpuBackend::Wgpu => crush_gpu::BackendPreference::Wgpu,
+        };
+        crush_gpu::configure(crush_gpu::GpuPluginConfig {
+            force_cpu: cli_force_cpu || config.gpu.force_cpu,
+            device_index: cli_gpu_device.or(config.gpu.device),
+            backend,
+        });
+    }
 
     // Dispatch to appropriate command
     match &cli.command {
-        Commands::Compress(args) => commands::compress::run(args, interrupted),
-        Commands::Decompress(args) => commands::decompress::run(args, interrupted),
+        Commands::Compress(args) => commands::compress::run(args, interrupted, config.gpu.enabled),
+        Commands::Decompress(args) => commands::decompress::run(args, interrupted, cancel_flag),
         Commands::Inspect(args) => commands::inspect::run(args),
         Commands::Config(args) => commands::config::run(args),
         Commands::Plugins(args) => commands::plugins::run(args),
@@ -77,5 +99,14 @@ mod tests {
     fn verify_cli() {
         use clap::CommandFactory;
         Cli::command().debug_assert();
+    }
+
+    #[test]
+    fn test_exit_code_mapping() {
+        use crate::error::CliError;
+        // Verify exit codes match expectations
+        assert_eq!(CliError::Interrupted.exit_code(), 130);
+        assert_eq!(CliError::Config("x".to_string()).exit_code(), 2);
+        assert_eq!(CliError::InvalidInput("x".to_string()).exit_code(), 2);
     }
 }

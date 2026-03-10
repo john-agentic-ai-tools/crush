@@ -1,6 +1,6 @@
 [package]
 name = "crush-cli"
-version = "0.1.1"
+version = "0.2.0"
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
@@ -12,9 +12,13 @@ description = "Command-line interface for the Crush compression library"
 name = "crush"
 path = "src/main.rs"
 
+[features]
+cuda = ["crush-gpu/cuda"]
+
 [dependencies]
 crush-core = { version = "0.2.0", path = "../crush-core" }
 crush-parallel = { version = "0.1.0", path = "../crush-parallel" }
+crush-gpu = { version = "0.1.1", path = "../crush-gpu" }
 clap = { version = "4", features = ["derive"] }
 indicatif = "0.18"
 termcolor = "1.4"

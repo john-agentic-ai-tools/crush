@@ -3,7 +3,7 @@ use crate::commands::utils;
 use crate::error::{CliError, Result};
 use crate::output::{self, DecompressionResult};
 use crush_core::cancel::CancellationToken;
-use crush_core::decompress;
+use crush_core::decompress_with_cancel;
 use crush_core::plugin::FileMetadata;
 use filetime::{set_file_mtime, FileTime};
 use indicatif::{ProgressBar, ProgressStyle};
@@ -54,11 +54,15 @@ fn decompress_single_block(
     }
 }
 
-pub fn run(args: &DecompressArgs, interrupted: Arc<dyn CancellationToken>) -> Result<()> {
+pub fn run(
+    args: &DecompressArgs,
+    interrupted: Arc<dyn CancellationToken>,
+    cancel_flag: Arc<std::sync::atomic::AtomicBool>,
+) -> Result<()> {
     // Check if reading from stdin (no input files and stdout mode)
     if args.input.is_empty() {
         if args.stdout {
-            decompress_stdin(args, interrupted)?;
+            decompress_stdin(args, interrupted, cancel_flag)?;
         } else {
             return Err(CliError::InvalidInput(
                 "No input files specified. Use --stdout with stdin, or provide file paths."
@@ -68,15 +72,19 @@ pub fn run(args: &DecompressArgs, interrupted: Arc<dyn CancellationToken>) -> Re
     } else {
         // Process each input file
         for input_path in &args.input {
-            decompress_file(input_path, args, interrupted.clone())?;
+            decompress_file(input_path, args, interrupted.clone(), cancel_flag.clone())?;
         }
     }
     Ok(())
 }
 
 /// Decompress data from stdin
-#[instrument(skip(_args, interrupted))]
-fn decompress_stdin(_args: &DecompressArgs, interrupted: Arc<dyn CancellationToken>) -> Result<()> {
+#[instrument(skip(_args, interrupted, cancel_flag))]
+fn decompress_stdin(
+    _args: &DecompressArgs,
+    interrupted: Arc<dyn CancellationToken>,
+    cancel_flag: Arc<std::sync::atomic::AtomicBool>,
+) -> Result<()> {
     info!("Decompressing from stdin");
 
     // Check for interrupt before starting
@@ -92,12 +100,36 @@ fn decompress_stdin(_args: &DecompressArgs, interrupted: Arc<dyn CancellationTok
     // Check for interrupt after reading
     utils::check_cancelled(&interrupted)?;
 
+    // Detect plugin from header magic bytes for logging
+    let detected_plugin = if compressed_data.len() >= 4 {
+        let magic = [
+            compressed_data[0],
+            compressed_data[1],
+            compressed_data[2],
+            compressed_data[3],
+        ];
+        crush_core::list_plugins()
+            .iter()
+            .find(|p| p.magic_number == magic)
+            .map(|p| p.name.to_string())
+            .unwrap_or_else(|| "unknown".to_string())
+    } else {
+        "unknown".to_string()
+    };
+    info!(
+        plugin = %detected_plugin,
+        input_size,
+        "Decompressing stdin with plugin '{}' ({} bytes)",
+        detected_plugin,
+        input_size
+    );
+
     // Start timing
     let start = Instant::now();
 
-    // Decompress
+    // Decompress (with cancel flag connected to Ctrl+C)
     trace!("Starting decompression operation");
-    let result = decompress(&compressed_data)?;
+    let result = decompress_with_cancel(&compressed_data, cancel_flag)?;
     let decompressed_data = result.data;
 
     // Stop timing
@@ -140,11 +172,12 @@ fn decompress_stdin(_args: &DecompressArgs, interrupted: Arc<dyn CancellationTok
     Ok(())
 }
 
-#[instrument(skip(args, interrupted), fields(file = %input_path.display()))]
+#[instrument(skip(args, interrupted, cancel_flag), fields(file = %input_path.display()))]
 fn decompress_file(
     input_path: &Path,
     args: &DecompressArgs,
     interrupted: Arc<dyn CancellationToken>,
+    cancel_flag: Arc<std::sync::atomic::AtomicBool>,
 ) -> Result<()> {
     info!("Starting decompression of {}", input_path.display());
     // Check for interrupt before starting
@@ -198,15 +231,44 @@ fn decompress_file(
     // Start timing
     let start = Instant::now();
 
+    // Detect plugin from header magic bytes for logging
+    let detected_plugin = if compressed_data.len() >= 4 {
+        let magic = [
+            compressed_data[0],
+            compressed_data[1],
+            compressed_data[2],
+            compressed_data[3],
+        ];
+        crush_core::list_plugins()
+            .iter()
+            .find(|p| p.magic_number == magic)
+            .map(|p| p.name.to_string())
+            .unwrap_or_else(|| "unknown".to_string())
+    } else {
+        "unknown".to_string()
+    };
+    info!(
+        plugin = %detected_plugin,
+        input_size,
+        "Decompressing with plugin '{}' ({} bytes)",
+        detected_plugin,
+        input_size
+    );
+
+    // Log when --force-cpu is active for GPU-compressed files
+    if args.force_cpu && detected_plugin == "gpu-deflate" {
+        info!("--force-cpu active: using CPU fallback for GPU-compressed file");
+    }
+
     // Decompress (either full file or single block)
     let (decompressed_data, metadata) = if let Some(block_n) = args.block {
         // Random access: decompress only the specified block
         trace!("Starting random access decompression for block {}", block_n);
         decompress_single_block(&compressed_data, block_n)?
     } else {
-        // Full decompression
+        // Full decompression (with cancel flag connected to Ctrl+C)
         trace!("Starting full decompression operation");
-        let result = decompress(&compressed_data)?;
+        let result = decompress_with_cancel(&compressed_data, cancel_flag)?;
         (result.data, result.metadata)
     };
 
@@ -373,5 +435,98 @@ fn strip_crush_extension(path: &Path) -> Result<PathBuf> {
                 path.display()
             ))
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+
+    // -----------------------------------------------------------------------
+    // strip_crush_extension
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_strip_crush_extension_dot_crush() {
+        let result = strip_crush_extension(Path::new("data.txt.crush")).expect("ok");
+        assert_eq!(result, PathBuf::from("data.txt"));
+    }
+
+    #[test]
+    fn test_strip_crush_extension_no_crush() {
+        // Falls back to stripping last extension
+        let result = strip_crush_extension(Path::new("data.txt.gz")).expect("ok");
+        assert_eq!(result, PathBuf::from("data.txt"));
+    }
+
+    #[test]
+    fn test_strip_crush_extension_just_crush() {
+        let result = strip_crush_extension(Path::new("archive.crush")).expect("ok");
+        assert_eq!(result, PathBuf::from("archive"));
+    }
+
+    #[test]
+    fn test_strip_crush_extension_no_extension() {
+        let result = strip_crush_extension(Path::new("data")).expect("ok");
+        assert_eq!(result, PathBuf::from("data"));
+    }
+
+    // -----------------------------------------------------------------------
+    // determine_output_path
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_determine_output_path_default_strips_crush() {
+        let result = determine_output_path(Path::new("data.txt.crush"), &None).expect("ok");
+        assert_eq!(result, PathBuf::from("data.txt"));
+    }
+
+    #[test]
+    fn test_determine_output_path_with_parent() {
+        let result = determine_output_path(Path::new("/tmp/archive.crush"), &None).expect("ok");
+        assert_eq!(result, PathBuf::from("/tmp/archive"));
+    }
+
+    #[test]
+    fn test_determine_output_path_explicit_file() {
+        let output = Some(PathBuf::from("restored.txt"));
+        let result = determine_output_path(Path::new("data.txt.crush"), &output).expect("ok");
+        assert_eq!(result, PathBuf::from("restored.txt"));
+    }
+
+    #[test]
+    fn test_determine_output_path_to_directory() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let output = Some(dir.path().to_path_buf());
+        let result = determine_output_path(Path::new("data.txt.crush"), &output).expect("ok");
+        assert_eq!(result, dir.path().join("data.txt"));
+    }
+
+    #[test]
+    fn test_determine_output_path_non_crush_ext() {
+        // If the input doesn't have .crush, it strips the last extension
+        let result = determine_output_path(Path::new("data.bin"), &None).expect("ok");
+        assert_eq!(result, PathBuf::from("data"));
+    }
+
+    // -----------------------------------------------------------------------
+    // decompress_single_block
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_decompress_single_block_non_crsh_format() {
+        let data = b"NOT_CRSH_data";
+        let result = decompress_single_block(data, 0);
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(msg.contains("Random access"));
+    }
+
+    #[test]
+    fn test_decompress_single_block_too_short() {
+        let data = b"CR"; // too short for magic detection
+        let result = decompress_single_block(data, 0);
+        assert!(result.is_err());
     }
 }

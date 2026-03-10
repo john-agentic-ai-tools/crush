@@ -7,6 +7,7 @@ GPU-accelerated tile-based compression engine with 32-way parallel decompression
 `crush-gpu` is the GPU acceleration crate for the [Crush](https://github.com/john-agentic-ai-tools/crush) compression toolkit. It implements a [GDeflate](https://github.com/microsoft/DirectStorage/blob/main/GDeflate/GDeflate_spec.pdf)-inspired compression format designed for massively parallel GPU decompression.
 
 Key design principles:
+
 - **64 KB independent tiles** enable parallel processing and random access
 - **32-way sub-stream parallelism** matches GPU warp/wavefront width
 - **Batched GPU dispatch** minimizes host-GPU synchronization overhead
@@ -28,7 +29,7 @@ Key design principles:
                                           │
                                     ┌─────▼──────────┐
                                     │  shader/        │
-                                    │  WGSL compute   │
+                                    │  WGSL + CUDA    │
                                     └────────────────-┘
 ```
 
@@ -47,38 +48,51 @@ Key design principles:
 
 ## Performance
 
-### GPU Decompression Throughput (Batched Dispatch)
+### GPU Decompression Throughput
 
 **Test Environment:**
-- GPU: NVIDIA GeForce RTX 3060 Ti (Vulkan)
+
+- GPU: NVIDIA GeForce RTX 3060 Ti (8 GB VRAM, 38 SMs)
 - Rust: 1.93.1 (stable), release mode
+
+#### Benchmark Results (Criterion, wgpu Vulkan backend)
 
 | Corpus | GPU Throughput | CPU Throughput | Winner |
 |--------|---------------|----------------|--------|
-| log-1MB | 137 MiB/s | 329 MiB/s | CPU (small data) |
-| binary-1MB | 86 MiB/s | 126 MiB/s | CPU (small data) |
-| mixed-1MB | 87 MiB/s | 181 MiB/s | CPU (small data) |
-| mixed-10MB | **344 MiB/s** | 186 MiB/s | **GPU 1.85x** |
+| log-1MB | 141 MiB/s | 319 MiB/s | CPU (small data) |
+| binary-1MB | 85 MiB/s | 126 MiB/s | CPU (small data) |
+| mixed-1MB | 87 MiB/s | 176 MiB/s | CPU (small data) |
+| mixed-10MB | **355 MiB/s** | 179 MiB/s | **GPU 1.98x** |
 
 GPU decompression outperforms CPU at larger data sizes where the per-tile dispatch overhead is amortized. The crossover point is around 2-4 MB.
 
-### Batched vs Per-Tile Dispatch
+#### Real-World Large File Performance (1.8 GB compressed, ~62K tiles)
 
-Batching multiple tiles into a single GPU submission eliminates per-tile host-GPU synchronization overhead:
+| Backend | Throughput | vs CPU |
+|---------|-----------|--------|
+| **CUDA (multi-block)** | **560 MiB/s** | **3.1x** |
+| wgpu (Vulkan) | 386 MiB/s | 2.2x |
+| CPU (all cores) | 179 MiB/s | baseline |
 
-| Dispatch Mode | 1 MB (16 tiles) | Improvement |
-|---------------|-----------------|-------------|
-| Per-tile (old) | ~5-12 MiB/s | baseline |
-| Batched (current) | **120+ MiB/s** | **10-24x** |
+CUDA's multi-block kernel launch (`grid_dim = num_tiles`) distributes tiles across all 38 SMs simultaneously. For large files with thousands of tiles, CUDA achieves 1.45x over wgpu and 3.1x over CPU.
+
+### Multi-Block vs Per-Tile Dispatch
+
+The CUDA backend uses a single multi-block kernel launch per batch (up to 512 tiles). Each CUDA block (32 threads) processes one tile, enabling all SMs to work in parallel:
+
+| Dispatch Mode | Throughput (large file) | Improvement |
+|---------------|------------------------|-------------|
+| Per-tile sequential | ~10 MiB/s | baseline |
+| Multi-block (current) | **560 MiB/s** | **56x** |
 
 ### Compression Throughput (CPU)
 
 | Corpus | Throughput |
 |--------|-----------|
-| log-text-1MB | 178 MiB/s |
-| binary-1MB | 70 MiB/s |
-| mixed-1MB | 99 MiB/s |
-| mixed-10MB | 104 MiB/s |
+| log-text-1MB | 179 MiB/s |
+| binary-1MB | 69 MiB/s |
+| mixed-1MB | 98 MiB/s |
+| mixed-10MB | 100 MiB/s |
 
 ## File Format (CGPU)
 
@@ -183,20 +197,25 @@ for plugin in list_plugins() {
 
 ## GPU Backend
 
-### Supported APIs
+### Backends
 
-| API | Platform | Status |
-|-----|----------|--------|
-| Vulkan 1.2+ | Windows, Linux | Supported |
-| Metal 2+ | macOS | Supported |
-| DX12 | Windows | Supported |
-| CUDA | NVIDIA (optional) | Feature-gated |
+| Backend | API | Feature flag | GPU vendor |
+|---------|-----|-------------|------------|
+| wgpu | Vulkan 1.2+ / Metal 2+ / DX12 | *(default)* | Any supported GPU |
+| CUDA | CUDA 13.x via nvrtc | `cuda` | NVIDIA (compute capability 7.0+) |
+
+Backend selection priority (with `--gpu-backend auto`, the default):
+
+1. CUDA (if `cuda` feature enabled and NVIDIA GPU present)
+2. wgpu (Vulkan on Windows/Linux, Metal on macOS)
+
+Override at runtime: `crush compress --gpu-backend cuda` or `--gpu-backend wgpu`.
 
 ### Requirements
 
 - 2 GB+ VRAM (discrete GPU recommended)
 - Vulkan, Metal, or DX12 driver
-- CUDA feature requires `cudarc` dependency
+- CUDA backend additionally requires [NVIDIA CUDA Toolkit](https://developer.nvidia.com/cuda-downloads) 13.x and Visual Studio 2022 Build Tools (Windows)
 
 ### GPU Eligibility
 
@@ -229,7 +248,10 @@ cargo test --package crush-gpu
 # Build
 cargo build -p crush-gpu
 
-# Test
+# Build with CUDA support
+cargo build -p crush-gpu --features cuda
+
+# Test (standard — no GPU required for CI)
 cargo test -p crush-gpu
 
 # Clippy
@@ -238,6 +260,57 @@ cargo clippy -p crush-gpu --all-targets -- -D warnings
 # Docs
 cargo doc -p crush-gpu --no-deps
 ```
+
+### CUDA Testing
+
+CUDA tests are feature-gated behind `#[cfg(feature = "cuda")]` and require:
+
+1. An NVIDIA GPU with >= 2 GB VRAM
+2. CUDA Toolkit nvrtc DLLs on `PATH`
+
+On Windows with CUDA 13.1, add the runtime libraries to your shell:
+
+```bash
+# Git Bash / MSYS2
+export PATH="/c/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v13.1/bin/x64:$PATH"
+```
+
+```powershell
+# PowerShell
+$env:PATH = "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.1\bin\x64;$env:PATH"
+```
+
+Then run:
+
+```bash
+cargo test -p crush-gpu --features cuda -- cuda --nocapture
+```
+
+This executes 10 CUDA-specific tests:
+
+- LZ77 roundtrip (small, 64 KB, multi-tile)
+- GDeflate roundtrip (multiple sizes, batch)
+- Cancellation (pre-set and mid-batch)
+- CUDA vs CPU output parity
+- Backend info validation
+
+### Full Local GPU Verification
+
+```bash
+export PATH="/c/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v13.1/bin/x64:$PATH"
+
+# All crush-gpu tests (wgpu + CUDA)
+cargo test -p crush-gpu --features cuda --nocapture
+
+# Clippy (CUDA mode)
+cargo clippy -p crush-gpu --features cuda --all-targets -- -D warnings
+```
+
+### CI Notes
+
+GitHub Actions free tier has no GPU. CI runs `cargo clippy --all-targets -- -D warnings` and `cargo test` without the `cuda` feature. GPU and CUDA tests are local-only.
+
+> **Note:** `nvcc` does not need to be on `PATH` at build time. The `cudarc` crate uses the explicit `cuda-13010` feature flag instead of auto-detecting the CUDA version.
 
 ## License
 

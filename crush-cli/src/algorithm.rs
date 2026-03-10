@@ -14,6 +14,7 @@ pub const DEFAULT_PARALLEL_THRESHOLD_BYTES: u64 = 25 * 1024 * 1024;
 /// - `input_size`: Known input byte count, or `None` for streaming inputs (unknown size).
 /// - `explicit`: Value of the `--algorithm` CLI flag, if provided.
 /// - `threshold`: Size threshold in bytes; inputs at or above this use `parallel-deflate`.
+/// - `gpu_enabled`: If `true`, prefer `gpu-deflate` over `parallel-deflate` for large files.
 ///
 /// # Returns
 ///
@@ -24,13 +25,15 @@ pub const DEFAULT_PARALLEL_THRESHOLD_BYTES: u64 = 25 * 1024 * 1024;
 /// 1. If `explicit` is `Some`, that value is returned unconditionally.
 /// 2. If `input_size` is `None` (streaming), `"parallel-deflate"` is returned
 ///    (streaming favours parallel to avoid buffering the full input).
-/// 3. If `input_size >= threshold`, `"parallel-deflate"` is returned.
-/// 4. Otherwise `"default"` is returned.
+/// 3. If `input_size >= threshold` and `gpu_enabled`, `"gpu-deflate"` is returned.
+/// 4. If `input_size >= threshold`, `"parallel-deflate"` is returned.
+/// 5. Otherwise `"default"` is returned.
 #[must_use]
 pub fn select_algorithm(
     input_size: Option<u64>,
     explicit: Option<&str>,
     threshold: u64,
+    gpu_enabled: bool,
 ) -> &'static str {
     if let Some(name) = explicit {
         // Leak the string to get &'static str — safe here because this is called
@@ -39,6 +42,7 @@ pub fn select_algorithm(
     }
     match input_size {
         None => "parallel-deflate",
+        Some(size) if size >= threshold && gpu_enabled => "gpu-deflate",
         Some(size) if size >= threshold => "parallel-deflate",
         _ => "default",
     }
@@ -54,6 +58,7 @@ mod tests {
             Some(DEFAULT_PARALLEL_THRESHOLD_BYTES),
             None,
             DEFAULT_PARALLEL_THRESHOLD_BYTES,
+            false,
         );
         assert_eq!(name, "parallel-deflate");
 
@@ -61,6 +66,7 @@ mod tests {
             Some(DEFAULT_PARALLEL_THRESHOLD_BYTES + 1),
             None,
             DEFAULT_PARALLEL_THRESHOLD_BYTES,
+            false,
         );
         assert_eq!(name_over, "parallel-deflate");
     }
@@ -71,6 +77,7 @@ mod tests {
             Some(DEFAULT_PARALLEL_THRESHOLD_BYTES - 1),
             None,
             DEFAULT_PARALLEL_THRESHOLD_BYTES,
+            false,
         );
         assert_eq!(name, "default");
     }
@@ -81,6 +88,7 @@ mod tests {
             Some(1024),
             Some("my-algo"),
             DEFAULT_PARALLEL_THRESHOLD_BYTES,
+            false,
         );
         assert_eq!(name, "my-algo");
 
@@ -89,13 +97,47 @@ mod tests {
             Some(u64::MAX),
             Some("default"),
             DEFAULT_PARALLEL_THRESHOLD_BYTES,
+            false,
         );
         assert_eq!(name_large, "default");
     }
 
     #[test]
     fn test_select_algorithm_streaming_uses_parallel() {
-        let name = select_algorithm(None, None, DEFAULT_PARALLEL_THRESHOLD_BYTES);
+        let name = select_algorithm(None, None, DEFAULT_PARALLEL_THRESHOLD_BYTES, false);
+        assert_eq!(name, "parallel-deflate");
+    }
+
+    #[test]
+    fn test_select_algorithm_gpu_enabled_prefers_gpu_above_threshold() {
+        let name = select_algorithm(
+            Some(DEFAULT_PARALLEL_THRESHOLD_BYTES),
+            None,
+            DEFAULT_PARALLEL_THRESHOLD_BYTES,
+            true,
+        );
+        assert_eq!(name, "gpu-deflate");
+    }
+
+    #[test]
+    fn test_select_algorithm_gpu_enabled_still_default_below_threshold() {
+        let name = select_algorithm(
+            Some(DEFAULT_PARALLEL_THRESHOLD_BYTES - 1),
+            None,
+            DEFAULT_PARALLEL_THRESHOLD_BYTES,
+            true,
+        );
+        assert_eq!(name, "default");
+    }
+
+    #[test]
+    fn test_select_algorithm_gpu_enabled_explicit_override_wins() {
+        let name = select_algorithm(
+            Some(DEFAULT_PARALLEL_THRESHOLD_BYTES),
+            Some("parallel-deflate"),
+            DEFAULT_PARALLEL_THRESHOLD_BYTES,
+            true,
+        );
         assert_eq!(name, "parallel-deflate");
     }
 }

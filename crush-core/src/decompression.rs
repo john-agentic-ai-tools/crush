@@ -77,6 +77,29 @@ pub struct DecompressionResult {
 /// assert_eq!(data.as_slice(), decompressed.data.as_slice());
 /// ```
 pub fn decompress(input: &[u8]) -> Result<DecompressionResult> {
+    let cancel_flag = Arc::new(AtomicBool::new(false));
+    decompress_with_cancel(input, cancel_flag)
+}
+
+/// Decompress Crush-compressed data with an externally-controlled cancellation flag.
+///
+/// This variant accepts a caller-provided `cancel_flag` so that signal handlers
+/// (e.g. Ctrl+C) can interrupt long-running GPU kernel dispatches.
+///
+/// # Errors
+///
+/// Returns an error if:
+/// - Input data is too short (less than 16-byte header)
+/// - Header magic number is invalid
+/// - Header version is unsupported
+/// - Required plugin is not registered
+/// - CRC32 checksum validation fails
+/// - Decompression operation fails
+/// - The cancel flag is set during decompression
+pub fn decompress_with_cancel(
+    input: &[u8],
+    cancel_flag: Arc<AtomicBool>,
+) -> Result<DecompressionResult> {
     // Validate minimum size (header + CRC32 if present)
     if input.len() < CrushHeader::SIZE {
         return Err(ValidationError::InvalidHeader(format!(
@@ -152,10 +175,7 @@ pub fn decompress(input: &[u8]) -> Result<DecompressionResult> {
         ))
     })?;
 
-    // Create cancellation flag (not yet connected to timeout system)
-    let cancel_flag = Arc::new(AtomicBool::new(false));
-
-    // Decompress the payload
+    // Decompress the payload using the caller-provided cancel flag
     let decompressed = plugin.decompress(compressed_payload, cancel_flag)?;
 
     // Validate decompressed size matches header
