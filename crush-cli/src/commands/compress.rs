@@ -401,3 +401,48 @@ fn determine_output_path(input: &Path, output_arg: &Option<PathBuf>) -> Result<P
         Ok(output)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+
+    #[test]
+    fn test_determine_output_path_default_adds_crush_ext() {
+        let result = determine_output_path(Path::new("data.txt"), &None).expect("ok");
+        assert_eq!(result, PathBuf::from("data.txt.crush"));
+    }
+
+    #[test]
+    fn test_determine_output_path_no_extension() {
+        let result = determine_output_path(Path::new("data"), &None).expect("ok");
+        assert_eq!(result, PathBuf::from("data.crush"));
+    }
+
+    #[test]
+    fn test_determine_output_path_explicit_file() {
+        let output = Some(PathBuf::from("out.bin"));
+        let result = determine_output_path(Path::new("data.txt"), &output).expect("ok");
+        assert_eq!(result, PathBuf::from("out.bin"));
+    }
+
+    #[test]
+    fn test_determine_output_path_to_directory() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let output = Some(dir.path().to_path_buf());
+        let result = determine_output_path(Path::new("data.txt"), &output).expect("ok");
+        assert_eq!(result, dir.path().join("data.crush"));
+    }
+
+    #[test]
+    fn test_determine_output_path_with_parent_dir() {
+        let result = determine_output_path(Path::new("/tmp/data.log"), &None).expect("ok");
+        assert_eq!(result, PathBuf::from("/tmp/data.log.crush"));
+    }
+
+    #[test]
+    fn test_determine_output_path_double_extension() {
+        let result = determine_output_path(Path::new("archive.tar.gz"), &None).expect("ok");
+        assert_eq!(result, PathBuf::from("archive.tar.gz.crush"));
+    }
+}

@@ -437,3 +437,96 @@ fn strip_crush_extension(path: &Path) -> Result<PathBuf> {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+
+    // -----------------------------------------------------------------------
+    // strip_crush_extension
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_strip_crush_extension_dot_crush() {
+        let result = strip_crush_extension(Path::new("data.txt.crush")).expect("ok");
+        assert_eq!(result, PathBuf::from("data.txt"));
+    }
+
+    #[test]
+    fn test_strip_crush_extension_no_crush() {
+        // Falls back to stripping last extension
+        let result = strip_crush_extension(Path::new("data.txt.gz")).expect("ok");
+        assert_eq!(result, PathBuf::from("data.txt"));
+    }
+
+    #[test]
+    fn test_strip_crush_extension_just_crush() {
+        let result = strip_crush_extension(Path::new("archive.crush")).expect("ok");
+        assert_eq!(result, PathBuf::from("archive"));
+    }
+
+    #[test]
+    fn test_strip_crush_extension_no_extension() {
+        let result = strip_crush_extension(Path::new("data")).expect("ok");
+        assert_eq!(result, PathBuf::from("data"));
+    }
+
+    // -----------------------------------------------------------------------
+    // determine_output_path
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_determine_output_path_default_strips_crush() {
+        let result = determine_output_path(Path::new("data.txt.crush"), &None).expect("ok");
+        assert_eq!(result, PathBuf::from("data.txt"));
+    }
+
+    #[test]
+    fn test_determine_output_path_with_parent() {
+        let result = determine_output_path(Path::new("/tmp/archive.crush"), &None).expect("ok");
+        assert_eq!(result, PathBuf::from("/tmp/archive"));
+    }
+
+    #[test]
+    fn test_determine_output_path_explicit_file() {
+        let output = Some(PathBuf::from("restored.txt"));
+        let result = determine_output_path(Path::new("data.txt.crush"), &output).expect("ok");
+        assert_eq!(result, PathBuf::from("restored.txt"));
+    }
+
+    #[test]
+    fn test_determine_output_path_to_directory() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let output = Some(dir.path().to_path_buf());
+        let result = determine_output_path(Path::new("data.txt.crush"), &output).expect("ok");
+        assert_eq!(result, dir.path().join("data.txt"));
+    }
+
+    #[test]
+    fn test_determine_output_path_non_crush_ext() {
+        // If the input doesn't have .crush, it strips the last extension
+        let result = determine_output_path(Path::new("data.bin"), &None).expect("ok");
+        assert_eq!(result, PathBuf::from("data"));
+    }
+
+    // -----------------------------------------------------------------------
+    // decompress_single_block
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_decompress_single_block_non_crsh_format() {
+        let data = b"NOT_CRSH_data";
+        let result = decompress_single_block(data, 0);
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(msg.contains("Random access"));
+    }
+
+    #[test]
+    fn test_decompress_single_block_too_short() {
+        let data = b"CR"; // too short for magic detection
+        let result = decompress_single_block(data, 0);
+        assert!(result.is_err());
+    }
+}

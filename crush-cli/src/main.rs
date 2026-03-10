@@ -100,4 +100,13 @@ mod tests {
         use clap::CommandFactory;
         Cli::command().debug_assert();
     }
+
+    #[test]
+    fn test_exit_code_mapping() {
+        use crate::error::CliError;
+        // Verify exit codes match expectations
+        assert_eq!(CliError::Interrupted.exit_code(), 130);
+        assert_eq!(CliError::Config("x".to_string()).exit_code(), 2);
+        assert_eq!(CliError::InvalidInput("x".to_string()).exit_code(), 2);
+    }
 }

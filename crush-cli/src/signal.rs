@@ -30,3 +30,36 @@ pub fn setup_handler() -> Result<SignalState, ctrlc::Error> {
 
     Ok(SignalState { token, cancel_flag })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crush_core::cancel::CancellationToken;
+    use std::sync::atomic::Ordering;
+
+    #[test]
+    fn test_signal_state_token_and_flag_independent() {
+        // Verify that token and cancel_flag are independent until wired up
+        let token: Arc<dyn CancellationToken> =
+            Arc::new(crush_core::cancel::AtomicCancellationToken::new());
+        let cancel_flag = Arc::new(AtomicBool::new(false));
+
+        let state = SignalState {
+            token: token.clone(),
+            cancel_flag: cancel_flag.clone(),
+        };
+
+        assert!(!state.token.is_cancelled());
+        assert!(!state.cancel_flag.load(Ordering::SeqCst));
+
+        // Cancelling token doesn't affect flag
+        state.token.cancel();
+        assert!(state.token.is_cancelled());
+        assert!(!state.cancel_flag.load(Ordering::SeqCst));
+
+        // Setting flag doesn't affect token (already cancelled above, but
+        // demonstrates they are independent)
+        state.cancel_flag.store(true, Ordering::SeqCst);
+        assert!(state.cancel_flag.load(Ordering::SeqCst));
+    }
+}

@@ -139,7 +139,7 @@ jobs:
         with:
           shared-key: cuda-check
 
-      - uses: Jimver/cuda-toolkit@v0.2.21
+      - uses: Jimver/cuda-toolkit@v0.2.30
         id: cuda-toolkit
         with:
           cuda: '13.1.0'

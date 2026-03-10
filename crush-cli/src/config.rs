@@ -751,4 +751,577 @@ mod tests {
         assert_eq!(default_human(), "human");
         assert_eq!(default_info(), "info");
     }
+
+    // -----------------------------------------------------------------------
+    // load_config / save_config (filesystem integration via tempfile)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_load_config_returns_defaults_when_no_file() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("config.toml");
+        // Point config at a non-existent file
+        std::env::set_var("CRUSH_TEST_CONFIG_FILE", path.to_str().expect("path"));
+        let config = load_config().expect("load_config");
+        assert_eq!(config.compression.level, "balanced");
+        assert_eq!(config.output.color, "auto");
+        std::env::remove_var("CRUSH_TEST_CONFIG_FILE");
+    }
+
+    #[test]
+    fn test_save_and_load_config_roundtrip() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("config.toml");
+        std::env::set_var("CRUSH_TEST_CONFIG_FILE", path.to_str().expect("path"));
+
+        let mut config = Config::default();
+        config.compression.level = "fast".to_string();
+        config.gpu.enabled = true;
+        config.gpu.device = Some(2);
+        config.logging.level = "debug".to_string();
+
+        save_config(&config).expect("save_config");
+        let loaded = load_config().expect("load_config");
+
+        assert_eq!(loaded.compression.level, "fast");
+        assert!(loaded.gpu.enabled);
+        assert_eq!(loaded.gpu.device, Some(2));
+        assert_eq!(loaded.logging.level, "debug");
+        std::env::remove_var("CRUSH_TEST_CONFIG_FILE");
+    }
+
+    #[test]
+    fn test_load_config_invalid_toml() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("config.toml");
+        std::fs::write(&path, "this is not valid toml {{{{").expect("write");
+        std::env::set_var("CRUSH_TEST_CONFIG_FILE", path.to_str().expect("path"));
+        let result = load_config();
+        assert!(result.is_err());
+        std::env::remove_var("CRUSH_TEST_CONFIG_FILE");
+    }
+
+    #[test]
+    fn test_config_file_path_uses_env_override() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let expected = dir.path().join("sub").join("config.toml");
+        std::env::set_var("CRUSH_TEST_CONFIG_FILE", expected.to_str().expect("path"));
+        let got = config_file_path().expect("config_file_path");
+        assert_eq!(got, expected);
+        // Parent directory should have been created
+        assert!(expected.parent().expect("parent").exists());
+        std::env::remove_var("CRUSH_TEST_CONFIG_FILE");
+    }
+
+    // -----------------------------------------------------------------------
+    // get/set for GPU config keys
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_get_set_gpu_config_values() {
+        let mut config = Config::default();
+
+        // gpu.enabled
+        assert_eq!(
+            get_config_value(&config, "gpu.enabled").expect("get"),
+            "false"
+        );
+        set_config_value(&mut config, "gpu.enabled", "true").expect("set");
+        assert!(config.gpu.enabled);
+
+        // gpu.device
+        assert_eq!(
+            get_config_value(&config, "gpu.device").expect("get"),
+            "auto"
+        );
+        set_config_value(&mut config, "gpu.device", "1").expect("set");
+        assert_eq!(config.gpu.device, Some(1));
+        set_config_value(&mut config, "gpu.device", "auto").expect("set auto");
+        assert_eq!(config.gpu.device, None);
+
+        // gpu.force-cpu
+        assert_eq!(
+            get_config_value(&config, "gpu.force-cpu").expect("get"),
+            "false"
+        );
+        set_config_value(&mut config, "gpu.force-cpu", "true").expect("set");
+        assert!(config.gpu.force_cpu);
+    }
+
+    #[test]
+    fn test_set_gpu_device_invalid() {
+        let mut config = Config::default();
+        assert!(set_config_value(&mut config, "gpu.device", "notanumber").is_err());
+    }
+
+    #[test]
+    fn test_set_gpu_enabled_invalid() {
+        let mut config = Config::default();
+        assert!(set_config_value(&mut config, "gpu.enabled", "notabool").is_err());
+    }
+
+    #[test]
+    fn test_set_gpu_force_cpu_invalid() {
+        let mut config = Config::default();
+        assert!(set_config_value(&mut config, "gpu.force-cpu", "maybe").is_err());
+    }
+
+    // -----------------------------------------------------------------------
+    // get/set for remaining keys
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_get_set_timeout_seconds() {
+        let mut config = Config::default();
+        assert_eq!(
+            get_config_value(&config, "compression.timeout-seconds").expect("get"),
+            "0"
+        );
+        set_config_value(&mut config, "compression.timeout-seconds", "60").expect("set");
+        assert_eq!(config.compression.timeout_seconds, 60);
+    }
+
+    #[test]
+    fn test_set_timeout_seconds_invalid() {
+        let mut config = Config::default();
+        assert!(set_config_value(&mut config, "compression.timeout-seconds", "abc").is_err());
+    }
+
+    #[test]
+    fn test_get_set_progress_bars() {
+        let mut config = Config::default();
+        assert_eq!(
+            get_config_value(&config, "output.progress-bars").expect("get"),
+            "true"
+        );
+        set_config_value(&mut config, "output.progress-bars", "false").expect("set");
+        assert!(!config.output.progress_bars);
+    }
+
+    #[test]
+    fn test_set_progress_bars_invalid() {
+        let mut config = Config::default();
+        assert!(set_config_value(&mut config, "output.progress-bars", "yes").is_err());
+    }
+
+    #[test]
+    fn test_get_set_quiet() {
+        let mut config = Config::default();
+        assert_eq!(
+            get_config_value(&config, "output.quiet").expect("get"),
+            "false"
+        );
+        set_config_value(&mut config, "output.quiet", "true").expect("set");
+        assert!(config.output.quiet);
+    }
+
+    #[test]
+    fn test_set_quiet_invalid() {
+        let mut config = Config::default();
+        assert!(set_config_value(&mut config, "output.quiet", "nah").is_err());
+    }
+
+    #[test]
+    fn test_get_set_logging_file() {
+        let mut config = Config::default();
+        assert_eq!(get_config_value(&config, "logging.file").expect("get"), "");
+        set_config_value(&mut config, "logging.file", "/tmp/crush.log").expect("set");
+        assert_eq!(config.logging.file, "/tmp/crush.log");
+    }
+
+    #[test]
+    fn test_get_set_default_plugin() {
+        let mut config = Config::default();
+        assert_eq!(
+            get_config_value(&config, "compression.default-plugin").expect("get"),
+            "auto"
+        );
+        set_config_value(&mut config, "compression.default-plugin", "deflate").expect("set");
+        assert_eq!(config.compression.default_plugin, "deflate");
+        // Also works with underscore variant
+        assert_eq!(
+            get_config_value(&config, "compression.default_plugin").expect("get"),
+            "deflate"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // merge_cli_args
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_merge_cli_args_verbose() {
+        use crate::cli::{Cli, Commands, CompressArgs, CompressionLevel, GpuBackend, LogFormat};
+
+        let config = Config::default();
+        let cli = Cli {
+            command: Commands::Compress(CompressArgs {
+                input: vec![],
+                output: None,
+                stdout: false,
+                plugin: None,
+                level: CompressionLevel::Balanced,
+                force: false,
+                timeout: None,
+                gpu_device: None,
+                gpu_backend: GpuBackend::Auto,
+            }),
+            verbose: 1,
+            quiet: false,
+            log_format: LogFormat::Human,
+            log_file: None,
+        };
+
+        let merged = merge_cli_args(config, &cli).expect("merge");
+        assert_eq!(merged.logging.level, "debug");
+    }
+
+    #[test]
+    fn test_merge_cli_args_very_verbose() {
+        use crate::cli::{Cli, Commands, CompressArgs, CompressionLevel, GpuBackend, LogFormat};
+
+        let config = Config::default();
+        let cli = Cli {
+            command: Commands::Compress(CompressArgs {
+                input: vec![],
+                output: None,
+                stdout: false,
+                plugin: None,
+                level: CompressionLevel::Balanced,
+                force: false,
+                timeout: None,
+                gpu_device: None,
+                gpu_backend: GpuBackend::Auto,
+            }),
+            verbose: 2,
+            quiet: false,
+            log_format: LogFormat::Human,
+            log_file: None,
+        };
+
+        let merged = merge_cli_args(config, &cli).expect("merge");
+        assert_eq!(merged.logging.level, "trace");
+    }
+
+    #[test]
+    fn test_merge_cli_args_quiet() {
+        use crate::cli::{Cli, Commands, CompressArgs, CompressionLevel, GpuBackend, LogFormat};
+
+        let config = Config::default();
+        let cli = Cli {
+            command: Commands::Compress(CompressArgs {
+                input: vec![],
+                output: None,
+                stdout: false,
+                plugin: None,
+                level: CompressionLevel::Balanced,
+                force: false,
+                timeout: None,
+                gpu_device: None,
+                gpu_backend: GpuBackend::Auto,
+            }),
+            verbose: 0,
+            quiet: true,
+            log_format: LogFormat::Human,
+            log_file: None,
+        };
+
+        let merged = merge_cli_args(config, &cli).expect("merge");
+        assert!(merged.output.quiet);
+    }
+
+    #[test]
+    fn test_merge_cli_args_log_format_json() {
+        use crate::cli::{Cli, Commands, CompressArgs, CompressionLevel, GpuBackend, LogFormat};
+
+        let config = Config::default();
+        let cli = Cli {
+            command: Commands::Compress(CompressArgs {
+                input: vec![],
+                output: None,
+                stdout: false,
+                plugin: None,
+                level: CompressionLevel::Balanced,
+                force: false,
+                timeout: None,
+                gpu_device: None,
+                gpu_backend: GpuBackend::Auto,
+            }),
+            verbose: 0,
+            quiet: false,
+            log_format: LogFormat::Json,
+            log_file: None,
+        };
+
+        let merged = merge_cli_args(config, &cli).expect("merge");
+        assert_eq!(merged.logging.format, "json");
+    }
+
+    #[test]
+    fn test_merge_cli_args_log_file() {
+        use crate::cli::{Cli, Commands, CompressArgs, CompressionLevel, GpuBackend, LogFormat};
+
+        let config = Config::default();
+        let cli = Cli {
+            command: Commands::Compress(CompressArgs {
+                input: vec![],
+                output: None,
+                stdout: false,
+                plugin: None,
+                level: CompressionLevel::Balanced,
+                force: false,
+                timeout: None,
+                gpu_device: None,
+                gpu_backend: GpuBackend::Auto,
+            }),
+            verbose: 0,
+            quiet: false,
+            log_format: LogFormat::Human,
+            log_file: Some(std::path::PathBuf::from("/tmp/test.log")),
+        };
+
+        let merged = merge_cli_args(config, &cli).expect("merge");
+        assert_eq!(merged.logging.file, "/tmp/test.log");
+    }
+
+    #[test]
+    fn test_merge_cli_args_compress_gpu_device() {
+        use crate::cli::{Cli, Commands, CompressArgs, CompressionLevel, GpuBackend, LogFormat};
+
+        let config = Config::default();
+        let cli = Cli {
+            command: Commands::Compress(CompressArgs {
+                input: vec![],
+                output: None,
+                stdout: false,
+                plugin: None,
+                level: CompressionLevel::Balanced,
+                force: false,
+                timeout: None,
+                gpu_device: Some(3),
+                gpu_backend: GpuBackend::Auto,
+            }),
+            verbose: 0,
+            quiet: false,
+            log_format: LogFormat::Human,
+            log_file: None,
+        };
+
+        let merged = merge_cli_args(config, &cli).expect("merge");
+        assert_eq!(merged.gpu.device, Some(3));
+    }
+
+    #[test]
+    fn test_merge_cli_args_decompress_force_cpu_and_device() {
+        use crate::cli::{Cli, Commands, DecompressArgs, GpuBackend, LogFormat};
+
+        let config = Config::default();
+        let cli = Cli {
+            command: Commands::Decompress(DecompressArgs {
+                input: vec![],
+                output: None,
+                force: false,
+                stdout: false,
+                block: None,
+                force_cpu: true,
+                gpu_device: Some(5),
+                gpu_backend: GpuBackend::Auto,
+            }),
+            verbose: 0,
+            quiet: false,
+            log_format: LogFormat::Human,
+            log_file: None,
+        };
+
+        let merged = merge_cli_args(config, &cli).expect("merge");
+        assert!(merged.gpu.force_cpu);
+        assert_eq!(merged.gpu.device, Some(5));
+    }
+
+    #[test]
+    fn test_merge_cli_args_non_compress_decompress_command() {
+        use crate::cli::{Cli, Commands, ConfigAction, ConfigArgs, LogFormat};
+
+        let config = Config::default();
+        let cli = Cli {
+            command: Commands::Config(ConfigArgs {
+                action: ConfigAction::List,
+            }),
+            verbose: 0,
+            quiet: false,
+            log_format: LogFormat::Human,
+            log_file: None,
+        };
+
+        // Should not error, GPU fields left at defaults
+        let merged = merge_cli_args(config, &cli).expect("merge");
+        assert!(!merged.gpu.force_cpu);
+        assert_eq!(merged.gpu.device, None);
+    }
+
+    // -----------------------------------------------------------------------
+    // merge_env_vars
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_merge_env_vars_compression_level() {
+        std::env::set_var("CRUSH_COMPRESSION_LEVEL", "fast");
+        let config = merge_env_vars(Config::default()).expect("merge");
+        assert_eq!(config.compression.level, "fast");
+        std::env::remove_var("CRUSH_COMPRESSION_LEVEL");
+    }
+
+    #[test]
+    fn test_merge_env_vars_output_color() {
+        std::env::set_var("CRUSH_OUTPUT_COLOR", "never");
+        let config = merge_env_vars(Config::default()).expect("merge");
+        assert_eq!(config.output.color, "never");
+        std::env::remove_var("CRUSH_OUTPUT_COLOR");
+    }
+
+    #[test]
+    fn test_merge_env_vars_gpu_enabled() {
+        std::env::set_var("CRUSH_GPU_ENABLED", "true");
+        let config = merge_env_vars(Config::default()).expect("merge");
+        assert!(config.gpu.enabled);
+        std::env::remove_var("CRUSH_GPU_ENABLED");
+    }
+
+    #[test]
+    fn test_merge_env_vars_gpu_device() {
+        std::env::set_var("CRUSH_GPU_DEVICE", "7");
+        let config = merge_env_vars(Config::default()).expect("merge");
+        assert_eq!(config.gpu.device, Some(7));
+        std::env::remove_var("CRUSH_GPU_DEVICE");
+    }
+
+    #[test]
+    fn test_merge_env_vars_invalid_timeout() {
+        std::env::set_var("CRUSH_COMPRESSION_TIMEOUT_SECONDS", "not_a_number");
+        let result = merge_env_vars(Config::default());
+        assert!(result.is_err());
+        std::env::remove_var("CRUSH_COMPRESSION_TIMEOUT_SECONDS");
+    }
+
+    #[test]
+    fn test_merge_env_vars_invalid_bool() {
+        std::env::set_var("CRUSH_OUTPUT_QUIET", "yes_please");
+        let result = merge_env_vars(Config::default());
+        assert!(result.is_err());
+        std::env::remove_var("CRUSH_OUTPUT_QUIET");
+    }
+
+    #[test]
+    fn test_merge_env_vars_logging_file() {
+        std::env::set_var("CRUSH_LOGGING_FILE", "/var/log/crush.log");
+        let config = merge_env_vars(Config::default()).expect("merge");
+        assert_eq!(config.logging.file, "/var/log/crush.log");
+        std::env::remove_var("CRUSH_LOGGING_FILE");
+    }
+
+    #[test]
+    fn test_merge_env_vars_logging_format() {
+        std::env::set_var("CRUSH_LOGGING_FORMAT", "json");
+        let config = merge_env_vars(Config::default()).expect("merge");
+        assert_eq!(config.logging.format, "json");
+        std::env::remove_var("CRUSH_LOGGING_FORMAT");
+    }
+
+    #[test]
+    fn test_merge_env_vars_logging_level() {
+        std::env::set_var("CRUSH_LOGGING_LEVEL", "trace");
+        let config = merge_env_vars(Config::default()).expect("merge");
+        assert_eq!(config.logging.level, "trace");
+        std::env::remove_var("CRUSH_LOGGING_LEVEL");
+    }
+
+    #[test]
+    fn test_merge_env_vars_progress_bars() {
+        std::env::set_var("CRUSH_OUTPUT_PROGRESS_BARS", "false");
+        let config = merge_env_vars(Config::default()).expect("merge");
+        assert!(!config.output.progress_bars);
+        std::env::remove_var("CRUSH_OUTPUT_PROGRESS_BARS");
+    }
+
+    #[test]
+    fn test_merge_env_vars_gpu_force_cpu() {
+        std::env::set_var("CRUSH_GPU_FORCE_CPU", "true");
+        let config = merge_env_vars(Config::default()).expect("merge");
+        assert!(config.gpu.force_cpu);
+        std::env::remove_var("CRUSH_GPU_FORCE_CPU");
+    }
+
+    #[test]
+    fn test_merge_env_vars_default_plugin() {
+        std::env::set_var("CRUSH_COMPRESSION_DEFAULT_PLUGIN", "deflate");
+        let config = merge_env_vars(Config::default()).expect("merge");
+        assert_eq!(config.compression.default_plugin, "deflate");
+        std::env::remove_var("CRUSH_COMPRESSION_DEFAULT_PLUGIN");
+    }
+
+    #[test]
+    fn test_merge_env_vars_unknown_key_ignored() {
+        std::env::set_var("CRUSH_UNKNOWN_KEY_XYZ", "whatever");
+        let result = merge_env_vars(Config::default());
+        assert!(result.is_ok()); // unknown keys are silently ignored
+        std::env::remove_var("CRUSH_UNKNOWN_KEY_XYZ");
+    }
+
+    // -----------------------------------------------------------------------
+    // GpuConfig defaults
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_gpu_config_defaults() {
+        let gpu = GpuConfig::default();
+        assert!(!gpu.enabled);
+        assert_eq!(gpu.device, None);
+        assert!(!gpu.force_cpu);
+    }
+
+    // -----------------------------------------------------------------------
+    // Config serialization roundtrip via TOML
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_config_toml_roundtrip() {
+        let config = Config {
+            compression: CompressionConfig {
+                default_plugin: "deflate".to_string(),
+                level: "best".to_string(),
+                timeout_seconds: 120,
+            },
+            output: OutputConfig {
+                progress_bars: false,
+                color: "never".to_string(),
+                quiet: true,
+            },
+            logging: LoggingConfig {
+                format: "json".to_string(),
+                level: "trace".to_string(),
+                file: "/tmp/log".to_string(),
+            },
+            gpu: GpuConfig {
+                enabled: true,
+                device: Some(4),
+                force_cpu: true,
+            },
+        };
+
+        let toml_str = toml::to_string_pretty(&config).expect("serialize");
+        let deserialized: Config = toml::from_str(&toml_str).expect("deserialize");
+
+        assert_eq!(deserialized.compression.default_plugin, "deflate");
+        assert_eq!(deserialized.compression.level, "best");
+        assert_eq!(deserialized.compression.timeout_seconds, 120);
+        assert!(!deserialized.output.progress_bars);
+        assert_eq!(deserialized.output.color, "never");
+        assert!(deserialized.output.quiet);
+        assert_eq!(deserialized.logging.format, "json");
+        assert_eq!(deserialized.logging.level, "trace");
+        assert_eq!(deserialized.logging.file, "/tmp/log");
+        assert!(deserialized.gpu.enabled);
+        assert_eq!(deserialized.gpu.device, Some(4));
+        assert!(deserialized.gpu.force_cpu);
+    }
 }

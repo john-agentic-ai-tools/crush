@@ -106,3 +106,98 @@ pub fn run(args: &PluginsArgs) -> Result<()> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cli::{OutputFormat, PluginsAction, PluginsArgs};
+
+    fn init_plugins() {
+        // Ensure plugin registry is initialized (idempotent)
+        let _ = crush_core::init_plugins();
+    }
+
+    #[test]
+    fn test_plugins_list_human() {
+        init_plugins();
+        let args = PluginsArgs {
+            action: PluginsAction::List {
+                format: OutputFormat::Human,
+            },
+        };
+        let result = run(&args);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_plugins_list_json() {
+        init_plugins();
+        let args = PluginsArgs {
+            action: PluginsAction::List {
+                format: OutputFormat::Json,
+            },
+        };
+        let result = run(&args);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_plugins_list_csv_unsupported() {
+        init_plugins();
+        let args = PluginsArgs {
+            action: PluginsAction::List {
+                format: OutputFormat::Csv,
+            },
+        };
+        let result = run(&args);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_plugins_info_deflate() {
+        init_plugins();
+        let args = PluginsArgs {
+            action: PluginsAction::Info {
+                name: "deflate".to_string(),
+            },
+        };
+        let result = run(&args);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_plugins_info_not_found() {
+        init_plugins();
+        let args = PluginsArgs {
+            action: PluginsAction::Info {
+                name: "nonexistent-plugin-xyz".to_string(),
+            },
+        };
+        let result = run(&args);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_plugins_test_deflate() {
+        init_plugins();
+        let args = PluginsArgs {
+            action: PluginsAction::Test {
+                name: "deflate".to_string(),
+            },
+        };
+        let result = run(&args);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_plugins_test_not_found() {
+        init_plugins();
+        let args = PluginsArgs {
+            action: PluginsAction::Test {
+                name: "nonexistent-plugin-xyz".to_string(),
+            },
+        };
+        let result = run(&args);
+        assert!(result.is_err());
+    }
+}
