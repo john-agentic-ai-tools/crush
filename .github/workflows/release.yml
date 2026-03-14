@@ -63,7 +63,7 @@ jobs:
               echo "  -> First publish (crate not on crates.io)"
               PUBLISH_LIST=$(echo "$PUBLISH_LIST" | jq --arg c "$CRATE" '. + [$c]')
             elif [ "$HTTP_STATUS" = "200" ]; then
-              EXISTS=$(jq -e --arg v "$LOCAL_VERSION" '.versions[] | select(.num == $v)' /tmp/crate.json 2>/dev/null)
+              EXISTS=$(jq --arg v "$LOCAL_VERSION" '.versions[] | select(.num == $v)' /tmp/crate.json 2>/dev/null || true)
               if [ -z "$EXISTS" ]; then
                 echo "  -> New version (will publish)"
                 PUBLISH_LIST=$(echo "$PUBLISH_LIST" | jq --arg c "$CRATE" '. + [$c]')
