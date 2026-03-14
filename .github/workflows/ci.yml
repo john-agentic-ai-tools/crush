@@ -124,6 +124,34 @@ jobs:
           files: target/nextest/ci/junit.xml
           check_name: Test Results (${{ matrix.os }})
 
+  cuda_check:
+    name: CUDA Compile Check
+    needs: [lint]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: cuda-check
+
+      - uses: Jimver/cuda-toolkit@v0.2.30
+        id: cuda-toolkit
+        with:
+          cuda: '13.1.0'
+          method: network
+          sub-packages: '["nvrtc", "nvrtc-dev", "cudart"]'
+
+      - name: Check CUDA feature compiles
+        run: cargo check -p crush-gpu --features cuda
+
+      - name: Clippy with CUDA feature
+        run: cargo clippy -p crush-gpu --features cuda --all-targets -- -D warnings
+
   coverage:
     name: Code Coverage
     needs: [test]

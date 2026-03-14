@@ -127,6 +127,14 @@ pub struct CompressArgs {
     /// Compression timeout in seconds (0 = no timeout)
     #[arg(long, value_name = "SECONDS")]
     pub timeout: Option<u64>,
+
+    /// GPU device index to use for GPU-accelerated compression
+    #[arg(long, value_name = "INDEX")]
+    pub gpu_device: Option<u32>,
+
+    /// GPU compute backend to use (default: auto)
+    #[arg(long, value_name = "BACKEND", default_value = "auto")]
+    pub gpu_backend: GpuBackend,
 }
 
 /// Decompress command arguments
@@ -169,6 +177,18 @@ pub struct DecompressArgs {
     /// Decompress only a specific block (random access, 0-indexed)
     #[arg(long, value_name = "N")]
     pub block: Option<u64>,
+
+    /// Force CPU-only decompression (skip GPU even for GPU-compressed files)
+    #[arg(long)]
+    pub force_cpu: bool,
+
+    /// GPU device index to use for GPU-accelerated decompression
+    #[arg(long, value_name = "INDEX")]
+    pub gpu_device: Option<u32>,
+
+    /// GPU compute backend to use (default: auto)
+    #[arg(long, value_name = "BACKEND", default_value = "auto")]
+    pub gpu_backend: GpuBackend,
 }
 
 /// Inspect command arguments
@@ -223,7 +243,10 @@ AVAILABLE KEYS:
     output.quiet                  true | false
     logging.format                human | json
     logging.level                 error | warn | info | debug | trace
-    logging.file                  Log file path (empty = stderr)")]
+    logging.file                  Log file path (empty = stderr)
+    gpu.enabled                   true | false (auto-select gpu-deflate)
+    gpu.device                    GPU device index or auto
+    gpu.force-cpu                 true | false (force CPU decompression)")]
 pub struct ConfigArgs {
     #[command(subcommand)]
     pub action: ConfigAction,
@@ -336,4 +359,15 @@ pub enum OutputFormat {
 pub enum LogFormat {
     Human,
     Json,
+}
+
+/// GPU compute backend selection
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum GpuBackend {
+    /// Auto-select: try CUDA first, then wgpu
+    Auto,
+    /// Force CUDA backend (requires NVIDIA GPU + CUDA toolkit)
+    Cuda,
+    /// Force wgpu backend (Vulkan / Metal / DX12)
+    Wgpu,
 }

@@ -8,6 +8,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use crc32fast::Hasher;
 use crush_core::error::{CrushError, PluginError, Result};
+use tracing::{debug, info, warn};
 
 use crate::format::{
     padding_to_alignment, GpuFileFooter, GpuFileHeader, TileFlags, TileHeader, TileIndexEntry,
@@ -207,19 +208,54 @@ pub fn decompress(input: &[u8], config: &EngineConfig, cancel: &AtomicBool) -> R
     let entries = read_tile_index(input, &footer, footer_start)?;
 
     // ── Try GPU decompression first ──────────────────────────────────
-    if !config.force_cpu {
-        if let Ok(Some(backend)) = crate::backend::discover_gpu() {
-            match decompress_tiles_gpu(input, &header, &entries, config, cancel, &*backend) {
-                Ok(output) => {
-                    return Ok(output);
+    if config.force_cpu {
+        debug!("force_cpu=true, skipping GPU discovery");
+    } else {
+        debug!(
+            tile_count = entries.len(),
+            force_cpu = config.force_cpu,
+            "Attempting GPU decompression for {} tiles",
+            entries.len()
+        );
+        match crate::backend::discover_gpu() {
+            Ok(Some(backend)) => {
+                info!(
+                    backend = backend.name(),
+                    tiles = entries.len(),
+                    "Using GPU backend '{}' for {} tiles",
+                    backend.name(),
+                    entries.len()
+                );
+                match decompress_tiles_gpu(input, &header, &entries, config, cancel, &*backend) {
+                    Ok(output) => {
+                        info!(
+                            output_bytes = output.len(),
+                            "GPU decompression succeeded ({} bytes)",
+                            output.len()
+                        );
+                        return Ok(output);
+                    }
+                    Err(e) => {
+                        warn!("GPU decompression failed, falling back to CPU: {e}");
+                    }
                 }
-                Err(e) => {
-                    eprintln!("crush-gpu: GPU decompression failed, falling back to CPU: {e}");
-                }
+            }
+            Ok(None) => {
+                info!("No GPU backend available, using CPU");
+            }
+            Err(e) => {
+                // GPU discovery returned an explicit error (e.g. user requested
+                // --gpu-backend cuda but CUDA is unavailable). Propagate it.
+                return Err(e);
             }
         }
     }
 
+    info!(
+        tiles = entries.len(),
+        "Starting CPU decompression for {} tiles",
+        entries.len()
+    );
     decompress_tiles_cpu(input, &header, &entries, config, cancel)
 }
 
@@ -326,6 +362,12 @@ fn decompress_tiles_gpu(
     backend: &dyn crate::backend::ComputeBackend,
 ) -> Result<Vec<u8>> {
     // Build CompressedTile structs from the archive entries.
+    debug!(
+        tile_count = entries.len(),
+        backend = backend.name(),
+        "Building compressed tile structs for GPU dispatch"
+    );
+    let build_start = std::time::Instant::now();
     let mut tiles = Vec::with_capacity(entries.len());
     for (i, entry) in entries.iter().enumerate() {
         if cancel.load(Ordering::Relaxed) {
@@ -359,9 +401,29 @@ fn decompress_tiles_gpu(
             checksum: entry.checksum,
         });
     }
+    let build_elapsed = build_start.elapsed();
+    debug!(
+        tile_count = tiles.len(),
+        elapsed_secs = build_elapsed.as_secs_f64(),
+        "Built {} tile structs in {:.1}ms",
+        tiles.len(),
+        build_elapsed.as_secs_f64() * 1000.0
+    );
 
     // Dispatch to GPU backend (GDeflate path).
+    debug!(
+        "Dispatching {} tiles to {} backend...",
+        tiles.len(),
+        backend.name()
+    );
+    let dispatch_start = std::time::Instant::now();
     let decompressed = backend.decompress_tiles_gdeflate(&tiles, cancel)?;
+    let dispatch_elapsed = dispatch_start.elapsed();
+    debug!(
+        elapsed_secs = dispatch_elapsed.as_secs_f64(),
+        "GPU dispatch completed in {:.1}ms",
+        dispatch_elapsed.as_secs_f64() * 1000.0
+    );
 
     // Validate checksums and assemble output.
     let uncompressed_total = usize::try_from(header.uncompressed_size).map_err(|_| {

@@ -10,7 +10,7 @@ Modern data pipelines move massive amounts of data — training sets, model chec
 
 Crush is built to:
 
-- **Scale with hardware** — parallel CPU compression across all cores, GPU-accelerated decompression via Vulkan/Metal/DX12
+- **Scale with hardware** — parallel CPU compression across all cores, GPU-accelerated decompression via CUDA or Vulkan/Metal/DX12
 - **Adapt to data** — plugin architecture enables format-aware compression strategies; automatic entropy analysis routes data to the best algorithm
 - **Stay out of the way** — automatic GPU detection with CPU fallback, cooperative cancellation, and pipeline-friendly stdin/stdout
 - **Be safe and predictable** — memory-safe Rust, CRC32 integrity checks, RAII cleanup of partial files, no `.unwrap()` in production code
@@ -19,8 +19,8 @@ Crush is built to:
 
 ### Core Capabilities
 
-- **Parallel CPU Compression**: Multi-threaded compression scaling near-linearly to all available cores (983 MiB/s on 8+ cores)
-- **GPU-Accelerated Decompression**: GDeflate-based GPU decompression via Vulkan/Metal/DX12 with batched dispatch and automatic CPU fallback
+- **Parallel CPU Compression**: Multi-threaded compression scaling near-linearly to all available cores (1002 MiB/s on 8+ cores)
+- **GPU-Accelerated Decompression**: GDeflate-based GPU decompression via CUDA (560 MiB/s) or wgpu Vulkan/Metal/DX12 (386 MiB/s) with automatic CPU fallback
 - **Plugin Architecture**: Extensible system supporting multiple compression algorithms with automatic scoring and selection
 - **Random Access**: O(1) tile-based decompression for seeking into large archives without full decompression
 - **Metadata Preservation**: Automatically preserves file modification times and Unix permissions
@@ -73,11 +73,11 @@ Crush delivers exceptional throughput for both compression and decompression ope
 
 | Workers | Throughput  | Scaling |
 |---------|-------------|---------|
-| 1       | 92 MiB/s    | 1.0×    |
-| 2       | 181 MiB/s   | 1.97×   |
-| 4       | 347 MiB/s   | 3.77×   |
-| 8       | 576 MiB/s   | 6.26×   |
-| default (all cores) | 983 MiB/s | — |
+| 1       | 93 MiB/s    | 1.0×    |
+| 2       | 181 MiB/s   | 1.95×   |
+| 4       | 345 MiB/s   | 3.71×   |
+| 8       | 633 MiB/s   | 6.81×   |
+| default (all cores) | 1002 MiB/s | — |
 
 Compression scales near-linearly with thread count. `workers=0` (default) uses all available logical CPUs.
 
@@ -85,54 +85,64 @@ Compression scales near-linearly with thread count. `workers=0` (default) uses a
 
 | Block Size | Throughput  |
 |-----------|-------------|
-| 64 KB     | 983 MiB/s   |
-| 512 KB    | 957 MiB/s   |
-| 1024 KB   | 941 MiB/s   |
+| 64 KB     | 1002 MiB/s  |
+| 512 KB    | 971 MiB/s   |
+| 1024 KB   | 890 MiB/s   |
 
 #### CPU Decompression (crush-core)
 
 | Workers | Throughput  |
 |---------|-------------|
-| 1       | 312 MiB/s   |
-| 2       | 375 MiB/s   |
-| 4       | 417 MiB/s   |
-| 8       | 439 MiB/s   |
-| default (all cores) | 435 MiB/s |
+| 1       | 309 MiB/s   |
+| 2       | 373 MiB/s   |
+| 4       | 413 MiB/s   |
+| 8       | 429 MiB/s   |
+| default (all cores) | 442 MiB/s |
 
 #### GPU Decompression (crush-gpu, GDeflate)
 
-GPU decompression uses batched dispatch — all tiles are submitted in a single GPU command to eliminate per-tile host-GPU synchronization overhead.
+GPU decompression uses multi-block kernel dispatch — all tiles in a batch launch as parallel CUDA blocks or wgpu workgroups, fully utilizing GPU hardware.
+
+**Benchmark Results (Criterion, wgpu Vulkan):**
 
 | Corpus | GPU | CPU | Winner |
 |--------|-----|-----|--------|
-| log-1MB | 137 MiB/s | 329 MiB/s | CPU |
-| binary-1MB | 86 MiB/s | 126 MiB/s | CPU |
-| mixed-1MB | 87 MiB/s | 181 MiB/s | CPU |
-| mixed-10MB | **344 MiB/s** | 186 MiB/s | **GPU 1.85x** |
+| log-1MB | 141 MiB/s | 319 MiB/s | CPU |
+| binary-1MB | 85 MiB/s | 126 MiB/s | CPU |
+| mixed-1MB | 87 MiB/s | 176 MiB/s | CPU |
+| mixed-10MB | **355 MiB/s** | 179 MiB/s | **GPU 1.98x** |
 
 GPU decompression outperforms CPU at larger data sizes (>2-4 MB) where the fixed dispatch overhead is amortized across many tiles. For smaller data, CPU is faster.
+
+**Real-World Large File (1.8 GB compressed, ~62K tiles, RTX 3060 Ti):**
+
+| Backend | Throughput | vs CPU |
+|---------|-----------|--------|
+| **CUDA** | **560 MiB/s** | **3.1x** |
+| wgpu (Vulkan) | 386 MiB/s | 2.2x |
+| CPU (all cores) | 179 MiB/s | baseline |
 
 **GPU Compression Throughput (GDeflate, CPU-side):**
 
 | Corpus | Throughput |
 |--------|-----------|
-| log-text-1MB | 178 MiB/s |
-| binary-1MB | 70 MiB/s |
-| mixed-1MB | 99 MiB/s |
-| mixed-10MB | 104 MiB/s |
+| log-text-1MB | 179 MiB/s |
+| binary-1MB | 69 MiB/s |
+| mixed-1MB | 98 MiB/s |
+| mixed-10MB | 100 MiB/s |
 
 **Random Access Performance** (64 MB corpus, 1 MB blocks):
 
 | Operation              | Latency  |
 |------------------------|----------|
-| Decompress last block  | ~1.12 ms |
-| Decompress first block | ~1.12 ms |
+| Decompress last block  | ~1.15 ms |
+| Decompress first block | ~1.16 ms |
 
 ### Key Performance Features
 
 - **Near-linear compression scaling**: throughput doubles with each doubling of worker count up to CPU core count
 - **SIMD-accelerated DEFLATE**: powered by libdeflater for maximum per-thread throughput (~4x faster than pure-Rust backends)
-- **GPU-accelerated decompression**: batched GDeflate dispatch via wgpu (Vulkan/Metal/DX12) with automatic CPU fallback
+- **GPU-accelerated decompression**: multi-block GDeflate dispatch via CUDA (560 MiB/s) or wgpu (Vulkan/Metal/DX12) with automatic CPU fallback
 - **Configurable parallelism**: `workers(n)` limits CPU usage for background tasks; `workers(0)` (default) uses all cores
 - **Consistent Random Access**: O(1) block decompression via seekable block index (~1 ms per block)
 - **Memory Efficient**: Exact worst-case buffer sizing eliminates over-allocation
@@ -503,7 +513,41 @@ crush inspect data.txt.crush | grep "reduction"
 
 ## Command Reference
 
-### `crush compress`
+```bash
+Usage: crush [OPTIONS] <COMMAND>
+
+Commands:
+  compress    Compress files
+  decompress  Decompress files
+  inspect     Inspect compressed file metadata
+  config      Manage configuration
+  plugins     Manage compression plugins
+  help        Print this message or the help of the given subcommand(s)
+
+Options:
+  -v, --verbose...
+          Enable verbose output (repeat for more verbosity: -v, -vv)
+
+  -q, --quiet
+          Suppress all output except errors
+
+      --log-format <FORMAT>
+          Log format: human or json
+
+          [default: human]
+          [possible values: human, json]
+
+      --log-file <FILE>
+          Log output file (default: stderr)
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+  -V, --version
+          Print version
+```
+
+### crush compress
 
 Compress files or stdin.
 
@@ -515,35 +559,67 @@ Arguments:
 
 Options:
   -o, --output <FILE>    Output file (default: INPUT.crush or stdout)
-  -k, --keep             Keep input file after compression
   -f, --force            Overwrite existing output file
   -p, --plugin <NAME>    Force specific compression plugin (default: auto)
   -v, --verbose          Increase verbosity (-v, -vv, -vvv)
       --log <FILE>       Log operations to file
   -h, --help             Print help
+  --stout                Write output to stdout (for piping)
+  --block <N>            Decompress only a specific block (random access, 0-indexed)
+  --force-cpu            Force CPU-only decompression (skip GPU even for GPU-compressed files)
+  --gpu-device <INDEX>   GPU device index to use for GPU-accelerated decompression
+  --gpu-backend <BACKEND> GPU compute backend to use (default: auto)
+                          Possible values:
+                          - auto: Auto-select: try CUDA first, then wgpu
+                          - cuda: Force CUDA backend (requires NVIDIA GPU + CUDA toolkit)
+                          - wgpu: Force wgpu backend (Vulkan / Metal / DX12)
 ```
 
-### `crush decompress`
+### crush decompress
 
 Decompress files or stdin.
 
 ```bash
-crush decompress [OPTIONS] <INPUT>
+Usage: crush decompress [OPTIONS] [FILE]...
 
 Arguments:
-  <INPUT>  Input file or stdin (use '-' for stdin)
+  [FILE]...
+          Compressed files to decompress (reads from stdin if not provided with --stdout)
 
 Options:
-  -o, --output <FILE>    Output file (default: removes .crush extension or stdout)
-  -k, --keep             Keep input file after decompression
-  -f, --force            Overwrite existing output file
-  -c, --stdout           Write to stdout
-  -v, --verbose          Increase verbosity (-v, -vv, -vvv)
-      --log <FILE>       Log operations to file
-  -h, --help             Print help
+  -o, --output <PATH>
+          Output file or directory (default: strip .crush extension)
+
+  -f, --force
+          Force overwrite of existing files
+
+      --stdout
+          Write output to stdout (for piping)
+
+      --block <N>
+          Decompress only a specific block (random access, 0-indexed)
+
+      --force-cpu
+          Force CPU-only decompression (skip GPU even for GPU-compressed files)
+
+      --gpu-device <INDEX>
+          GPU device index to use for GPU-accelerated decompression
+
+      --gpu-backend <BACKEND>
+          GPU compute backend to use (default: auto)
+
+          Possible values:
+          - auto: Auto-select: try CUDA first, then wgpu
+          - cuda: Force CUDA backend (requires NVIDIA GPU + CUDA toolkit)
+          - wgpu: Force wgpu backend (Vulkan / Metal / DX12)
+
+          [default: auto]
+
+  -h, --help
+          Print help (see a summary with '-h')
 ```
 
-### `crush inspect`
+### crush inspect
 
 Inspect compressed files.
 
@@ -560,19 +636,49 @@ Options:
   -h, --help    Print help
 ```
 
-### `crush config`
+### crush config
 
 Manage configuration.
 
 ```bash
-crush config <COMMAND>
+Usage: crush config <COMMAND>
 
 Commands:
-  set     Set configuration value
-  get     Get configuration value
-  list    List all configuration
-  reset   Reset configuration to defaults
-  help    Print help
+  set    Set configuration value
+  get    Get configuration value
+  list   List all configuration
+  reset  Reset to default configuration
+  help   Print this message or the help of the given subcommand(s)
+
+Options:
+  -h, --help  Print help
+
+EXAMPLES:
+    # Set compression level to fast
+    crush config set compression.level fast
+
+    # Get current compression level
+    crush config get compression.level
+
+    # List all configuration
+    crush config list
+
+    # Reset configuration to defaults
+    crush config reset --yes
+
+AVAILABLE KEYS:
+    compression.default-plugin    Default plugin name (auto)
+    compression.level             fast | balanced | best
+    compression.timeout-seconds   Timeout in seconds (0 = no timeout)
+    output.progress-bars          true | false
+    output.color                  auto | always | never
+    output.quiet                  true | false
+    logging.format                human | json
+    logging.level                 error | warn | info | debug | trace
+    logging.file                  Log file path (empty = stderr)
+    gpu.enabled                   true | false (auto-select gpu-deflate)
+    gpu.device                    GPU device index or auto
+    gpu.force-cpu                 true | false (force CPU decompression)
 ```
 
 ### `crush plugins`
