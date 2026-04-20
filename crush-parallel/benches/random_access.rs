@@ -6,6 +6,7 @@
 
 use criterion::{criterion_group, criterion_main, Criterion};
 use crush_parallel::{compress, decompress_block, load_index, EngineConfiguration};
+use std::hint::black_box;
 use std::io::Cursor;
 
 /// Generate a realistic benchmark corpus simulating source-code / log-file content.
@@ -106,5 +107,47 @@ fn bench_random_access(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_random_access);
+/// SC-004: 10k index lookups against a 10 240-block CRSH file.
+/// Exercises the cumulative-offset table (Slice E) — target ≥100× reduction vs pre-011.
+fn bench_lookup_10k_blocks(c: &mut Criterion) {
+    // config enforces block_size >= 64 KB; a 10 240 × 64 KB fixture = 640 MB is
+    // wasteful, so scale block count at the minimum allowed block_size so we still
+    // get ≥10k blocks. Using 64 KB blocks × 10 240 blocks = 640 MB fixture —
+    // generated once per benchmark run (not per sample), so still acceptable.
+    let data = generate_corpus(10_240 * 64 * 1024, 0x1234_5678_9ABC_DEF0);
+
+    let config = EngineConfiguration::builder()
+        .block_size(64 * 1024)
+        .build()
+        .expect("config");
+    let compressed = compress(&data, &config).expect("compress");
+
+    let mut cursor = Cursor::new(&compressed);
+    let index = load_index(&mut cursor).expect("load_index");
+    assert!(index.len() >= 10_000, "need ≥10k blocks for SC-004 bench");
+
+    let total_uncompressed = index.total_uncompressed_size();
+    let stride = total_uncompressed / 10_000;
+
+    let mut group = c.benchmark_group("random_access");
+    group.sample_size(50);
+
+    group.bench_function("lookup_10k_blocks", |b| {
+        b.iter(|| {
+            let mut acc: u64 = 0;
+            for i in 0..10_000u64 {
+                let off = i.saturating_mul(stride);
+                acc ^= index.uncompressed_offset(i);
+                if let Some(blk) = index.block_for_offset(off) {
+                    acc ^= blk;
+                }
+            }
+            black_box(acc)
+        });
+    });
+
+    group.finish();
+}
+
+criterion_group!(benches, bench_random_access, bench_lookup_10k_blocks);
 criterion_main!(benches);

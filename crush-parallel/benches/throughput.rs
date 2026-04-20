@@ -5,7 +5,9 @@
 )]
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use crush_parallel::{compress, decompress, EngineConfiguration};
+use crush_parallel::{compress, decompress, decompress_block, load_index, EngineConfiguration};
+use std::hint::black_box;
+use std::io::Cursor;
 
 /// Generate a realistic benchmark corpus simulating source-code / log-file content.
 ///
@@ -139,7 +141,93 @@ fn bench_decompression(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_compression, bench_decompression);
+/// T007 — phase-isolated micro-benches.
+///
+/// These benchmarks deliberately vary block count at fixed total size so the cost
+/// attributable to each internal phase (parallel compression vs assembly) is
+/// visible when reading criterion output, without exposing private helpers as
+/// `pub` (which would break SC-007).
+///
+/// - `compress_parallel_dominated` — few, large blocks → parallel DEFLATE cost dominates.
+/// - `compress_assembly_dominated` — many, small blocks → assembly/index cost dominates.
+/// - `decompress_read_phase_only`   — sequential `decompress_block` walk (measures read + single-block decompress).
+/// - `decompress_parallel_dominated` — full `decompress` path; compare against `decompress_read_phase_only` to isolate the par-decompress win.
+fn bench_phase_isolated(c: &mut Criterion) {
+    // 64 MB fixture — small enough to iterate fast, large enough for stable numbers.
+    let data = generate_corpus(64 * 1024 * 1024, 0xFADE_C0DE_BEEF_0007);
+
+    let mut group = c.benchmark_group("phase_isolated");
+    group.throughput(Throughput::Bytes(data.len() as u64));
+    group.sample_size(10);
+
+    let large_block = EngineConfiguration::builder()
+        .block_size(4 * 1_048_576)
+        .build()
+        .expect("config");
+    group.bench_with_input(
+        BenchmarkId::new("compress_parallel_dominated", "block=4MB"),
+        &data,
+        |b, data| {
+            b.iter(|| compress(data, &large_block).expect("compress"));
+        },
+    );
+
+    // block_size minimum is 64 KB; this is as small as the config allows, which
+    // still produces ~1000 blocks for a 64 MB fixture — assembly/index overhead dominates.
+    let small_block = EngineConfiguration::builder()
+        .block_size(64 * 1024)
+        .build()
+        .expect("config");
+    group.bench_with_input(
+        BenchmarkId::new("compress_assembly_dominated", "block=64KB"),
+        &data,
+        |b, data| {
+            b.iter(|| compress(data, &small_block).expect("compress"));
+        },
+    );
+
+    // Pre-compress once for the decompress benches.
+    let default_cfg = EngineConfiguration::builder()
+        .block_size(1_048_576)
+        .build()
+        .expect("config");
+    let compressed = compress(&data, &default_cfg).expect("compress");
+
+    group.bench_with_input(
+        BenchmarkId::new("decompress_read_phase_only", "block=1MB"),
+        &compressed,
+        |b, compressed| {
+            b.iter(|| {
+                let mut cursor = Cursor::new(compressed);
+                let index = load_index(&mut cursor).expect("load_index");
+                let mut acc: usize = 0;
+                for i in 0..index.len() {
+                    let blk =
+                        decompress_block(&mut cursor, &index, i, &default_cfg).expect("block");
+                    acc = acc.wrapping_add(blk.len());
+                }
+                black_box(acc)
+            });
+        },
+    );
+
+    group.bench_with_input(
+        BenchmarkId::new("decompress_parallel_dominated", "block=1MB"),
+        &compressed,
+        |b, compressed| {
+            b.iter(|| decompress(compressed, &default_cfg).expect("decompress"));
+        },
+    );
+
+    group.finish();
+}
+
+criterion_group!(
+    benches,
+    bench_compression,
+    bench_decompression,
+    bench_phase_isolated
+);
 criterion_main!(benches);
 
 // SC-006 Size comparison results (T074, measured 2026-02-22):

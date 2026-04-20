@@ -1,15 +1,16 @@
 //! Main compression and decompression entry points.
 
-use crate::block::{compress_block, decompress_block_payload};
+use crate::block::{
+    compress_block, decompress_block_into, resolve_compression_level, CompressedBlock,
+};
 use crate::config::{EngineConfiguration, ProgressEvent, ProgressPhase};
 use crate::format::{BlockHeader, BlockIndexEntry, FileFlags, FileFooter, FileHeader, IndexHeader};
 use crate::index::load_index;
 use crush_core::error::{CrushError, Result};
+use libdeflater::{Compressor, Decompressor};
 use rayon::prelude::*;
 use std::io::{Cursor, Read, Seek, SeekFrom, Write};
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
 
 // ---------------------------------------------------------------------------
 // Thread pool helper
@@ -34,104 +35,155 @@ fn with_pool<T: Send>(config: &EngineConfiguration, f: impl FnOnce() -> T + Send
 ///
 /// - [`CrushError::Cancelled`] — cancelled via the progress callback.
 /// - [`CrushError::InvalidConfig`] — configuration validation failed.
+#[allow(clippy::too_many_lines)] // single cohesive pipeline: resolve → parallel compress → pre-allocate → parallel assemble → index → footer → progress
 pub fn compress(input: &[u8], config: &EngineConfiguration) -> Result<Vec<u8>> {
-    let cancelled = Arc::new(AtomicBool::new(false));
-
     let block_size = config.block_size as usize;
     let blocks: Vec<&[u8]> = input.chunks(block_size).collect();
     let total_blocks = blocks.len() as u64;
 
-    // Compress all blocks in parallel (respects config.workers via dedicated pool)
-    let results: Vec<Result<crate::block::CompressedBlock>> = with_pool(config, || {
+    // Resolve compression level once on the driver, not per-block (Slice A).
+    let lvl = resolve_compression_level(config.compression_level)?;
+
+    // Slice A: pool one Compressor per worker thread via map_init.
+    // The first block on each worker allocates its Compressor; every subsequent
+    // block on that worker reuses it.
+    let results: Vec<Result<CompressedBlock>> = with_pool(config, || {
         blocks
             .par_iter()
             .enumerate()
-            .map(|(i, chunk)| {
-                if cancelled.load(Ordering::Acquire) {
-                    return Err(CrushError::Cancelled);
-                }
-                compress_block(chunk, i, config)
-            })
+            .map_init(
+                || Compressor::new(lvl),
+                |compressor, (i, chunk)| compress_block(compressor, chunk, i, config),
+            )
             .collect()
     });
 
-    // Check for errors / cancellation
-    // block count fits usize: validated against u32::MAX in the index write path
+    // block count fits usize: validated against u32::MAX in the index write path.
     #[allow(clippy::cast_possible_truncation)]
-    let mut compressed_blocks = Vec::with_capacity(total_blocks as usize);
+    let mut compressed_blocks: Vec<CompressedBlock> = Vec::with_capacity(total_blocks as usize);
     for r in results {
         compressed_blocks.push(r?);
     }
 
-    // Assemble output
-    let mut out = Vec::new();
+    // ---------------------------------------------------------------------
+    // Slice B: compute exact output size, pre-allocate, parallel assembly.
+    // ---------------------------------------------------------------------
 
     let mut flags = FileFlags::default();
     if config.checksums {
         flags = flags.with_checksums();
     }
 
-    let header = FileHeader::new(
+    let file_header = FileHeader::new(
         config.block_size,
         config.compression_level,
         flags,
         input.len() as u64,
         total_blocks,
     );
-    out.extend_from_slice(&header.to_bytes());
 
-    let mut index_entries = Vec::with_capacity(compressed_blocks.len());
-    let mut bytes_processed: u64 = 0;
+    let header_size = FileHeader::SIZE;
+    let blocks_region_size: usize = compressed_blocks
+        .iter()
+        .map(|b| BlockHeader::SIZE + b.payload.len())
+        .sum();
+    let index_region_size = IndexHeader::SIZE + compressed_blocks.len() * BlockIndexEntry::SIZE;
+    let footer_size = FileFooter::SIZE;
+    let total_size = header_size + blocks_region_size + index_region_size + footer_size;
 
-    for (i, block) in compressed_blocks.iter().enumerate() {
-        let block_offset = out.len() as u64;
-        out.extend_from_slice(&block.header.to_bytes());
-        out.extend_from_slice(&block.payload);
+    let mut out = vec![0u8; total_size];
 
-        index_entries.push(BlockIndexEntry {
-            block_offset,
-            compressed_size: block.header.compressed_size,
-            uncompressed_size: block.header.uncompressed_size,
-            checksum: block.header.checksum,
-        });
+    // Compute per-block output offsets on the driver thread.
+    let mut block_offsets: Vec<usize> = Vec::with_capacity(compressed_blocks.len());
+    let mut cursor = header_size;
+    for b in &compressed_blocks {
+        block_offsets.push(cursor);
+        cursor += BlockHeader::SIZE + b.payload.len();
+    }
+    debug_assert_eq!(cursor, header_size + blocks_region_size);
 
-        bytes_processed += u64::from(block.header.uncompressed_size);
+    // Write FileHeader (driver).
+    out[..header_size].copy_from_slice(&file_header.to_bytes());
 
-        // Invoke progress callback
-        if let Some(cb_arc) = &config.progress {
-            let event = ProgressEvent {
-                bytes_processed,
-                blocks_completed: i as u64 + 1,
-                total_blocks: Some(total_blocks),
-                phase: ProgressPhase::Compressing,
-            };
-            let mut cb = cb_arc.lock().map_err(|_| {
-                CrushError::InvalidConfig("progress callback mutex poisoned".to_owned())
-            })?;
-            if !cb(event) {
-                return Err(CrushError::Cancelled);
-            }
+    // Partition the blocks region into disjoint per-block slices and copy
+    // headers + payloads in parallel (Slice B).
+    {
+        let (_header_region, rest) = out.split_at_mut(header_size);
+        let (blocks_region, _trailing) = rest.split_at_mut(blocks_region_size);
+
+        let mut block_slices: Vec<&mut [u8]> = Vec::with_capacity(compressed_blocks.len());
+        let mut remaining: &mut [u8] = blocks_region;
+        for b in &compressed_blocks {
+            let chunk_len = BlockHeader::SIZE + b.payload.len();
+            let (chunk, rest) = remaining.split_at_mut(chunk_len);
+            block_slices.push(chunk);
+            remaining = rest;
         }
+        debug_assert!(remaining.is_empty());
+
+        block_slices
+            .into_par_iter()
+            .zip(compressed_blocks.par_iter())
+            .for_each(|(slice, block)| {
+                let hdr_bytes = block.header.to_bytes();
+                slice[..BlockHeader::SIZE].copy_from_slice(&hdr_bytes);
+                slice[BlockHeader::SIZE..].copy_from_slice(&block.payload);
+            });
     }
 
-    // Write index
-    let index_offset = out.len() as u64;
+    // Build index entries (driver; cheap relative to payload copies).
+    let mut index_entries = Vec::with_capacity(compressed_blocks.len());
+    for (i, b) in compressed_blocks.iter().enumerate() {
+        index_entries.push(BlockIndexEntry {
+            block_offset: block_offsets[i] as u64,
+            compressed_size: b.header.compressed_size,
+            uncompressed_size: b.header.uncompressed_size,
+            checksum: b.header.checksum,
+        });
+    }
+
+    // Write index region (driver).
+    let index_offset = header_size + blocks_region_size;
     let entry_count = u32::try_from(index_entries.len())
         .map_err(|_| CrushError::InvalidConfig("too many blocks for index".to_owned()))?;
     let ih = IndexHeader {
         entry_count,
         index_flags: 0,
     };
-    out.extend_from_slice(&ih.to_bytes());
+    out[index_offset..index_offset + IndexHeader::SIZE].copy_from_slice(&ih.to_bytes());
+    let mut entry_cursor = index_offset + IndexHeader::SIZE;
     for e in &index_entries {
-        out.extend_from_slice(&e.to_bytes());
+        out[entry_cursor..entry_cursor + BlockIndexEntry::SIZE].copy_from_slice(&e.to_bytes());
+        entry_cursor += BlockIndexEntry::SIZE;
     }
+    debug_assert_eq!(entry_cursor, index_offset + index_region_size);
 
-    // Write footer
-    let index_size = u32::try_from(IndexHeader::SIZE + index_entries.len() * BlockIndexEntry::SIZE)
+    // Write footer (driver).
+    let index_size_u32 = u32::try_from(index_region_size)
         .map_err(|_| CrushError::InvalidConfig("index too large for footer".to_owned()))?;
-    let footer = FileFooter::new(index_offset, index_size);
-    out.extend_from_slice(&footer.to_bytes());
+    let footer = FileFooter::new(index_offset as u64, index_size_u32);
+    out[total_size - FileFooter::SIZE..].copy_from_slice(&footer.to_bytes());
+
+    // Invoke progress callback in a single driver-side post-pass so we don't
+    // re-serialize parallel assembly through a mutex (Slice B).
+    if let Some(cb_arc) = &config.progress {
+        let mut cb = cb_arc.lock().map_err(|_| {
+            CrushError::InvalidConfig("progress callback mutex poisoned".to_owned())
+        })?;
+        let mut bytes_processed: u64 = 0;
+        for (i, block) in compressed_blocks.iter().enumerate() {
+            bytes_processed += u64::from(block.header.uncompressed_size);
+            let event = ProgressEvent {
+                bytes_processed,
+                blocks_completed: i as u64 + 1,
+                total_blocks: Some(total_blocks),
+                phase: ProgressPhase::Compressing,
+            };
+            if !cb(event) {
+                return Err(CrushError::Cancelled);
+            }
+        }
+    }
 
     Ok(out)
 }
@@ -190,6 +242,9 @@ pub fn compress_to_writer<W: Write>(
 /// # Errors
 ///
 /// Returns any error from `compress()` or the underlying writer.
+//
+// NOTE: FR-015 streaming (do not buffer full input) is deferred to
+// feature 012-streaming-pipeline (see specs/011-perf-optimizations/research.md § 6).
 pub fn compress_stream<R: Read, W: Write>(
     mut reader: R,
     mut writer: W,
@@ -232,7 +287,8 @@ pub fn decompress(input: &[u8], config: &EngineConfiguration) -> Result<Vec<u8>>
 /// Decompress a CRSH file from a seekable reader.
 ///
 /// Phase 1 (sequential): reads all block headers and payloads into memory.
-/// Phase 2 (parallel): decompresses the collected payloads via rayon.
+/// Phase 2 (parallel): decompresses the collected payloads directly into a
+/// pre-allocated output buffer via pooled `Decompressor`s.
 ///
 /// This two-phase approach avoids sharing `&mut R` across rayon worker threads.
 ///
@@ -244,6 +300,7 @@ pub fn decompress(input: &[u8], config: &EngineConfiguration) -> Result<Vec<u8>>
 /// - [`CrushError::IndexCorrupted`] — footer or index is missing or invalid.
 /// - [`CrushError::Cancelled`] — cancelled via progress callback.
 /// - [`CrushError::Io`] — underlying I/O error.
+#[allow(clippy::too_many_lines)] // single cohesive pipeline: load index → read phase → partition → parallel decompress → progress
 pub fn decompress_from_reader<R: Read + Seek>(
     reader: &mut R,
     config: &EngineConfiguration,
@@ -289,50 +346,90 @@ pub fn decompress_from_reader<R: Read + Seek>(
         })
         .collect::<Result<Vec<_>>>()?;
 
-    // Phase 2: Decompress in parallel — no reader access needed.
-    let results: Vec<Result<(usize, Vec<u8>)>> = with_pool(config, || {
-        raw_blocks
-            .par_iter()
+    // Slice C: pre-allocate the final output once, with the known total uncompressed size.
+    let total_usize = usize::try_from(total_uncompressed).map_err(|_| {
+        CrushError::InvalidConfig(format!(
+            "total uncompressed size {total_uncompressed} overflows usize"
+        ))
+    })?;
+    let mut output = vec![0u8; total_usize];
+
+    // Compute per-block output offsets inline with a single running sum — no dependency on
+    // BlockIndex::cumulative_uncompressed (US3), so this slice lands independently.
+    let mut per_block_sizes: Vec<usize> = Vec::with_capacity(raw_blocks.len());
+    let mut running: usize = 0;
+    for (header, _) in &raw_blocks {
+        let sz = header.uncompressed_size as usize;
+        per_block_sizes.push(sz);
+        running = running.checked_add(sz).ok_or_else(|| {
+            CrushError::InvalidFormat(
+                "block uncompressed sizes overflow usize during offset calculation".to_owned(),
+            )
+        })?;
+    }
+    debug_assert_eq!(running, total_usize);
+
+    // Partition output into disjoint per-block slices.
+    let mut output_slices: Vec<&mut [u8]> = Vec::with_capacity(raw_blocks.len());
+    {
+        let mut remaining: &mut [u8] = &mut output;
+        for &sz in &per_block_sizes {
+            let (chunk, rest) = remaining.split_at_mut(sz);
+            output_slices.push(chunk);
+            remaining = rest;
+        }
+        debug_assert!(remaining.is_empty());
+    }
+
+    // Phase 2: parallel decompress with pooled Decompressors, writing directly into the
+    // pre-partitioned output slices (Slice A + Slice C combined).
+    #[allow(clippy::type_complexity)]
+    let pairs: Vec<(&mut [u8], &(BlockHeader, Vec<u8>))> =
+        output_slices.into_iter().zip(raw_blocks.iter()).collect();
+
+    let results: Vec<Result<()>> = with_pool(config, || {
+        pairs
+            .into_par_iter()
             .enumerate()
-            .map(|(i, (header, payload))| {
-                let decompressed =
-                    decompress_block_payload(header, payload, i as u64, checksums_enabled)?;
-                Ok((i, decompressed))
-            })
+            .map_init(
+                Decompressor::new,
+                |decompressor, (i, (slice, (header, payload)))| {
+                    decompress_block_into(
+                        decompressor,
+                        header,
+                        payload,
+                        slice,
+                        i as u64,
+                        checksums_enabled,
+                    )
+                },
+            )
             .collect()
     });
 
-    // Re-assemble in order
-    let total_blocks_usize = usize::try_from(total_blocks)
-        .map_err(|_| CrushError::InvalidConfig("block count overflows usize".to_owned()))?;
-    let mut ordered: Vec<Option<Vec<u8>>> = (0..total_blocks_usize).map(|_| None).collect();
-    let mut bytes_processed: u64 = 0;
-
     for r in results {
-        let (i, data) = r?;
-        bytes_processed += data.len() as u64;
-        ordered[i] = Some(data);
+        r?;
     }
 
-    // Invoke progress callbacks (single-threaded pass after parallel decompress)
-    for (i, chunk) in ordered.iter().enumerate() {
-        if let (Some(cb_arc), Some(_chunk)) = (&config.progress, chunk) {
+    // Invoke progress callback in a single driver-side post-pass (matches compress path).
+    if let Some(cb_arc) = &config.progress {
+        let mut cb = cb_arc
+            .lock()
+            .map_err(|_| CrushError::InvalidConfig("progress mutex poisoned".to_owned()))?;
+        let mut bytes_processed: u64 = 0;
+        for (i, (header, _)) in raw_blocks.iter().enumerate() {
+            bytes_processed += u64::from(header.uncompressed_size);
             let event = ProgressEvent {
                 bytes_processed,
                 blocks_completed: i as u64 + 1,
                 total_blocks: Some(total_blocks),
                 phase: ProgressPhase::Decompressing,
             };
-            let mut cb = cb_arc
-                .lock()
-                .map_err(|_| CrushError::InvalidConfig("progress mutex poisoned".to_owned()))?;
             if !cb(event) {
                 return Err(CrushError::Cancelled);
             }
         }
     }
-
-    let output: Vec<u8> = ordered.into_iter().flatten().flatten().collect();
 
     Ok(output)
 }
