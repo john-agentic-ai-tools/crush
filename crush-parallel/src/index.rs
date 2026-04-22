@@ -4,53 +4,79 @@ use crate::block::decompress_block_payload;
 use crate::config::EngineConfiguration;
 use crate::format::{BlockHeader, BlockIndexEntry, FileFooter, IndexHeader};
 use crush_core::error::{CrushError, Result};
+use libdeflater::Decompressor;
 use std::io::{Read, Seek, SeekFrom};
 
 /// In-memory representation of the trailing block index.
+///
+/// Internally maintains a `cumulative_uncompressed` table so that
+/// [`BlockIndex::uncompressed_offset`], [`BlockIndex::total_uncompressed_size`],
+/// and [`BlockIndex::block_for_offset`] answer in O(1) / O(log N) time regardless
+/// of block count (Slice E).
 #[derive(Debug, Clone)]
 pub struct BlockIndex {
     pub entries: Vec<BlockIndexEntry>,
     pub checksums_enabled: bool,
+    /// `cum[0] = 0`, `cum[i] = sum_{j<i} entries[j].uncompressed_size as u64`.
+    /// Length is `entries.len() + 1`. Populated once in `load_index`.
+    cumulative_uncompressed: Vec<u64>,
 }
 
 impl BlockIndex {
+    /// Construct an in-memory `BlockIndex` and precompute the cumulative-offset table.
+    fn new(entries: Vec<BlockIndexEntry>, checksums_enabled: bool) -> Self {
+        let mut cumulative_uncompressed = Vec::with_capacity(entries.len() + 1);
+        cumulative_uncompressed.push(0u64);
+        let mut running: u64 = 0;
+        for e in &entries {
+            // saturating_add guards against crafted indices whose uncompressed sums would
+            // overflow u64 (infeasible in practice, >16 EB, but we never panic on attacker input).
+            running = running.saturating_add(u64::from(e.uncompressed_size));
+            cumulative_uncompressed.push(running);
+        }
+        Self {
+            entries,
+            checksums_enabled,
+            cumulative_uncompressed,
+        }
+    }
+
     /// Returns the absolute byte offset within the original uncompressed stream
-    /// at which block `n` begins. O(N) — sums preceding uncompressed sizes.
+    /// at which block `n` begins. O(1) indexed read.
     #[must_use]
     pub fn uncompressed_offset(&self, block_n: u64) -> u64 {
-        // block_n is bounded by index entry_count (u32), so it always fits in usize.
         let n = usize::try_from(block_n).unwrap_or(usize::MAX);
-        self.entries
-            .iter()
-            .take(n)
-            .map(|e| u64::from(e.uncompressed_size))
-            .sum()
+        // For n >= cum.len() return the last cumulative value (total), matching
+        // the pre-change behavior where taking more entries than exist returned their full sum.
+        self.cumulative_uncompressed
+            .get(n)
+            .copied()
+            .unwrap_or_else(|| *self.cumulative_uncompressed.last().unwrap_or(&0))
     }
 
     /// Returns the block index containing the given uncompressed byte offset,
     /// or `None` if the offset is beyond the end of the stream.
     ///
-    /// O(N) linear scan over cumulative uncompressed sizes.
+    /// O(log N) binary search over the cumulative-offset table.
     #[must_use]
     pub fn block_for_offset(&self, uncompressed_offset: u64) -> Option<u64> {
-        let mut cumulative: u64 = 0;
-        for (i, entry) in self.entries.iter().enumerate() {
-            let next = cumulative + u64::from(entry.uncompressed_size);
-            if uncompressed_offset < next {
-                return Some(i as u64);
-            }
-            cumulative = next;
+        let total = self.total_uncompressed_size();
+        if uncompressed_offset >= total {
+            return None;
         }
-        None
+        // partition_point returns the first index `i` where `cum[i] > off` is true.
+        // The block containing `off` is at index `i - 1` (cum[i-1] <= off < cum[i]).
+        let i = self
+            .cumulative_uncompressed
+            .partition_point(|&x| x <= uncompressed_offset);
+        // i must be >= 1 here: off < total implies cum[0]=0 <= off, so at least cum[0] passes the predicate.
+        i.checked_sub(1).map(|idx| idx as u64)
     }
 
-    /// Total uncompressed size across all blocks.
+    /// Total uncompressed size across all blocks. O(1).
     #[must_use]
     pub fn total_uncompressed_size(&self) -> u64 {
-        self.entries
-            .iter()
-            .map(|e| u64::from(e.uncompressed_size))
-            .sum()
+        *self.cumulative_uncompressed.last().unwrap_or(&0)
     }
 
     /// Number of blocks in the index.
@@ -117,10 +143,7 @@ pub fn load_index<R: Read + Seek>(reader: &mut R) -> Result<BlockIndex> {
     // Infer checksums_enabled from the first entry's checksum field
     let checksums_enabled = entries.first().is_some_and(|e| e.checksum != 0);
 
-    Ok(BlockIndex {
-        entries,
-        checksums_enabled,
-    })
+    Ok(BlockIndex::new(entries, checksums_enabled))
 }
 
 /// Decompress a single block by its zero-based index.
@@ -160,7 +183,15 @@ pub fn decompress_block<R: Read + Seek>(
     let mut payload = vec![0u8; header.compressed_size as usize];
     reader.read_exact(&mut payload)?;
 
-    decompress_block_payload(&header, &payload, block_n, block_index.checksums_enabled)
+    // Single-block random access allocates its own Decompressor — not a hot path.
+    let mut decompressor = Decompressor::new();
+    decompress_block_payload(
+        &mut decompressor,
+        &header,
+        &payload,
+        block_n,
+        block_index.checksums_enabled,
+    )
 }
 
 #[cfg(test)]
@@ -226,6 +257,28 @@ mod tests {
         assert_eq!(index.block_for_offset(block2_start), Some(2));
         // Beyond end → None
         assert_eq!(index.block_for_offset(data.len() as u64), None);
+
+        // Slice E — extra boundary cases (T036)
+        // Offset 1 before end of block 0 → block 0
+        let block1_start = index.uncompressed_offset(1);
+        assert_eq!(index.block_for_offset(block1_start - 1), Some(0));
+        // Exact start of every block → Some(k)
+        for k in 0..index.len() {
+            let off = index.uncompressed_offset(k);
+            assert_eq!(
+                index.block_for_offset(off),
+                Some(k),
+                "expected block_for_offset({off}) == Some({k})"
+            );
+        }
+        // Last byte of stream → last block
+        let last_block = index.len() - 1;
+        assert_eq!(
+            index.block_for_offset(data.len() as u64 - 1),
+            Some(last_block)
+        );
+        // total_uncompressed_size equals input length
+        assert_eq!(index.total_uncompressed_size(), data.len() as u64);
     }
 
     #[test]
