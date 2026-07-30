@@ -196,15 +196,24 @@ impl WgpuBackend {
     ///
     /// Returns an error if wgpu initialisation fails unexpectedly.
     pub fn try_new() -> Result<Option<Self>> {
-        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
+        // wgpu 30 takes the descriptor by value, and `InstanceDescriptor` no
+        // longer implements `Default` (it gained a non-`Default` boxed display
+        // handle). We never present to a surface, so the handle-less
+        // constructor is the right base.
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
             backends: wgpu::Backends::VULKAN | wgpu::Backends::METAL | wgpu::Backends::DX12,
-            ..Default::default()
+            ..wgpu::InstanceDescriptor::new_without_display_handle()
         });
 
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::HighPerformance,
             compatible_surface: None,
             force_fallback_adapter: false,
+            // Limit bucketing rounds reported limits down into coarse buckets
+            // to reduce fingerprinting when exposing wgpu to untrusted content.
+            // crush is trusted local code and uses `max_buffer_size` as its
+            // VRAM proxy below, so keep the true device limits.
+            apply_limit_buckets: false,
         }));
 
         let Ok(adapter) = adapter else {
@@ -260,7 +269,7 @@ impl WgpuBackend {
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("decompress_pipeline_layout"),
-            bind_group_layouts: &[&bind_group_layout],
+            bind_group_layouts: &[Some(&bind_group_layout)],
             immediate_size: 0,
         });
 
@@ -283,7 +292,7 @@ impl WgpuBackend {
 
         let gdeflate_pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("gdeflate_pipeline_layout"),
-            bind_group_layouts: &[&gdeflate_bgl],
+            bind_group_layouts: &[Some(&gdeflate_bgl)],
             immediate_size: 0,
         });
 
@@ -352,8 +361,17 @@ impl WgpuBackend {
             .map_err(|e| PluginError::OperationFailed(format!("GPU readback channel error: {e}")))?
             .map_err(|e| PluginError::OperationFailed(format!("GPU lengths map failed: {e}")))?;
 
-        let out_bytes = out_slice.get_mapped_range().to_vec();
-        let len_bytes = lengths_slice.get_mapped_range().to_vec();
+        // wgpu 30 returns `Result` here instead of panicking on a bad range.
+        let out_bytes = out_slice
+            .get_mapped_range()
+            .map_err(|e| PluginError::OperationFailed(format!("GPU output range map failed: {e}")))?
+            .to_vec();
+        let len_bytes = lengths_slice
+            .get_mapped_range()
+            .map_err(|e| {
+                PluginError::OperationFailed(format!("GPU lengths range map failed: {e}"))
+            })?
+            .to_vec();
         Ok((out_bytes, len_bytes))
     }
 
@@ -733,7 +751,14 @@ impl WgpuBackend {
                 })?;
 
             let slice = all_bufs[i].out_staging.slice(..);
-            let out_bytes = slice.get_mapped_range().to_vec();
+            let out_bytes = slice
+                .get_mapped_range()
+                .map_err(|e| {
+                    PluginError::OperationFailed(format!(
+                        "GDeflate GPU output range map failed: {e}"
+                    ))
+                })?
+                .to_vec();
             let size = tiles[i].uncompressed_size as usize;
             results.push(out_bytes[..size.min(out_bytes.len())].to_vec());
         }

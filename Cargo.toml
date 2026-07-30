@@ -33,7 +33,7 @@ crc32fast = "1.5"
 memmap2 = "0.9.11"
 thiserror = "2.0.19"
 criterion = "0.8.2"
-wgpu = "28.0"
+wgpu = "30.0"
 bytemuck = "1.25"
 pollster = "1.0"
 
