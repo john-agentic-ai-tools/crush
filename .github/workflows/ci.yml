@@ -69,6 +69,12 @@ jobs:
             experimental: true
         exclude: []
     continue-on-error: ${{ matrix.experimental || false }}
+    # rust-toolchain.toml pins the channel and takes precedence over
+    # `rustup default`, which would silently collapse this matrix onto the
+    # pinned version. RUSTUP_TOOLCHAIN overrides the toolchain file, so the
+    # `beta` leg actually builds against beta.
+    env:
+      RUSTUP_TOOLCHAIN: ${{ matrix.rust }}
     steps:
       - uses: actions/checkout@v4
 

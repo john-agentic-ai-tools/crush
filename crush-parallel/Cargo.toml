@@ -6,6 +6,7 @@ authors.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
+rust-version.workspace = true
 description = "Parallel DEFLATE compression engine with custom CRSH block format"
 
 [lib]
