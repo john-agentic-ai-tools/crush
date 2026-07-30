@@ -19,14 +19,14 @@ rayon = { workspace = true }
 flate2 = { workspace = true }
 crc32fast = { workspace = true }
 thiserror = { workspace = true }
-serde =  { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-ctrlc = "3.4"
-tempfile = "3.8" 
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+ctrlc = "3.5"
+tempfile = "3.27"
 
 [dev-dependencies]
 criterion = { workspace = true }
-proptest = "1.5"
+proptest = "1.11"
 
 [[bench]]
 name = "plugin_discovery"

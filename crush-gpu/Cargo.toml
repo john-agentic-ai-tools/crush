@@ -26,13 +26,13 @@ memmap2 = { workspace = true }
 rayon = { workspace = true }
 thiserror = { workspace = true }
 linkme = { workspace = true }
-cudarc = { version = "0.19.3", optional = true, features = ["cuda-13010"] }
-tracing = "0.1"
+cudarc = { version = "0.19.8", optional = true, features = ["cuda-13010"] }
+tracing = "0.1.44"
 
 [dev-dependencies]
 criterion = { workspace = true }
-proptest = "1.5"
-tempfile = "3.8"
+proptest = "1.11"
+tempfile = "3.27"
 
 [[bench]]
 name = "throughput"

@@ -23,8 +23,8 @@ linkme = { workspace = true }
 
 [dev-dependencies]
 criterion = { workspace = true }
-proptest = "1.5"
-tempfile = "3.8"
+proptest = "1.11"
+tempfile = "3.27"
 
 [[bench]]
 name = "throughput"
