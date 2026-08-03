@@ -1,6 +1,6 @@
 [package]
 name = "crush-parallel"
-version = "0.1.0"
+version = "0.2.0"
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
@@ -14,7 +14,7 @@ name = "crush_parallel"
 path = "src/lib.rs"
 
 [dependencies]
-crush-core = { version = "0.2.0", path = "../crush-core" }
+crush-core = { version = "0.3.0", path = "../crush-core" }
 rayon = { workspace = true }
 libdeflater = { workspace = true }
 crc32fast = { workspace = true }
