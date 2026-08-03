@@ -14,24 +14,32 @@ exclude = [
 
 [workspace.package]
 edition = "2021"
+# Matches the channel pinned in rust-toolchain.toml. Stated explicitly so the
+# MSRV is a contract for consumers and for Cargo's version-aware resolver,
+# rather than an implicit side effect of the pin.
+rust-version = "1.97"
 authors = ["Crush Contributors"]
 license = "MIT"
 repository = "https://github.com/john-agentic-ai-tools/crush"
 homepage = "https://github.com/john-agentic-ai-tools/crush"
 
 [workspace.dependencies]
-linkme = "0.3"
-crossbeam = "0.8"
-rayon = "1.10"
-flate2 = { version = "1.1", features = ["zlib"] }
+linkme = "0.3.37"
+crossbeam = "0.8.4"
+rayon = "1.12"
+flate2 = { version = "1.1.9", features = ["zlib"] }
 libdeflater = "1.25.2"
-crc32fast = "1.4"
-memmap2 = "0.9"
-thiserror = "2.0.18"
+crc32fast = "1.5"
+# 0.9.11 patches RUSTSEC-2026-0186: unchecked pointer offset in
+# `advise_range`/`flush_range`. Keep this floor explicit — Cargo.lock is
+# gitignored, so the manifest is the only thing pinning consumers off the
+# unsound versions.
+memmap2 = "0.9.11"
+thiserror = "2.0.19"
 criterion = "0.8.2"
-wgpu = "28.0"
-bytemuck = "1.14"
-pollster = "0.4"
+wgpu = "30.0"
+bytemuck = "1.25"
+pollster = "1.0"
 
 [profile.dev]
 opt-level = 0
