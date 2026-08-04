@@ -6,10 +6,8 @@
 use crate::cancel::CancellationToken;
 use crate::error::Result;
 use crate::plugin::registry::{get_default_plugin, get_plugin_by_magic};
-use crate::plugin::{
-    run_with_timeout, run_with_timeout_and_cancel, CrushHeader, FileMetadata, PluginSelector,
-    ScoringWeights,
-};
+use crate::plugin::timeout::{run_with_timeout_and_cancel_scoped, run_with_timeout_scoped};
+use crate::plugin::{CrushHeader, FileMetadata, PluginSelector, ScoringWeights};
 use crc32fast::Hasher;
 use std::sync::Arc;
 use std::time::Duration;
@@ -140,12 +138,11 @@ pub fn compress(input: &[u8]) -> Result<Vec<u8>> {
 
     let default_magic = [0x43, 0x52, 0x01, 0x00];
 
-    // Clone input for move into timeout closure
-    let input_owned = input.to_vec();
-
-    // Compress the data with timeout protection
-    let compressed_payload = run_with_timeout(DEFAULT_TIMEOUT, move |cancel_flag| {
-        plugin.compress(&input_owned, cancel_flag)
+    // Slice D: borrow `input` directly via a scoped thread — avoids a full-input clone on the hot path.
+    let compressed_payload = std::thread::scope(|s| {
+        run_with_timeout_scoped(s, DEFAULT_TIMEOUT, |cancel_flag| {
+            plugin.compress(input, cancel_flag)
+        })
     })?;
 
     // Calculate CRC32 of compressed payload
@@ -222,16 +219,15 @@ pub fn compress_with_options(input: &[u8], options: &CompressionOptions) -> Resu
         ))
     })?;
 
-    // Clone input for move into timeout closure
-    let input_owned = input.to_vec();
     let timeout = options.timeout;
     let cancel_token = options.cancel_token.clone();
 
-    // Compress the data with timeout and cancellation protection
-    let compressed_payload =
-        run_with_timeout_and_cancel(timeout, cancel_token, move |cancel_flag| {
-            plugin.compress(&input_owned, cancel_flag)
-        })?;
+    // Slice D: borrow `input` directly via a scoped thread — avoids a full-input clone.
+    let compressed_payload = std::thread::scope(|s| {
+        run_with_timeout_and_cancel_scoped(s, timeout, cancel_token, |cancel_flag| {
+            plugin.compress(input, cancel_flag)
+        })
+    })?;
 
     // Handle file metadata
     let metadata_bytes = options

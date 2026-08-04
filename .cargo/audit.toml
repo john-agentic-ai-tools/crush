@@ -2,10 +2,11 @@
 # See: https://rustsec.org/
 
 [advisories]
-# Ignored advisories — transitive dependencies we cannot control
-ignore = [
-    # paste 1.0.15 (unmaintained) — transitive dep via wgpu 28 → wgpu-hal → metal.
-    # We cannot remove it; paste is pulled in by the metal crate (macOS backend).
-    # Remove this exemption when wgpu upgrades to a metal version that drops paste.
-    "RUSTSEC-2024-0436",
-]
+# No ignored advisories.
+#
+# RUSTSEC-2024-0436 (paste 1.0.15, unmaintained) was exempted while wgpu 28
+# reached it via wgpu-hal -> metal. wgpu 30 moved the macOS backend to
+# objc2-metal, which does not depend on paste, so the exemption is gone.
+# Verified with `cargo tree --target aarch64-apple-darwin` and
+# `--target x86_64-apple-darwin`: no paste on any target.
+ignore = []

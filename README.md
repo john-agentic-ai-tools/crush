@@ -19,7 +19,7 @@ Crush is built to:
 
 ### Core Capabilities
 
-- **Parallel CPU Compression**: Multi-threaded compression scaling near-linearly to all available cores (1002 MiB/s on 8+ cores)
+- **Parallel CPU Compression**: Multi-threaded compression scaling near-linearly to all available cores (~1.1 GiB/s at default workers, post-011 hot-path optimizations)
 - **GPU-Accelerated Decompression**: GDeflate-based GPU decompression via CUDA (560 MiB/s) or wgpu Vulkan/Metal/DX12 (386 MiB/s) with automatic CPU fallback
 - **Plugin Architecture**: Extensible system supporting multiple compression algorithms with automatic scoring and selection
 - **Random Access**: O(1) tile-based decompression for seeking into large archives without full decompression
@@ -66,18 +66,19 @@ Crush delivers exceptional throughput for both compression and decompression ope
 - CPU: Multi-core (benchmarks use all available cores by default)
 - GPU: NVIDIA GeForce RTX 3060 Ti (Vulkan)
 - Build: Release mode with optimizations
+- Feature 011 hot-path optimizations applied: pooled libdeflater state, pre-allocated output with parallel assembly, direct-write decompress, scoped-borrow input on `crush-core::compress`, and a cumulative-offset `BlockIndex`
 
-#### CPU Compression (crush-core, 128 MB corpus)
+#### CPU Compression (crush-parallel, 128 MB corpus)
 
 **Compression Scaling (64 KB blocks):**
 
 | Workers | Throughput  | Scaling |
 |---------|-------------|---------|
-| 1       | 93 MiB/s    | 1.0×    |
-| 2       | 181 MiB/s   | 1.95×   |
-| 4       | 345 MiB/s   | 3.71×   |
-| 8       | 633 MiB/s   | 6.81×   |
-| default (all cores) | 1002 MiB/s | — |
+| 1       | 90 MiB/s    | 1.0×    |
+| 2       | 182 MiB/s   | 2.02×   |
+| 4       | 361 MiB/s   | 4.01×   |
+| 8       | 601 MiB/s   | 6.68×   |
+| default (all cores) | 1.10 GiB/s | — |
 
 Compression scales near-linearly with thread count. `workers=0` (default) uses all available logical CPUs.
 
@@ -85,19 +86,21 @@ Compression scales near-linearly with thread count. `workers=0` (default) uses a
 
 | Block Size | Throughput  |
 |-----------|-------------|
-| 64 KB     | 1002 MiB/s  |
-| 512 KB    | 971 MiB/s   |
-| 1024 KB   | 890 MiB/s   |
+| 64 KB     | 1.10 GiB/s  |
+| 512 KB    | 1.09 GiB/s  |
+| 1024 KB   | 1.11 GiB/s  |
 
-#### CPU Decompression (crush-core)
+#### CPU Decompression (crush-parallel, 128 MB corpus, 1 MB blocks)
+
+Post-011 Slice C (direct-write decompress) eliminates the intermediate `Vec<Option<Vec<u8>>>` + flatten-copy phase; workers decompress DEFLATE output straight into disjoint slices of a single pre-allocated output buffer.
 
 | Workers | Throughput  |
 |---------|-------------|
-| 1       | 309 MiB/s   |
-| 2       | 373 MiB/s   |
-| 4       | 413 MiB/s   |
-| 8       | 429 MiB/s   |
-| default (all cores) | 442 MiB/s |
+| 1       | 842 MiB/s   |
+| 2       | 1.54 GiB/s  |
+| 4       | 2.72 GiB/s  |
+| 8       | 4.05 GiB/s  |
+| default (all cores) | 4.63 GiB/s |
 
 #### GPU Decompression (crush-gpu, GDeflate)
 
@@ -135,8 +138,16 @@ GPU decompression outperforms CPU at larger data sizes (>2-4 MB) where the fixed
 
 | Operation              | Latency  |
 |------------------------|----------|
-| Decompress last block  | ~1.15 ms |
-| Decompress first block | ~1.16 ms |
+| Decompress last block  | ~1.14 ms |
+| Decompress first block | ~1.14 ms |
+
+**Index Lookup Performance** (10 240-block CRSH file, 64 KB blocks, post-011 cumulative-offset index):
+
+| Operation                                               | Latency | Per-call |
+|---------------------------------------------------------|---------|----------|
+| 10 000 `block_for_offset` + `uncompressed_offset` calls | ~120 µs | ~12 ns   |
+
+Feature 011 replaced the per-lookup O(N) cumulative sum with an O(1) indexed read for `uncompressed_offset` and an O(log N) `partition_point` binary search for `block_for_offset`, delivering the SC-004 ≥100× reduction target.
 
 ### Key Performance Features
 
@@ -150,11 +161,11 @@ GPU decompression outperforms CPU at larger data sizes (>2-4 MB) where the fixed
 ### Running Benchmarks
 
 ```bash
-# Run crush-core compression/decompression benchmarks
-cargo bench -p crush-core --bench throughput
+# Run crush-parallel compression/decompression benchmarks
+cargo bench -p crush-parallel --bench throughput
 
 # Run random access benchmarks
-cargo bench -p crush-core --bench random_access
+cargo bench -p crush-parallel --bench random_access
 
 # Run GPU decompression throughput benchmarks (requires compatible GPU)
 cargo bench -p crush-gpu --bench throughput

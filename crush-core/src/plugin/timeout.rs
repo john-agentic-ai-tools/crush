@@ -219,6 +219,146 @@ where
     result
 }
 
+/// Scoped variant of [`run_with_timeout`] — operation may borrow non-`'static` data.
+///
+/// Uses `std::thread::scope` so the closure runs on a thread whose lifetime is bounded
+/// by `'scope`. This lets hot-path callers pass `&[u8]` directly instead of allocating
+/// an owned clone just to satisfy the `'static` bound of [`run_with_timeout`].
+///
+/// Semantics (timeout, panic, 0 = infinite) are identical to [`run_with_timeout`].
+///
+/// Note: kept `pub(crate)` to preserve the strict zero-diff public API contract
+/// (SC-007). See specs/011-perf-optimizations/contracts/public-api.md.
+///
+/// # Errors
+///
+/// Same as [`run_with_timeout`].
+pub(crate) fn run_with_timeout_scoped<'scope, 'env, F, T>(
+    scope: &'scope std::thread::Scope<'scope, 'env>,
+    timeout: Duration,
+    operation: F,
+) -> Result<T>
+where
+    F: FnOnce(Arc<AtomicBool>) -> Result<T> + Send + 'scope,
+    T: Send + 'scope,
+{
+    let effective_timeout = if timeout == Duration::from_secs(0) {
+        Duration::MAX
+    } else {
+        timeout
+    };
+
+    let cancel_flag = Arc::new(AtomicBool::new(false));
+    let cancel_flag_thread = Arc::clone(&cancel_flag);
+    let cancel_flag_guard = Arc::clone(&cancel_flag);
+
+    let (tx, rx) = channel::bounded(1);
+
+    scope.spawn(move || {
+        let _guard = TimeoutGuard {
+            cancel_flag: cancel_flag_guard,
+        };
+        let result = operation(cancel_flag_thread);
+        let _ = tx.send(result);
+    });
+
+    match rx.recv_timeout(effective_timeout) {
+        Ok(result) => result,
+        Err(channel::RecvTimeoutError::Timeout) => {
+            cancel_flag.store(true, Ordering::Release);
+            eprintln!("Warning: Plugin operation timed out after {timeout:?}");
+            Err(TimeoutError::Timeout(timeout).into())
+        }
+        Err(channel::RecvTimeoutError::Disconnected) => {
+            eprintln!("Warning: Plugin thread panicked during execution");
+            Err(TimeoutError::PluginPanic.into())
+        }
+    }
+}
+
+/// Scoped variant of [`run_with_timeout_and_cancel`] — operation may borrow non-`'static` data.
+///
+/// See [`run_with_timeout_scoped`] for the motivation. Adds the same external-cancellation
+/// monitor thread as [`run_with_timeout_and_cancel`].
+///
+/// # Errors
+///
+/// Same as [`run_with_timeout_and_cancel`].
+pub(crate) fn run_with_timeout_and_cancel_scoped<'scope, 'env, F, T>(
+    scope: &'scope std::thread::Scope<'scope, 'env>,
+    timeout: Duration,
+    cancel_token: Option<Arc<dyn CancellationToken>>,
+    operation: F,
+) -> Result<T>
+where
+    F: FnOnce(Arc<AtomicBool>) -> Result<T> + Send + 'scope,
+    T: Send + 'scope,
+{
+    if let Some(ref token) = cancel_token {
+        if token.is_cancelled() {
+            return Err(crate::error::CrushError::Cancelled);
+        }
+    }
+
+    let effective_timeout = if timeout == Duration::from_secs(0) {
+        Duration::MAX
+    } else {
+        timeout
+    };
+
+    let cancel_flag = Arc::new(AtomicBool::new(false));
+    let cancel_flag_thread = Arc::clone(&cancel_flag);
+    let cancel_flag_guard = Arc::clone(&cancel_flag);
+    let cancel_flag_monitor = Arc::clone(&cancel_flag);
+
+    let monitor_handle = cancel_token.map(|token| {
+        scope.spawn(move || {
+            while !cancel_flag_monitor.load(Ordering::Acquire) {
+                if token.is_cancelled() {
+                    cancel_flag_monitor.store(true, Ordering::Release);
+                    break;
+                }
+                std::thread::sleep(Duration::from_micros(100));
+            }
+        })
+    });
+
+    let (tx, rx) = channel::bounded(1);
+
+    scope.spawn(move || {
+        let _guard = TimeoutGuard {
+            cancel_flag: cancel_flag_guard,
+        };
+        let result = operation(cancel_flag_thread);
+        let _ = tx.send(result);
+    });
+
+    let result = match rx.recv_timeout(effective_timeout) {
+        Ok(result) => match result {
+            Err(crate::error::CrushError::Plugin(crate::error::PluginError::Cancelled)) => {
+                Err(crate::error::CrushError::Cancelled)
+            }
+            other => other,
+        },
+        Err(channel::RecvTimeoutError::Timeout) => {
+            cancel_flag.store(true, Ordering::Release);
+            eprintln!("Warning: Plugin operation timed out after {timeout:?}");
+            Err(TimeoutError::Timeout(timeout).into())
+        }
+        Err(channel::RecvTimeoutError::Disconnected) => {
+            eprintln!("Warning: Plugin thread panicked during execution");
+            Err(TimeoutError::PluginPanic.into())
+        }
+    };
+
+    cancel_flag.store(true, Ordering::Release);
+    if let Some(handle) = monitor_handle {
+        let _ = handle.join();
+    }
+
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
