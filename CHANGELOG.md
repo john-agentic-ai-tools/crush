@@ -16,6 +16,37 @@ The workspace publishes four crates that version independently:
 
 This changelog begins at the versions below. For earlier history, see the git log.
 
+## [Unreleased]
+
+### Changed
+
+- **Migrated the workspace to Rust edition 2024** (all four crates and the three
+  fuzz crates). No public API changed and the MSRV stays at 1.97, so this is
+  transparent to consumers. Most of the diff is rustfmt's 2024 style edition
+  reordering `use` items.
+- `merge_env_vars` now delegates to a new public `merge_env_vars_from(config,
+  vars)`, which takes the variables explicitly instead of reading the process
+  environment. Added so the parsing rules can be tested without calling
+  `std::env::set_var`, which became `unsafe` in edition 2024.
+
+### Fixed
+
+- Removed the last source of environment mutation from `crush-cli`'s unit
+  tests. `cargo fix --edition` had wrapped 34 call sites in `unsafe` with
+  "FIXME: Audit that the environment access only happens in single-threaded
+  code" — an audit that would have failed, since `cargo test` runs them as
+  threads while siblings read the environment. The tests now use
+  `merge_env_vars_from` and a `#[cfg(test)]` thread-local config-path override,
+  so **no `unsafe` was added** and the tests are genuinely parallel-safe rather
+  than merely serialised behind the mutex added in the previous release.
+- Pinned the drop order of two `recv_timeout` tail expressions in
+  `crush_core::plugin::timeout` by binding the scrutinee to a local. Edition
+  2024 drops such temporaries before locals rather than after
+  (`tail-expr-drop-order`); binding makes the order identical in both editions
+  instead of dependent on the edition.
+- Rewrote six nested `if let` blocks as let-chains, now that edition 2024
+  enables them (`clippy::collapsible_if`).
+
 ## [2026-07-30]
 
 Toolchain and dependency modernisation. Every crate receives a **minor** bump
