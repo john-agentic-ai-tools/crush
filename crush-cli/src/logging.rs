@@ -1,8 +1,8 @@
 use std::fs::File;
 use std::path::Path;
 use tracing::Level;
-use tracing_subscriber::fmt;
 use tracing_subscriber::EnvFilter;
+use tracing_subscriber::fmt;
 
 /// Map verbose count to log level
 /// - 0 (no -v flags) = INFO level

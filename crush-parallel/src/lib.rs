@@ -30,13 +30,13 @@ pub use engine::{
     decompress_from_reader,
 };
 pub use format::BlockIndexEntry;
-pub use index::{decompress_block, load_index, BlockIndex};
+pub use index::{BlockIndex, decompress_block, load_index};
 
 use crush_core::error::Result;
-use crush_core::plugin::{CompressionAlgorithm, PluginMetadata, COMPRESSION_ALGORITHMS};
+use crush_core::plugin::{COMPRESSION_ALGORITHMS, CompressionAlgorithm, PluginMetadata};
 use linkme::distributed_slice;
-use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 
 /// Magic number for the parallel-deflate plugin in the crush-core outer format.
 ///
@@ -66,8 +66,8 @@ impl CompressionAlgorithm for ParallelDeflatePlugin {
 
     fn compress(&self, input: &[u8], cancel_flag: Arc<AtomicBool>) -> Result<Vec<u8>> {
         use crate::config::ProgressCallback;
-        use std::sync::atomic::Ordering;
         use std::sync::Mutex;
+        use std::sync::atomic::Ordering;
 
         // Bridge the crush-core AtomicBool cancel flag into our ProgressCallback.
         let cb: ProgressCallback = Box::new(move |_event| !cancel_flag.load(Ordering::Acquire));
@@ -79,8 +79,8 @@ impl CompressionAlgorithm for ParallelDeflatePlugin {
 
     fn decompress(&self, input: &[u8], cancel_flag: Arc<AtomicBool>) -> Result<Vec<u8>> {
         use crate::config::ProgressCallback;
-        use std::sync::atomic::Ordering;
         use std::sync::Mutex;
+        use std::sync::atomic::Ordering;
 
         let cb: ProgressCallback = Box::new(move |_event| !cancel_flag.load(Ordering::Acquire));
         let config = EngineConfiguration::builder()

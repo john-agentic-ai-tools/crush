@@ -7,8 +7,8 @@
 use crate::cancel::CancellationToken;
 use crate::error::{Result, TimeoutError};
 use crossbeam::channel;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 /// RAII guard that sets cancellation flag on drop
@@ -91,8 +91,14 @@ where
         let _ = tx.send(result); // Ignore send errors (receiver might have timed out)
     });
 
-    // Wait for completion or timeout
-    match rx.recv_timeout(effective_timeout) {
+    // Wait for completion or timeout.
+    //
+    // Bound to a local rather than matched inline: as the function's tail
+    // expression, a `match` scrutinee temporary would drop after locals in
+    // Rust 2021 but before them in Rust 2024. Naming it pins the drop order
+    // across editions instead of leaving it to `tail-expr-drop-order`.
+    let received = rx.recv_timeout(effective_timeout);
+    match received {
         Ok(result) => result,
         Err(channel::RecvTimeoutError::Timeout) => {
             eprintln!("Warning: Plugin operation timed out after {timeout:?}");
@@ -137,10 +143,10 @@ where
     T: Send + 'static,
 {
     // Check if already cancelled before starting
-    if let Some(ref token) = cancel_token {
-        if token.is_cancelled() {
-            return Err(crate::error::CrushError::Cancelled);
-        }
+    if let Some(ref token) = cancel_token
+        && token.is_cancelled()
+    {
+        return Err(crate::error::CrushError::Cancelled);
     }
 
     // Timeout of 0 means no timeout - use Duration::MAX for effectively infinite wait
@@ -262,7 +268,10 @@ where
         let _ = tx.send(result);
     });
 
-    match rx.recv_timeout(effective_timeout) {
+    // Bound to a local for the same cross-edition drop-order reason as in
+    // `run_with_timeout` above.
+    let received = rx.recv_timeout(effective_timeout);
+    match received {
         Ok(result) => result,
         Err(channel::RecvTimeoutError::Timeout) => {
             cancel_flag.store(true, Ordering::Release);
@@ -294,10 +303,10 @@ where
     F: FnOnce(Arc<AtomicBool>) -> Result<T> + Send + 'scope,
     T: Send + 'scope,
 {
-    if let Some(ref token) = cancel_token {
-        if token.is_cancelled() {
-            return Err(crate::error::CrushError::Cancelled);
-        }
+    if let Some(ref token) = cancel_token
+        && token.is_cancelled()
+    {
+        return Err(crate::error::CrushError::Cancelled);
     }
 
     let effective_timeout = if timeout == Duration::from_secs(0) {

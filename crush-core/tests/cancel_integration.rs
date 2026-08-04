@@ -1,7 +1,7 @@
 //! Integration tests for compression/decompression cancellation
 
 use crush_core::cancel::{AtomicCancellationToken, CancellationToken};
-use crush_core::{compress_with_options, decompress, init_plugins, CompressionOptions, CrushError};
+use crush_core::{CompressionOptions, CrushError, compress_with_options, decompress, init_plugins};
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;

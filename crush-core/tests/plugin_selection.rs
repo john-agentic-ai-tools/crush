@@ -5,7 +5,7 @@
 
 #![allow(clippy::panic_in_result_fn)]
 
-use crush_core::{compress_with_options, init_plugins, CompressionOptions, Result, ScoringWeights};
+use crush_core::{CompressionOptions, Result, ScoringWeights, compress_with_options, init_plugins};
 
 /// Test that plugin scoring selects the highest-scoring plugin
 ///

@@ -5,7 +5,7 @@ use crate::output::{self, DecompressionResult};
 use crush_core::cancel::CancellationToken;
 use crush_core::decompress_with_cancel;
 use crush_core::plugin::FileMetadata;
-use filetime::{set_file_mtime, FileTime};
+use filetime::{FileTime, set_file_mtime};
 use indicatif::{ProgressBar, ProgressStyle};
 use is_terminal::IsTerminal;
 use std::fs;

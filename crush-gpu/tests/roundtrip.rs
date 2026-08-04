@@ -5,7 +5,7 @@
 use std::sync::atomic::AtomicBool;
 
 use crush_gpu::engine::{
-    compress, decompress, decompress_tile_by_index, load_tile_index, EngineConfig,
+    EngineConfig, compress, decompress, decompress_tile_by_index, load_tile_index,
 };
 
 // T022: Basic round-trip test
