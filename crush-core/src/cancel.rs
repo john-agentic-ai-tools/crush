@@ -5,8 +5,8 @@
 //! (e.g., Ctrl+C) or programmatic cancellation requests.
 
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 /// Thread-safe cancellation signal for compression operations.
 ///
@@ -228,14 +228,12 @@ impl ResourceTracker {
         }
 
         // Delete output file only if operation not complete
-        if !self.is_complete.load(Ordering::SeqCst) {
-            if let Ok(output) = self.output_path.lock() {
-                if let Some(path) = output.as_ref() {
-                    if path.exists() {
-                        std::fs::remove_file(path)?;
-                    }
-                }
-            }
+        if !self.is_complete.load(Ordering::SeqCst)
+            && let Ok(output) = self.output_path.lock()
+            && let Some(path) = output.as_ref()
+            && path.exists()
+        {
+            std::fs::remove_file(path)?;
         }
 
         Ok(())

@@ -170,10 +170,22 @@ fn default_info() -> String {
 }
 
 /// Merge environment variables into config
-pub fn merge_env_vars(mut config: Config) -> Result<Config> {
-    use std::env;
+pub fn merge_env_vars(config: Config) -> Result<Config> {
+    merge_env_vars_from(config, std::env::vars())
+}
 
-    for (key, value) in env::vars() {
+/// Merge an explicit set of `CRUSH_*` variables into config.
+///
+/// Split out from [`merge_env_vars`] so the parsing rules can be tested without
+/// mutating the process environment. Since Rust 2024 `std::env::set_var` is
+/// `unsafe` — it is undefined behaviour if another thread reads the environment
+/// concurrently, which is exactly what `cargo test`'s thread pool does. Passing
+/// the variables in sidesteps that entirely.
+pub fn merge_env_vars_from<I>(mut config: Config, vars: I) -> Result<Config>
+where
+    I: IntoIterator<Item = (String, String)>,
+{
+    for (key, value) in vars {
         if !key.starts_with("CRUSH_") {
             continue;
         }
@@ -286,13 +298,72 @@ pub fn merge_cli_args(mut config: Config, args: &Cli) -> Result<Config> {
     Ok(config)
 }
 
+// In-process config path override used by this crate's unit tests.
+//
+// Unit tests run as threads inside one process, so pointing them at a temp file
+// via `CRUSH_TEST_CONFIG_FILE` would mean calling `std::env::set_var`, which is
+// `unsafe` in Rust 2024 and unsound while sibling test threads read the
+// environment. This thread-local carries the override instead: it is private to
+// the calling thread, so tests need no locking and can run in parallel.
+//
+// Out-of-process integration tests are unaffected — they pass
+// `CRUSH_TEST_CONFIG_FILE` to a child process via `Command::env`, which is safe
+// and still honoured below.
+#[cfg(test)]
+thread_local! {
+    static TEST_CONFIG_PATH: std::cell::RefCell<Option<PathBuf>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Point [`config_file_path`] at `path` for the current thread only.
+///
+/// Returns a guard that restores the previous value on drop, so a failing test
+/// cannot leak its override into whatever runs next on the same thread.
+#[cfg(test)]
+#[must_use]
+fn set_test_config_path(path: PathBuf) -> TestConfigPathGuard {
+    let previous = TEST_CONFIG_PATH.with(|p| p.borrow_mut().replace(path));
+    TestConfigPathGuard { previous }
+}
+
+/// Restores the previous thread-local config path override on drop.
+#[cfg(test)]
+struct TestConfigPathGuard {
+    previous: Option<PathBuf>,
+}
+
+#[cfg(test)]
+impl Drop for TestConfigPathGuard {
+    fn drop(&mut self) {
+        let previous = self.previous.take();
+        TEST_CONFIG_PATH.with(|p| *p.borrow_mut() = previous);
+    }
+}
+
+/// Resolve the current thread's test override, if one is installed.
+#[cfg(test)]
+fn test_config_path_override() -> Option<PathBuf> {
+    TEST_CONFIG_PATH.with(|p| p.borrow().clone())
+}
+
+#[cfg(not(test))]
+fn test_config_path_override() -> Option<PathBuf> {
+    None
+}
+
 /// Get the config file path for the current OS
 ///
 /// For testing, set `CRUSH_TEST_CONFIG_FILE` environment variable to use a custom path.
 /// This allows tests to run in isolation without interfering with each other.
 pub fn config_file_path() -> Result<PathBuf> {
+    // In-process unit tests install a thread-local override (see
+    // `set_test_config_path`); out-of-process tests still use the env var.
+    let override_path = test_config_path_override()
+        .map(|p| Ok(p.to_string_lossy().into_owned()))
+        .unwrap_or_else(|| std::env::var("CRUSH_TEST_CONFIG_FILE"));
+
     // Allow tests to override config path via environment variable
-    if let Ok(test_path) = std::env::var("CRUSH_TEST_CONFIG_FILE") {
+    if let Ok(test_path) = override_path {
         let path = PathBuf::from(test_path);
         // Create parent directory if needed
         if let Some(parent) = path.parent() {
@@ -497,7 +568,7 @@ pub fn set_config_value(config: &mut Config, key: &str, value: &str) -> Result<(
             return Err(CliError::Config(format!(
                 "Invalid config key: '{}.{}' (unknown key)",
                 section, field
-            )))
+            )));
         }
     }
 
@@ -508,24 +579,13 @@ pub fn set_config_value(config: &mut Config, key: &str, value: &str) -> Result<(
 mod tests {
     use super::*;
 
-    /// Serialises every test that mutates a `CRUSH_*` environment variable.
-    ///
-    /// `cargo test` runs test functions on threads inside a single process, so
-    /// the environment is shared mutable state. Two failure modes follow from
-    /// that, and both showed up as intermittent failures:
-    ///
-    /// * [`config_file_path`] reads `CRUSH_TEST_CONFIG_FILE`, so a test can
-    ///   observe another's path — or its `remove_var` — and read the wrong file.
-    /// * [`merge_env_vars`] iterates *all* `CRUSH_*` variables, so a value set
-    ///   by a concurrent test leaks into an unrelated assertion. In particular
-    ///   `CRUSH_COMPRESSION_TIMEOUT_SECONDS=not_a_number` makes the call return
-    ///   `Err`, panicking any other test that is mid-`expect("merge")`.
-    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-    /// Acquire [`ENV_LOCK`], recovering from poisoning so that a single failing
-    /// test does not cascade into unrelated failures.
-    fn env_guard() -> std::sync::MutexGuard<'static, ()> {
-        ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+    /// Build the `(key, value)` pairs for [`merge_env_vars_from`] without
+    /// touching the process environment.
+    fn vars(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
+        pairs
+            .iter()
+            .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+            .collect()
     }
 
     #[test]
@@ -778,23 +838,20 @@ mod tests {
 
     #[test]
     fn test_load_config_returns_defaults_when_no_file() {
-        let _guard = env_guard();
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("config.toml");
         // Point config at a non-existent file
-        std::env::set_var("CRUSH_TEST_CONFIG_FILE", path.to_str().expect("path"));
+        let _guard = set_test_config_path(path);
         let config = load_config().expect("load_config");
         assert_eq!(config.compression.level, "balanced");
         assert_eq!(config.output.color, "auto");
-        std::env::remove_var("CRUSH_TEST_CONFIG_FILE");
     }
 
     #[test]
     fn test_save_and_load_config_roundtrip() {
-        let _guard = env_guard();
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("config.toml");
-        std::env::set_var("CRUSH_TEST_CONFIG_FILE", path.to_str().expect("path"));
+        let _guard = set_test_config_path(path);
 
         let mut config = Config::default();
         config.compression.level = "fast".to_string();
@@ -809,32 +866,27 @@ mod tests {
         assert!(loaded.gpu.enabled);
         assert_eq!(loaded.gpu.device, Some(2));
         assert_eq!(loaded.logging.level, "debug");
-        std::env::remove_var("CRUSH_TEST_CONFIG_FILE");
     }
 
     #[test]
     fn test_load_config_invalid_toml() {
-        let _guard = env_guard();
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("config.toml");
         std::fs::write(&path, "this is not valid toml {{{{").expect("write");
-        std::env::set_var("CRUSH_TEST_CONFIG_FILE", path.to_str().expect("path"));
+        let _guard = set_test_config_path(path);
         let result = load_config();
         assert!(result.is_err());
-        std::env::remove_var("CRUSH_TEST_CONFIG_FILE");
     }
 
     #[test]
     fn test_config_file_path_uses_env_override() {
-        let _guard = env_guard();
         let dir = tempfile::tempdir().expect("tempdir");
         let expected = dir.path().join("sub").join("config.toml");
-        std::env::set_var("CRUSH_TEST_CONFIG_FILE", expected.to_str().expect("path"));
+        let _guard = set_test_config_path(expected.clone());
         let got = config_file_path().expect("config_file_path");
         assert_eq!(got, expected);
         // Parent directory should have been created
         assert!(expected.parent().expect("parent").exists());
-        std::env::remove_var("CRUSH_TEST_CONFIG_FILE");
     }
 
     // -----------------------------------------------------------------------
@@ -1189,119 +1241,115 @@ mod tests {
 
     #[test]
     fn test_merge_env_vars_compression_level() {
-        let _guard = env_guard();
-        std::env::set_var("CRUSH_COMPRESSION_LEVEL", "fast");
-        let config = merge_env_vars(Config::default()).expect("merge");
+        let config = merge_env_vars_from(
+            Config::default(),
+            vars(&[("CRUSH_COMPRESSION_LEVEL", "fast")]),
+        )
+        .expect("merge");
         assert_eq!(config.compression.level, "fast");
-        std::env::remove_var("CRUSH_COMPRESSION_LEVEL");
     }
 
     #[test]
     fn test_merge_env_vars_output_color() {
-        let _guard = env_guard();
-        std::env::set_var("CRUSH_OUTPUT_COLOR", "never");
-        let config = merge_env_vars(Config::default()).expect("merge");
+        let config =
+            merge_env_vars_from(Config::default(), vars(&[("CRUSH_OUTPUT_COLOR", "never")]))
+                .expect("merge");
         assert_eq!(config.output.color, "never");
-        std::env::remove_var("CRUSH_OUTPUT_COLOR");
     }
 
     #[test]
     fn test_merge_env_vars_gpu_enabled() {
-        let _guard = env_guard();
-        std::env::set_var("CRUSH_GPU_ENABLED", "true");
-        let config = merge_env_vars(Config::default()).expect("merge");
+        let config = merge_env_vars_from(Config::default(), vars(&[("CRUSH_GPU_ENABLED", "true")]))
+            .expect("merge");
         assert!(config.gpu.enabled);
-        std::env::remove_var("CRUSH_GPU_ENABLED");
     }
 
     #[test]
     fn test_merge_env_vars_gpu_device() {
-        let _guard = env_guard();
-        std::env::set_var("CRUSH_GPU_DEVICE", "7");
-        let config = merge_env_vars(Config::default()).expect("merge");
+        let config = merge_env_vars_from(Config::default(), vars(&[("CRUSH_GPU_DEVICE", "7")]))
+            .expect("merge");
         assert_eq!(config.gpu.device, Some(7));
-        std::env::remove_var("CRUSH_GPU_DEVICE");
     }
 
     #[test]
     fn test_merge_env_vars_invalid_timeout() {
-        let _guard = env_guard();
-        std::env::set_var("CRUSH_COMPRESSION_TIMEOUT_SECONDS", "not_a_number");
-        let result = merge_env_vars(Config::default());
+        let result = merge_env_vars_from(
+            Config::default(),
+            vars(&[("CRUSH_COMPRESSION_TIMEOUT_SECONDS", "not_a_number")]),
+        );
         assert!(result.is_err());
-        std::env::remove_var("CRUSH_COMPRESSION_TIMEOUT_SECONDS");
     }
 
     #[test]
     fn test_merge_env_vars_invalid_bool() {
-        let _guard = env_guard();
-        std::env::set_var("CRUSH_OUTPUT_QUIET", "yes_please");
-        let result = merge_env_vars(Config::default());
+        let result = merge_env_vars_from(
+            Config::default(),
+            vars(&[("CRUSH_OUTPUT_QUIET", "yes_please")]),
+        );
         assert!(result.is_err());
-        std::env::remove_var("CRUSH_OUTPUT_QUIET");
     }
 
     #[test]
     fn test_merge_env_vars_logging_file() {
-        let _guard = env_guard();
-        std::env::set_var("CRUSH_LOGGING_FILE", "/var/log/crush.log");
-        let config = merge_env_vars(Config::default()).expect("merge");
+        let config = merge_env_vars_from(
+            Config::default(),
+            vars(&[("CRUSH_LOGGING_FILE", "/var/log/crush.log")]),
+        )
+        .expect("merge");
         assert_eq!(config.logging.file, "/var/log/crush.log");
-        std::env::remove_var("CRUSH_LOGGING_FILE");
     }
 
     #[test]
     fn test_merge_env_vars_logging_format() {
-        let _guard = env_guard();
-        std::env::set_var("CRUSH_LOGGING_FORMAT", "json");
-        let config = merge_env_vars(Config::default()).expect("merge");
+        let config =
+            merge_env_vars_from(Config::default(), vars(&[("CRUSH_LOGGING_FORMAT", "json")]))
+                .expect("merge");
         assert_eq!(config.logging.format, "json");
-        std::env::remove_var("CRUSH_LOGGING_FORMAT");
     }
 
     #[test]
     fn test_merge_env_vars_logging_level() {
-        let _guard = env_guard();
-        std::env::set_var("CRUSH_LOGGING_LEVEL", "trace");
-        let config = merge_env_vars(Config::default()).expect("merge");
+        let config =
+            merge_env_vars_from(Config::default(), vars(&[("CRUSH_LOGGING_LEVEL", "trace")]))
+                .expect("merge");
         assert_eq!(config.logging.level, "trace");
-        std::env::remove_var("CRUSH_LOGGING_LEVEL");
     }
 
     #[test]
     fn test_merge_env_vars_progress_bars() {
-        let _guard = env_guard();
-        std::env::set_var("CRUSH_OUTPUT_PROGRESS_BARS", "false");
-        let config = merge_env_vars(Config::default()).expect("merge");
+        let config = merge_env_vars_from(
+            Config::default(),
+            vars(&[("CRUSH_OUTPUT_PROGRESS_BARS", "false")]),
+        )
+        .expect("merge");
         assert!(!config.output.progress_bars);
-        std::env::remove_var("CRUSH_OUTPUT_PROGRESS_BARS");
     }
 
     #[test]
     fn test_merge_env_vars_gpu_force_cpu() {
-        let _guard = env_guard();
-        std::env::set_var("CRUSH_GPU_FORCE_CPU", "true");
-        let config = merge_env_vars(Config::default()).expect("merge");
+        let config =
+            merge_env_vars_from(Config::default(), vars(&[("CRUSH_GPU_FORCE_CPU", "true")]))
+                .expect("merge");
         assert!(config.gpu.force_cpu);
-        std::env::remove_var("CRUSH_GPU_FORCE_CPU");
     }
 
     #[test]
     fn test_merge_env_vars_default_plugin() {
-        let _guard = env_guard();
-        std::env::set_var("CRUSH_COMPRESSION_DEFAULT_PLUGIN", "deflate");
-        let config = merge_env_vars(Config::default()).expect("merge");
+        let config = merge_env_vars_from(
+            Config::default(),
+            vars(&[("CRUSH_COMPRESSION_DEFAULT_PLUGIN", "deflate")]),
+        )
+        .expect("merge");
         assert_eq!(config.compression.default_plugin, "deflate");
-        std::env::remove_var("CRUSH_COMPRESSION_DEFAULT_PLUGIN");
     }
 
     #[test]
     fn test_merge_env_vars_unknown_key_ignored() {
-        let _guard = env_guard();
-        std::env::set_var("CRUSH_UNKNOWN_KEY_XYZ", "whatever");
-        let result = merge_env_vars(Config::default());
+        let result = merge_env_vars_from(
+            Config::default(),
+            vars(&[("CRUSH_UNKNOWN_KEY_XYZ", "whatever")]),
+        );
         assert!(result.is_ok()); // unknown keys are silently ignored
-        std::env::remove_var("CRUSH_UNKNOWN_KEY_XYZ");
     }
 
     // -----------------------------------------------------------------------

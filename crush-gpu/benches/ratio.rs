@@ -8,8 +8,8 @@
 
 use std::sync::atomic::AtomicBool;
 
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
-use crush_gpu::engine::{compress, EngineConfig};
+use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
+use crush_gpu::engine::{EngineConfig, compress};
 
 /// Varied log text — each line differs slightly, realistic LZ77 matches.
 fn generate_log_corpus(size: usize) -> Vec<u8> {

@@ -7,8 +7,8 @@
 
 use std::sync::atomic::AtomicBool;
 
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use crush_gpu::engine::{compress, decompress, EngineConfig};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+use crush_gpu::engine::{EngineConfig, compress, decompress};
 
 /// Varied log text — each line differs slightly, giving realistic LZ77 matches
 /// without the trivial "same 63-byte pattern repeated" problem.

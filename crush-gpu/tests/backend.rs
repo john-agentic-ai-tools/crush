@@ -6,7 +6,7 @@
     clippy::cast_precision_loss
 )]
 
-use crush_gpu::backend::{discover_gpu, GpuVendor};
+use crush_gpu::backend::{GpuVendor, discover_gpu};
 
 // T039: Backend discovery tests
 
@@ -260,7 +260,7 @@ fn test_gdeflate_gpu_throughput() {
 
 #[test]
 fn test_cpu_fallback_when_no_gpu() {
-    use crush_gpu::engine::{compress, decompress, EngineConfig};
+    use crush_gpu::engine::{EngineConfig, compress, decompress};
     use std::sync::atomic::AtomicBool;
 
     let cancel = AtomicBool::new(false);

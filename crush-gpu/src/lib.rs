@@ -17,11 +17,11 @@ use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, OnceLock};
 
 use crush_core::error::Result;
-use crush_core::plugin::{CompressionAlgorithm, PluginMetadata, COMPRESSION_ALGORITHMS};
+use crush_core::plugin::{COMPRESSION_ALGORITHMS, CompressionAlgorithm, PluginMetadata};
 use linkme::distributed_slice;
 
 // Re-export GPU device discovery types for CLI `plugins info` usage.
-pub use backend::{discover_gpu, GpuInfo, GpuVendor};
+pub use backend::{GpuInfo, GpuVendor, discover_gpu};
 
 /// Magic number for the gpu-deflate plugin in the crush-core outer format.
 ///
@@ -102,8 +102,7 @@ impl CompressionAlgorithm for GpuDeflatePlugin {
             magic_number: PLUGIN_MAGIC,
             throughput: 2000.0,
             compression_ratio: 0.65,
-            description:
-                "GPU-accelerated tile-based compression with 32-way parallel decompression",
+            description: "GPU-accelerated tile-based compression with 32-way parallel decompression",
         }
     }
 

@@ -5,7 +5,7 @@
 
 #![allow(clippy::panic_in_result_fn)]
 
-use crush_core::{compress, decompress, init_plugins, Result};
+use crush_core::{Result, compress, decompress, init_plugins};
 
 /// Test basic roundtrip: compress data and decompress it back
 ///

@@ -5,8 +5,8 @@
 //!
 //! This module is only compiled when the `cuda` feature is enabled.
 
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use cudarc::driver::{CudaContext, CudaFunction, CudaStream, LaunchConfig, PushKernelArg};
 use cudarc::nvrtc::compile_ptx;

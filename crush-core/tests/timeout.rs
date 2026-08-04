@@ -5,7 +5,7 @@
 
 #![allow(clippy::panic_in_result_fn)]
 
-use crush_core::{compress_with_options, init_plugins, CompressionOptions, Result};
+use crush_core::{CompressionOptions, Result, compress_with_options, init_plugins};
 use std::time::Duration;
 
 /// Test that normal compression completes successfully within timeout

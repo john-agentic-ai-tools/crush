@@ -273,7 +273,7 @@ fn cuda_lz77_cancel_mid_batch() {
 
 #[test]
 fn cuda_vs_cpu_parity() {
-    use crush_gpu::engine::{compress, decompress, EngineConfig};
+    use crush_gpu::engine::{EngineConfig, compress, decompress};
 
     // Skip if no CUDA GPU — require_cuda() exits the process.
     let _backend = require_cuda();

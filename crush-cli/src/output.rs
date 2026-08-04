@@ -383,8 +383,8 @@ pub fn format_plugin_info(plugin: &crush_core::plugin::PluginMetadata) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crush_core::plugin::{FileMetadata as CoreFileMetadata, PluginMetadata};
     use crush_core::InspectResult;
+    use crush_core::plugin::{FileMetadata as CoreFileMetadata, PluginMetadata};
     use std::path::PathBuf;
     use std::time::Duration;
 

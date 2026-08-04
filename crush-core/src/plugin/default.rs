@@ -4,13 +4,13 @@
 //! This plugin is always available and serves as the default compression algorithm.
 
 use crate::error::{PluginError, Result};
-use crate::plugin::{CompressionAlgorithm, PluginMetadata, COMPRESSION_ALGORITHMS};
-use flate2::read::{DeflateDecoder, DeflateEncoder};
+use crate::plugin::{COMPRESSION_ALGORITHMS, CompressionAlgorithm, PluginMetadata};
 use flate2::Compression;
+use flate2::read::{DeflateDecoder, DeflateEncoder};
 use linkme::distributed_slice;
 use std::io::Read;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 /// DEFLATE compression plugin (RFC 1951)
 ///
@@ -60,7 +60,7 @@ impl CompressionAlgorithm for DeflatePlugin {
                     return Err(PluginError::OperationFailed(format!(
                         "DEFLATE compression failed: {e}"
                     ))
-                    .into())
+                    .into());
                 }
             }
         }
@@ -91,7 +91,7 @@ impl CompressionAlgorithm for DeflatePlugin {
                     return Err(PluginError::OperationFailed(format!(
                         "DEFLATE decompression failed: {e}"
                     ))
-                    .into())
+                    .into());
                 }
             }
         }

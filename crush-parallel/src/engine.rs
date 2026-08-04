@@ -1,7 +1,7 @@
 //! Main compression and decompression entry points.
 
 use crate::block::{
-    compress_block, decompress_block_into, resolve_compression_level, CompressedBlock,
+    CompressedBlock, compress_block, decompress_block_into, resolve_compression_level,
 };
 use crate::config::{EngineConfiguration, ProgressEvent, ProgressPhase};
 use crate::format::{BlockHeader, BlockIndexEntry, FileFlags, FileFooter, FileHeader, IndexHeader};
