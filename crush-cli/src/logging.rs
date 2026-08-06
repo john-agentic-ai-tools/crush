@@ -21,7 +21,7 @@ pub fn verbose_to_level(verbose: u8) -> &'static str {
 /// Split out of [`init_logging`] so it can be tested: `init_logging` installs a
 /// process-global subscriber and can only run once, which makes it unusable
 /// from a multi-test binary.
-pub fn parse_level(level: &str) -> Level {
+pub(crate) fn parse_level(level: &str) -> Level {
     match level {
         "error" => Level::ERROR,
         "warn" => Level::WARN,

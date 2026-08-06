@@ -199,9 +199,19 @@ jobs:
           # `--fail-under-lines` needs no parsing and cannot silently pass, and
           # --ignore-filename-regex keeps the file set identical to the generate
           # step above (`report` rejects --exclude, which is test-only).
+          #
+          # The regex is deliberately NOT anchored with `^`. The paths it matches
+          # against are absolute, so an anchored pattern silently matches nothing:
+          # the crush-gpu files come back in and measured coverage drops to ~67%,
+          # failing the gate for the wrong reason. Requiring a trailing path
+          # separator is as tight as this can safely get -- it pins the match to
+          # the directory rather than any file whose name merely starts with it.
+          #
+          # --summary-only prints the full per-file table, so a failure shows
+          # which files regressed without needing a rerun.
           cargo llvm-cov report \
             --summary-only \
-            --ignore-filename-regex 'crush-gpu' \
+            --ignore-filename-regex 'crush-gpu[/\\]' \
             --fail-under-lines 80
 
       - name: Upload coverage to Codecov
