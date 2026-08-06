@@ -224,4 +224,158 @@ mod tests {
         let content = fs::read(path).unwrap();
         assert_eq!(content, b"test data");
     }
+
+    // -----------------------------------------------------------------------
+    // cleanup-on-cancel, output validation, remaining input-validation branches
+    // -----------------------------------------------------------------------
+
+    fn token(cancelled: bool) -> Arc<dyn CancellationToken> {
+        let t = Arc::new(AtomicCancellationToken::new());
+        if cancelled {
+            t.cancel();
+        }
+        t
+    }
+
+    #[test]
+    fn cleanup_variant_leaves_the_output_alone_when_not_cancelled() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let output = dir.path().join("out.crush");
+        fs::write(&output, b"partial").expect("seed");
+
+        assert!(check_cancelled_with_cleanup(&token(false), &output).is_ok());
+        assert!(output.exists(), "output must survive when not cancelled");
+    }
+
+    #[test]
+    fn cleanup_variant_removes_the_partial_output_when_cancelled() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let output = dir.path().join("out.crush");
+        fs::write(&output, b"partial").expect("seed");
+
+        let result = check_cancelled_with_cleanup(&token(true), &output);
+
+        assert!(matches!(result, Err(CliError::Interrupted)));
+        assert!(
+            !output.exists(),
+            "a cancelled run must not leave a truncated archive behind"
+        );
+    }
+
+    #[test]
+    fn cleanup_variant_tolerates_a_missing_output_file() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let missing = dir.path().join("never-created.crush");
+
+        // Cancellation can land before the file is created; the remove failure
+        // is deliberately swallowed so the caller still sees Interrupted.
+        let result = check_cancelled_with_cleanup(&token(true), &missing);
+        assert!(matches!(result, Err(CliError::Interrupted)));
+    }
+
+    #[test]
+    fn validate_input_accepts_a_normal_file() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("in.txt");
+        fs::write(&path, b"content").expect("write");
+        assert!(validate_input(&path).is_ok());
+    }
+
+    #[test]
+    fn validate_input_rejects_a_directory() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let result = validate_input(dir.path());
+        assert!(matches!(result, Err(CliError::InvalidInput(_))));
+    }
+
+    #[test]
+    fn validate_input_rejects_an_empty_file() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("empty.txt");
+        fs::write(&path, b"").expect("write");
+
+        let result = validate_input(&path);
+
+        match result {
+            Err(CliError::InvalidInput(msg)) => assert!(
+                msg.contains("empty"),
+                "message should name the problem, got: {msg}"
+            ),
+            other => panic!("expected InvalidInput about emptiness, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn validate_output_accepts_a_new_path_in_an_existing_directory() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        assert!(validate_output(&dir.path().join("new.crush"), false).is_ok());
+    }
+
+    #[test]
+    fn validate_output_rejects_an_existing_file_without_force() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("exists.crush");
+        fs::write(&path, b"old").expect("write");
+
+        match validate_output(&path, false) {
+            Err(CliError::InvalidInput(msg)) => {
+                assert!(msg.contains("--force"), "should suggest --force: {msg}");
+            }
+            other => panic!("expected InvalidInput, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn validate_output_allows_overwrite_with_force() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("exists.crush");
+        fs::write(&path, b"old").expect("write");
+
+        assert!(validate_output(&path, true).is_ok());
+    }
+
+    #[test]
+    fn validate_output_rejects_a_missing_parent_directory() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("no-such-dir").join("out.crush");
+
+        match validate_output(&path, false) {
+            Err(CliError::InvalidInput(msg)) => {
+                assert!(
+                    msg.contains("directory"),
+                    "should name the directory: {msg}"
+                );
+            }
+            other => panic!("expected InvalidInput, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn validate_output_accepts_a_bare_relative_filename() {
+        // `Path::parent()` yields "" here, which is the current directory and
+        // must not be mistaken for a missing parent.
+        assert!(validate_output(Path::new("relative-output.crush"), false).is_ok());
+    }
+
+    #[test]
+    fn write_with_cleanup_removes_nothing_it_did_not_create() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        // Parent does not exist, so `fs::write` fails and the cleanup path runs.
+        let path = dir.path().join("missing-dir").join("out.bin");
+
+        let result = write_with_cleanup(&path, b"data");
+
+        assert!(
+            result.is_err(),
+            "write into a missing directory should fail"
+        );
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn write_to_stdout_succeeds() {
+        // Captured by the test harness; this exercises the write+flush pair.
+        assert!(write_to_stdout(b"utils stdout probe\n").is_ok());
+        assert!(write_to_stdout(b"").is_ok());
+    }
 }
