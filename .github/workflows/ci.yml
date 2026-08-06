@@ -184,18 +184,35 @@ jobs:
 
       - name: Check coverage threshold
         run: |
-          coverage=$(cargo llvm-cov report --summary-only 2>/dev/null | grep 'TOTAL' | awk '{print $NF}' | sed 's/%//')
-          echo "Coverage: ${coverage}%"
-          if [ -z "$coverage" ]; then
-            echo "Warning: Could not determine coverage percentage"
-            exit 0
-          fi
-          threshold=80
-          if (( $(echo "$coverage < $threshold" | bc -l) )); then
-            echo "Error: Coverage ${coverage}% is below required ${threshold}%"
-            exit 1
-          fi
-          echo "Coverage ${coverage}% meets threshold of ${threshold}%"
+          # Enforced by cargo-llvm-cov itself rather than by parsing its table.
+          #
+          # The previous implementation could never fail, for two compounding
+          # reasons:
+          #   1. `awk '{print $NF}'` took the LAST column of the summary, which
+          #      is *branch* coverage. That column prints "-" (no branch data),
+          #      so `bc` got "- < 80", parse-errored to empty output, and the
+          #      `if (( ))` evaluated false.
+          #   2. It omitted the crush-gpu exclusion used when generating the
+          #      data, so it measured a different file set than intended
+          #      (~62% including uncovered GPU code, vs ~81% without).
+          #
+          # `--fail-under-lines` needs no parsing and cannot silently pass, and
+          # --ignore-filename-regex keeps the file set identical to the generate
+          # step above (`report` rejects --exclude, which is test-only).
+          #
+          # The regex is deliberately NOT anchored with `^`. The paths it matches
+          # against are absolute, so an anchored pattern silently matches nothing:
+          # the crush-gpu files come back in and measured coverage drops to ~67%,
+          # failing the gate for the wrong reason. Requiring a trailing path
+          # separator is as tight as this can safely get -- it pins the match to
+          # the directory rather than any file whose name merely starts with it.
+          #
+          # --summary-only prints the full per-file table, so a failure shows
+          # which files regressed without needing a rerun.
+          cargo llvm-cov report \
+            --summary-only \
+            --ignore-filename-regex 'crush-gpu[/\\]' \
+            --fail-under-lines 80
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4
