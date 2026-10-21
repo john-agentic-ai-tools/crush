@@ -44,4 +44,3 @@ test-*.txt.crush
 .gemini/
 nul
 .claude/scheduled_tasks.lock
-.claude/settings.json
