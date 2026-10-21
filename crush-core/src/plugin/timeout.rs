@@ -101,6 +101,11 @@ where
     match received {
         Ok(result) => result,
         Err(channel::RecvTimeoutError::Timeout) => {
+            // Signal the worker so a cooperative plugin stops promptly. The
+            // thread is detached, so without this a timed-out operation runs to
+            // completion burning CPU for a result nobody reads. The three sibling
+            // variants already did this; this one was the odd one out.
+            cancel_flag.store(true, Ordering::Release);
             eprintln!("Warning: Plugin operation timed out after {timeout:?}");
             Err(TimeoutError::Timeout(timeout).into())
         }
@@ -493,5 +498,221 @@ mod tests {
 
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), "done");
+    }
+
+    // -----------------------------------------------------------------------
+    // Timeout expiry, panic propagation, external cancellation, scoped variants
+    // -----------------------------------------------------------------------
+
+    use crate::cancel::AtomicCancellationToken;
+    use crate::error::CrushError;
+
+    /// An operation that ignores its cancel flag and outlives any short timeout.
+    fn sleep_ignoring_cancellation(d: Duration) -> impl FnOnce(Arc<AtomicBool>) -> Result<u32> {
+        move |_cancel| {
+            std::thread::sleep(d);
+            Ok(1)
+        }
+    }
+
+    #[test]
+    fn run_with_timeout_reports_timeout_when_the_deadline_passes() {
+        let result = run_with_timeout(
+            Duration::from_millis(50),
+            sleep_ignoring_cancellation(Duration::from_secs(5)),
+        );
+
+        assert!(
+            matches!(
+                result,
+                Err(CrushError::Timeout(TimeoutError::Timeout(d))) if d == Duration::from_millis(50)
+            ),
+            "expected Timeout(50ms), got {result:?}"
+        );
+    }
+
+    #[test]
+    #[allow(clippy::panic)] // the panic is the behaviour under test
+    fn a_panicking_operation_is_reported_as_plugin_panic() {
+        // The worker drops `tx` while unwinding, so the receiver observes
+        // Disconnected rather than hanging until the timeout elapses.
+        let result = run_with_timeout(Duration::from_secs(30), |_cancel| -> Result<u32> {
+            panic!("plugin exploded");
+        });
+
+        assert!(
+            matches!(result, Err(CrushError::Timeout(TimeoutError::PluginPanic))),
+            "expected PluginPanic, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn timeout_sets_the_cancel_flag_so_the_worker_can_stop() {
+        let observed = Arc::new(AtomicBool::new(false));
+        let probe = Arc::clone(&observed);
+
+        let result = run_with_timeout(Duration::from_millis(50), move |cancel| -> Result<u32> {
+            // Wait until the timeout path signals us, then report that we saw it.
+            for _ in 0..2_000 {
+                if cancel.load(Ordering::Acquire) {
+                    probe.store(true, Ordering::Release);
+                    return Ok(0);
+                }
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            Ok(0)
+        });
+
+        assert!(result.is_err(), "expected the call to time out");
+        // Give the worker a moment to notice the flag it was handed.
+        std::thread::sleep(Duration::from_millis(200));
+        assert!(
+            observed.load(Ordering::Acquire),
+            "worker should have observed the cancel flag set by the timeout path"
+        );
+    }
+
+    #[test]
+    #[allow(clippy::unwrap_used)]
+    fn cancel_variant_succeeds_with_no_token() {
+        let result = run_with_timeout_and_cancel(Duration::from_secs(5), None, |_c| Ok(7));
+        assert_eq!(result.unwrap(), 7);
+    }
+
+    #[test]
+    fn cancel_variant_short_circuits_on_an_already_cancelled_token() {
+        let token = Arc::new(AtomicCancellationToken::new());
+        token.cancel();
+
+        let ran = Arc::new(AtomicBool::new(false));
+        let probe = Arc::clone(&ran);
+
+        let result = run_with_timeout_and_cancel(Duration::from_secs(5), Some(token), move |_c| {
+            probe.store(true, Ordering::Release);
+            Ok(0u32)
+        });
+
+        assert!(matches!(result, Err(CrushError::Cancelled)));
+        assert!(
+            !ran.load(Ordering::Acquire),
+            "operation must not start when the token is already cancelled"
+        );
+    }
+
+    #[test]
+    fn cancel_variant_propagates_external_cancellation_mid_flight() {
+        let token = Arc::new(AtomicCancellationToken::new());
+        let trigger = Arc::clone(&token);
+
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(50));
+            trigger.cancel();
+        });
+
+        // The monitor thread flips the plugin's cancel flag; the plugin reports
+        // PluginError::Cancelled, which must surface as CrushError::Cancelled.
+        let result = run_with_timeout_and_cancel(Duration::from_secs(30), Some(token), |cancel| {
+            for _ in 0..3_000 {
+                if cancel.load(Ordering::Acquire) {
+                    return Err(PluginError::Cancelled.into());
+                }
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            Ok(0u32)
+        });
+
+        assert!(
+            matches!(result, Err(CrushError::Cancelled)),
+            "expected Cancelled, got {result:?}"
+        );
+    }
+
+    #[test]
+    #[allow(clippy::unwrap_used)]
+    fn scoped_variant_can_borrow_non_static_data() {
+        // The whole reason the scoped variants exist: no 'static bound, so the
+        // closure can borrow a local instead of cloning it onto the heap.
+        let owned = [1u8, 2, 3, 4];
+
+        let total = std::thread::scope(|s| {
+            run_with_timeout_scoped(s, Duration::from_secs(5), |_cancel| {
+                Ok(owned.iter().map(|b| u32::from(*b)).sum::<u32>())
+            })
+        })
+        .unwrap();
+
+        assert_eq!(total, 10);
+        // `owned` is still usable — it was borrowed, not moved.
+        assert_eq!(owned.len(), 4);
+    }
+
+    #[test]
+    fn scoped_variant_times_out() {
+        let result = std::thread::scope(|s| {
+            run_with_timeout_scoped(
+                s,
+                Duration::from_millis(50),
+                sleep_ignoring_cancellation(Duration::from_millis(600)),
+            )
+        });
+
+        assert!(
+            matches!(result, Err(CrushError::Timeout(TimeoutError::Timeout(_)))),
+            "expected Timeout, got {result:?}"
+        );
+    }
+
+    #[test]
+    #[allow(clippy::unwrap_used)]
+    fn scoped_cancel_variant_succeeds_with_no_token() {
+        let data = [10u32, 20, 30];
+        let sum = std::thread::scope(|s| {
+            run_with_timeout_and_cancel_scoped(s, Duration::from_secs(5), None, |_c| {
+                Ok(data.iter().sum::<u32>())
+            })
+        })
+        .unwrap();
+        assert_eq!(sum, 60);
+    }
+
+    #[test]
+    fn scoped_cancel_variant_short_circuits_on_a_cancelled_token() {
+        let token = Arc::new(AtomicCancellationToken::new());
+        token.cancel();
+
+        let result = std::thread::scope(|s| {
+            run_with_timeout_and_cancel_scoped(s, Duration::from_secs(5), Some(token), |_c| {
+                Ok(0u32)
+            })
+        });
+
+        assert!(matches!(result, Err(CrushError::Cancelled)));
+    }
+
+    #[test]
+    #[allow(clippy::unwrap_used)]
+    fn zero_timeout_is_treated_as_no_deadline_in_every_variant() {
+        // Duration::ZERO maps to Duration::MAX internally rather than expiring
+        // immediately; verify that for each entry point.
+        assert_eq!(run_with_timeout(Duration::ZERO, |_c| Ok(1u32)).unwrap(), 1);
+        assert_eq!(
+            run_with_timeout_and_cancel(Duration::ZERO, None, |_c| Ok(2u32)).unwrap(),
+            2
+        );
+        assert_eq!(
+            std::thread::scope(|s| run_with_timeout_scoped(s, Duration::ZERO, |_c| Ok(3u32)))
+                .unwrap(),
+            3
+        );
+        assert_eq!(
+            std::thread::scope(|s| run_with_timeout_and_cancel_scoped(
+                s,
+                Duration::ZERO,
+                None,
+                |_c| Ok(4u32)
+            ))
+            .unwrap(),
+            4
+        );
     }
 }
