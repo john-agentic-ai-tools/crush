@@ -17,7 +17,7 @@ edition = "2024"
 # Matches the channel pinned in rust-toolchain.toml. Stated explicitly so the
 # MSRV is a contract for consumers and for Cargo's version-aware resolver,
 # rather than an implicit side effect of the pin.
-rust-version = "1.97"
+rust-version = "1.99"
 authors = ["Crush Contributors"]
 license = "MIT"
 repository = "https://github.com/john-agentic-ai-tools/crush"

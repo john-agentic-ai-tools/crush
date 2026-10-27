@@ -146,7 +146,7 @@ mod plugin_tests {
         let plugin = ParallelDeflatePlugin;
         let compressed = plugin.compress(b"", live()).expect("compress empty");
         let recovered = plugin.decompress(&compressed, live()).expect("decompress");
-        assert!(recovered.is_empty());
+        assert_eq!(recovered, [] as [u8; 0]);
     }
 
     #[test]
