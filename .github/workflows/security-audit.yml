@@ -7,6 +7,10 @@ on:
     branches: [develop, main]
   schedule:
     - cron: '0 0 * * *'  # Daily at midnight UTC
+  # GitHub disables scheduled workflows after a stretch of repo inactivity.
+  # Once re-enabled, this allows an immediate run instead of waiting for the
+  # next schedule or PR.
+  workflow_dispatch:
 
 concurrency:
   group: security-audit-${{ github.ref }}
