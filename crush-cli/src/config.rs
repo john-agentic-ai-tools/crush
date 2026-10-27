@@ -321,14 +321,14 @@ thread_local! {
 /// cannot leak its override into whatever runs next on the same thread.
 #[cfg(test)]
 #[must_use]
-fn set_test_config_path(path: PathBuf) -> TestConfigPathGuard {
+pub(crate) fn set_test_config_path(path: PathBuf) -> TestConfigPathGuard {
     let previous = TEST_CONFIG_PATH.with(|p| p.borrow_mut().replace(path));
     TestConfigPathGuard { previous }
 }
 
 /// Restores the previous thread-local config path override on drop.
 #[cfg(test)]
-struct TestConfigPathGuard {
+pub(crate) struct TestConfigPathGuard {
     previous: Option<PathBuf>,
 }
 
