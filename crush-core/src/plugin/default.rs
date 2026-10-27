@@ -248,6 +248,6 @@ mod tests {
         assert_eq!(metadata.version, "1.0.0");
         assert!(metadata.throughput > 0.0);
         assert!(metadata.compression_ratio > 0.0 && metadata.compression_ratio <= 1.0);
-        assert!(!metadata.description.is_empty());
+        assert_ne!(metadata.description, "");
     }
 }

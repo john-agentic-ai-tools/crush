@@ -24,7 +24,7 @@ fn test_compression_within_timeout() -> Result<()> {
     assert!(result.is_ok(), "Compression should succeed within timeout");
 
     let compressed = result?;
-    assert!(!compressed.is_empty());
+    assert_ne!(compressed, [] as [u8; 0]);
 
     Ok(())
 }
