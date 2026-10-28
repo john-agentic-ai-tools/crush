@@ -4,3 +4,9 @@
 # Enforce Unix line endings for hook scripts specifically
 .claude/hooks/* text eol=lf
 .cargo-husky/hooks/* text eol=lf
+
+# Spec Kit files are manifest-managed: the CLI records hashes of the LF files it
+# writes, so a CRLF checkout would make every one look locally modified and
+# block `specify integration upgrade`.
+.specify/** text eol=lf
+.claude/skills/speckit-*/** text eol=lf
