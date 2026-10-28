@@ -3,7 +3,7 @@
 #![allow(clippy::panic_in_result_fn)]
 
 use crush_core::plugin::FileMetadata;
-use crush_core::{compress_with_options, init_plugins, inspect, CompressionOptions, Result};
+use crush_core::{CompressionOptions, Result, compress_with_options, init_plugins, inspect};
 
 #[test]
 fn test_inspect_valid_file_with_crc() -> Result<()> {

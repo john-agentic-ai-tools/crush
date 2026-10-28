@@ -5,7 +5,7 @@
 
 #![allow(clippy::panic_in_result_fn)]
 
-use crush_core::{init_plugins, list_plugins, Result};
+use crush_core::{Result, init_plugins, list_plugins};
 
 /// Test that `init_plugins()` discovers the default DEFLATE plugin
 #[test]

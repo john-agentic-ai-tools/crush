@@ -5,7 +5,7 @@
 //! with logarithmic throughput scaling and min-max normalization.
 
 use crate::error::{PluginError, Result, ValidationError};
-use crate::plugin::{list_plugins, PluginMetadata};
+use crate::plugin::{PluginMetadata, list_plugins};
 
 /// Scoring weights for plugin selection
 ///

@@ -194,10 +194,10 @@ pub fn compress(input: &[u8]) -> Result<Vec<u8>> {
 /// ```
 pub fn compress_with_options(input: &[u8], options: &CompressionOptions) -> Result<Vec<u8>> {
     // Check if already cancelled before starting
-    if let Some(ref token) = options.cancel_token {
-        if token.is_cancelled() {
-            return Err(crate::error::CrushError::Cancelled);
-        }
+    if let Some(ref token) = options.cancel_token
+        && token.is_cancelled()
+    {
+        return Err(crate::error::CrushError::Cancelled);
     }
 
     // Select plugin based on options

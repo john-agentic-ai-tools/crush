@@ -1,7 +1,7 @@
 //! Main compression and decompression entry points.
 
 use crate::block::{
-    compress_block, decompress_block_into, resolve_compression_level, CompressedBlock,
+    CompressedBlock, compress_block, decompress_block_into, resolve_compression_level,
 };
 use crate::config::{EngineConfiguration, ProgressEvent, ProgressPhase};
 use crate::format::{BlockHeader, BlockIndexEntry, FileFlags, FileFooter, FileHeader, IndexHeader};
@@ -119,7 +119,7 @@ pub fn compress(input: &[u8], config: &EngineConfiguration) -> Result<Vec<u8>> {
             block_slices.push(chunk);
             remaining = rest;
         }
-        debug_assert!(remaining.is_empty());
+        debug_assert_eq!(remaining, []);
 
         block_slices
             .into_par_iter()
@@ -378,7 +378,7 @@ pub fn decompress_from_reader<R: Read + Seek>(
             output_slices.push(chunk);
             remaining = rest;
         }
-        debug_assert!(remaining.is_empty());
+        debug_assert_eq!(remaining, []);
     }
 
     // Phase 2: parallel decompress with pooled Decompressors, writing directly into the

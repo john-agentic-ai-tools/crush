@@ -5,7 +5,7 @@
 
 #![allow(clippy::panic_in_result_fn)]
 
-use crush_core::{compress_with_options, init_plugins, CompressionOptions, Result, ScoringWeights};
+use crush_core::{CompressionOptions, Result, ScoringWeights, compress_with_options, init_plugins};
 
 /// Test that plugin scoring selects the highest-scoring plugin
 ///
@@ -23,7 +23,7 @@ fn test_plugin_scoring_selection() -> Result<()> {
     let compressed = compress_with_options(data, &options)?;
 
     // Verify compression succeeded
-    assert!(!compressed.is_empty());
+    assert_ne!(compressed, [] as [u8; 0]);
 
     // Note: With only DEFLATE plugin currently, this just verifies the selection logic works
     // In future, with multiple plugins, we can verify the correct plugin was selected
@@ -47,7 +47,7 @@ fn test_manual_plugin_override() -> Result<()> {
     let compressed = compress_with_options(data, &options)?;
 
     // Verify compression succeeded
-    assert!(!compressed.is_empty());
+    assert_ne!(compressed, [] as [u8; 0]);
 
     // Verify the header has DEFLATE magic number
     assert_eq!(&compressed[0..4], &[0x43, 0x52, 0x01, 0x00]);
@@ -85,7 +85,7 @@ fn test_tied_score_alphabetical_resolution() -> Result<()> {
     let compressed = compress_with_options(data, &options)?;
 
     // Verify compression succeeded
-    assert!(!compressed.is_empty());
+    assert_ne!(compressed, [] as [u8; 0]);
 
     // Note: With only DEFLATE, this tests the tie-breaking logic exists
     // With multiple plugins having same score, alphabetical selection would be verified
@@ -110,7 +110,7 @@ fn test_custom_scoring_weights() -> Result<()> {
     let compressed = compress_with_options(data, &options)?;
 
     // Verify compression succeeded
-    assert!(!compressed.is_empty());
+    assert_ne!(compressed, [] as [u8; 0]);
 
     // Note: With only DEFLATE, result is same, but test verifies weight system works
 

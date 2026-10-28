@@ -5,7 +5,7 @@
 
 #![allow(clippy::panic_in_result_fn)]
 
-use crush_core::{compress_with_options, init_plugins, CompressionOptions, Result};
+use crush_core::{CompressionOptions, Result, compress_with_options, init_plugins};
 use std::time::Duration;
 
 /// Test that normal compression completes successfully within timeout
@@ -24,7 +24,7 @@ fn test_compression_within_timeout() -> Result<()> {
     assert!(result.is_ok(), "Compression should succeed within timeout");
 
     let compressed = result?;
-    assert!(!compressed.is_empty());
+    assert_ne!(compressed, [] as [u8; 0]);
 
     Ok(())
 }

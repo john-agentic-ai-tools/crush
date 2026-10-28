@@ -11,8 +11,8 @@ use crush_core::error::{CrushError, PluginError, Result};
 use tracing::{debug, info, warn};
 
 use crate::format::{
-    padding_to_alignment, GpuFileFooter, GpuFileHeader, TileFlags, TileHeader, TileIndexEntry,
-    TileIndexHeader, DEFAULT_SUB_STREAM_COUNT, DEFAULT_TILE_SIZE,
+    DEFAULT_SUB_STREAM_COUNT, DEFAULT_TILE_SIZE, GpuFileFooter, GpuFileHeader, TileFlags,
+    TileHeader, TileIndexEntry, TileIndexHeader, padding_to_alignment,
 };
 use crate::gdeflate;
 

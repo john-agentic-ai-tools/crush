@@ -14,8 +14,8 @@ pub mod timeout;
 pub use contract::CompressionAlgorithm;
 pub use metadata::{CrushHeader, FileMetadata, PluginMetadata};
 pub use registry::{init_plugins, list_plugins};
-pub use selector::{calculate_plugin_score, PluginSelector, ScoringWeights};
-pub use timeout::{run_with_timeout, run_with_timeout_and_cancel, TimeoutGuard};
+pub use selector::{PluginSelector, ScoringWeights, calculate_plugin_score};
+pub use timeout::{TimeoutGuard, run_with_timeout, run_with_timeout_and_cancel};
 
 use linkme::distributed_slice;
 

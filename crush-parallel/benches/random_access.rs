@@ -4,8 +4,8 @@
     clippy::cast_possible_truncation
 )]
 
-use criterion::{criterion_group, criterion_main, Criterion};
-use crush_parallel::{compress, decompress_block, load_index, EngineConfiguration};
+use criterion::{Criterion, criterion_group, criterion_main};
+use crush_parallel::{EngineConfiguration, compress, decompress_block, load_index};
 use std::hint::black_box;
 use std::io::Cursor;
 

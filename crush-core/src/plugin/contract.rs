@@ -5,8 +5,8 @@
 
 use crate::error::Result;
 use crate::plugin::PluginMetadata;
-use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 
 /// Trait that all compression plugins must implement
 ///

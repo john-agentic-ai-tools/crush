@@ -5,10 +5,10 @@
 
 use crate::error::{PluginError, Result, ValidationError};
 use crate::plugin::registry::get_plugin_by_magic;
-use crate::plugin::{list_plugins, CrushHeader, FileMetadata};
+use crate::plugin::{CrushHeader, FileMetadata, list_plugins};
 use crc32fast::Hasher;
-use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 
 /// Read and compute the CRC32 block that follows a Crush header.
 ///
@@ -253,7 +253,7 @@ mod tests {
     #[test]
     fn test_decompress_with_metadata() {
         use crate::plugin::FileMetadata;
-        use crate::{compress_with_options, CompressionOptions};
+        use crate::{CompressionOptions, compress_with_options};
 
         init_plugins().expect("Failed to init");
         let original = b"Data with metadata";
@@ -289,7 +289,7 @@ mod tests {
     #[test]
     fn test_decompress_truncated_metadata_length() {
         use crate::plugin::FileMetadata;
-        use crate::{compress_with_options, CompressionOptions};
+        use crate::{CompressionOptions, compress_with_options};
 
         init_plugins().expect("Failed to init");
         let original = b"Test";
@@ -314,7 +314,7 @@ mod tests {
     #[test]
     fn test_decompress_truncated_metadata_payload() {
         use crate::plugin::FileMetadata;
-        use crate::{compress_with_options, CompressionOptions};
+        use crate::{CompressionOptions, compress_with_options};
 
         init_plugins().expect("Failed to init");
         let original = b"Test";

@@ -43,3 +43,4 @@ test-*.txt.crush
 # AI Assistants
 .gemini/
 nul
+.claude/scheduled_tasks.lock

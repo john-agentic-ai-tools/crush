@@ -5,7 +5,7 @@
 
 #![allow(clippy::expect_used)]
 
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, criterion_group, criterion_main};
 use crush_core::{init_plugins, list_plugins};
 use std::hint::black_box;
 

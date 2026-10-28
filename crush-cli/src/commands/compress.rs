@@ -1,11 +1,11 @@
-use crate::algorithm::{select_algorithm, DEFAULT_PARALLEL_THRESHOLD_BYTES};
+use crate::algorithm::{DEFAULT_PARALLEL_THRESHOLD_BYTES, select_algorithm};
 use crate::cli::CompressArgs;
 use crate::commands::utils;
 use crate::error::{CliError, Result};
 use crate::output::{self, CompressionResult};
 use crush_core::cancel::CancellationToken;
 use crush_core::plugin::FileMetadata;
-use crush_core::{compress_with_options, CompressionOptions};
+use crush_core::{CompressionOptions, compress_with_options};
 use filetime::FileTime;
 use indicatif::{ProgressBar, ProgressStyle};
 use is_terminal::IsTerminal;

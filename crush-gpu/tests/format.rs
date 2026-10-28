@@ -1,8 +1,8 @@
 //! GPU tile format serialization tests
 
 use crush_gpu::format::{
-    GpuFileFooter, GpuFileHeader, TileFlags, TileHeader, TileIndexEntry, TileIndexHeader,
-    CGPU_MAGIC,
+    CGPU_MAGIC, GpuFileFooter, GpuFileHeader, TileFlags, TileHeader, TileIndexEntry,
+    TileIndexHeader,
 };
 
 // T009: GpuFileHeader round-trip tests
@@ -192,7 +192,7 @@ fn test_gpu_file_footer_rejects_wrong_version() {
 #[test]
 #[allow(clippy::expect_used)]
 fn test_tile_payloads_are_128_byte_aligned() {
-    use crush_gpu::engine::{compress, load_tile_index, EngineConfig};
+    use crush_gpu::engine::{EngineConfig, compress, load_tile_index};
     use std::sync::atomic::AtomicBool;
 
     let cancel = AtomicBool::new(false);
@@ -228,7 +228,7 @@ fn test_tile_payloads_are_128_byte_aligned() {
 #[test]
 #[allow(clippy::expect_used)]
 fn test_tile_index_o1_lookup() {
-    use crush_gpu::engine::{compress, load_tile_index, EngineConfig};
+    use crush_gpu::engine::{EngineConfig, compress, load_tile_index};
     use std::sync::atomic::AtomicBool;
 
     let cancel = AtomicBool::new(false);

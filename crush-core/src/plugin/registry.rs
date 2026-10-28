@@ -4,7 +4,7 @@
 //! distributed slice with runtime validation and management capabilities.
 
 use crate::error::{PluginError, Result};
-use crate::plugin::{CompressionAlgorithm, PluginMetadata, COMPRESSION_ALGORITHMS};
+use crate::plugin::{COMPRESSION_ALGORITHMS, CompressionAlgorithm, PluginMetadata};
 use std::collections::HashMap;
 use std::sync::RwLock;
 

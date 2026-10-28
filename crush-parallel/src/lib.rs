@@ -30,13 +30,13 @@ pub use engine::{
     decompress_from_reader,
 };
 pub use format::BlockIndexEntry;
-pub use index::{decompress_block, load_index, BlockIndex};
+pub use index::{BlockIndex, decompress_block, load_index};
 
 use crush_core::error::Result;
-use crush_core::plugin::{CompressionAlgorithm, PluginMetadata, COMPRESSION_ALGORITHMS};
+use crush_core::plugin::{COMPRESSION_ALGORITHMS, CompressionAlgorithm, PluginMetadata};
 use linkme::distributed_slice;
-use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 
 /// Magic number for the parallel-deflate plugin in the crush-core outer format.
 ///
@@ -66,8 +66,8 @@ impl CompressionAlgorithm for ParallelDeflatePlugin {
 
     fn compress(&self, input: &[u8], cancel_flag: Arc<AtomicBool>) -> Result<Vec<u8>> {
         use crate::config::ProgressCallback;
-        use std::sync::atomic::Ordering;
         use std::sync::Mutex;
+        use std::sync::atomic::Ordering;
 
         // Bridge the crush-core AtomicBool cancel flag into our ProgressCallback.
         let cb: ProgressCallback = Box::new(move |_event| !cancel_flag.load(Ordering::Acquire));
@@ -79,8 +79,8 @@ impl CompressionAlgorithm for ParallelDeflatePlugin {
 
     fn decompress(&self, input: &[u8], cancel_flag: Arc<AtomicBool>) -> Result<Vec<u8>> {
         use crate::config::ProgressCallback;
-        use std::sync::atomic::Ordering;
         use std::sync::Mutex;
+        use std::sync::atomic::Ordering;
 
         let cb: ProgressCallback = Box::new(move |_event| !cancel_flag.load(Ordering::Acquire));
         let config = EngineConfiguration::builder()
@@ -98,3 +98,120 @@ impl CompressionAlgorithm for ParallelDeflatePlugin {
 /// Compile-time plugin registration via `linkme` distributed slice.
 #[distributed_slice(COMPRESSION_ALGORITHMS)]
 static PARALLEL_DEFLATE_PLUGIN: &dyn CompressionAlgorithm = &ParallelDeflatePlugin;
+
+#[cfg(test)]
+#[allow(clippy::expect_used, clippy::unwrap_used)]
+mod plugin_tests {
+    use super::*;
+    use crush_core::error::CrushError;
+    use std::sync::atomic::Ordering;
+
+    /// A cancel flag that is not set — the normal case.
+    fn live() -> Arc<AtomicBool> {
+        Arc::new(AtomicBool::new(false))
+    }
+
+    #[test]
+    fn plugin_reports_stable_identity() {
+        let plugin = ParallelDeflatePlugin;
+        assert_eq!(plugin.name(), "parallel-deflate");
+
+        let meta = plugin.metadata();
+        assert_eq!(meta.name, "parallel-deflate");
+        assert_eq!(meta.magic_number, PLUGIN_MAGIC);
+        // The registry keys plugins by magic number, so the leading bytes must
+        // stay in the crush-core envelope shape: "CR" + version 1 + plugin id.
+        assert_eq!(&meta.magic_number[0..3], &[0x43, 0x52, 0x01]);
+        // Version is wired to the crate version so archives record their producer.
+        assert_eq!(meta.version, env!("CARGO_PKG_VERSION"));
+        assert!(meta.throughput > 0.0);
+        assert!(meta.compression_ratio > 0.0 && meta.compression_ratio < 1.0);
+    }
+
+    #[test]
+    fn plugin_roundtrips_through_the_trait() {
+        let plugin = ParallelDeflatePlugin;
+        // Repetitive enough to actually compress, and larger than one block.
+        let data = b"fn main() { println!(\"hello\"); }\n".repeat(4096);
+
+        let compressed = plugin.compress(&data, live()).expect("compress");
+        assert!(compressed.len() < data.len(), "expected some compression");
+
+        let recovered = plugin.decompress(&compressed, live()).expect("decompress");
+        assert_eq!(recovered, data);
+    }
+
+    #[test]
+    fn plugin_roundtrips_empty_input() {
+        let plugin = ParallelDeflatePlugin;
+        let compressed = plugin.compress(b"", live()).expect("compress empty");
+        let recovered = plugin.decompress(&compressed, live()).expect("decompress");
+        assert_eq!(recovered, [] as [u8; 0]);
+    }
+
+    #[test]
+    fn compress_honours_a_pre_set_cancel_flag() {
+        let plugin = ParallelDeflatePlugin;
+        let data = b"cancel me".repeat(100_000);
+
+        let flag = Arc::new(AtomicBool::new(true));
+        let result = plugin.compress(&data, Arc::clone(&flag));
+
+        assert!(
+            matches!(result, Err(CrushError::Cancelled)),
+            "expected Cancelled, got {result:?}"
+        );
+        assert!(flag.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn decompress_honours_a_pre_set_cancel_flag() {
+        let plugin = ParallelDeflatePlugin;
+        let data = b"cancel me".repeat(100_000);
+        let compressed = plugin.compress(&data, live()).expect("compress");
+
+        let result = plugin.decompress(&compressed, Arc::new(AtomicBool::new(true)));
+
+        assert!(
+            matches!(result, Err(CrushError::Cancelled)),
+            "expected Cancelled, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn detect_matches_only_the_crsh_magic() {
+        let plugin = ParallelDeflatePlugin;
+
+        assert!(plugin.detect(&crate::format::CRSH_MAGIC));
+        // Trailing bytes are irrelevant; only the 4-byte prefix is inspected.
+        let mut with_tail = crate::format::CRSH_MAGIC.to_vec();
+        with_tail.extend_from_slice(&[0xFF; 32]);
+        assert!(plugin.detect(&with_tail));
+
+        // Wrong magic, including the plugin's own envelope magic.
+        assert!(!plugin.detect(b"GZIP"));
+        assert!(!plugin.detect(&PLUGIN_MAGIC));
+
+        // Too short to contain a magic at all — must not panic.
+        assert!(!plugin.detect(b""));
+        assert!(!plugin.detect(&crate::format::CRSH_MAGIC[..3]));
+    }
+
+    #[test]
+    fn detect_accepts_real_compressed_output() {
+        let plugin = ParallelDeflatePlugin;
+        let compressed = plugin.compress(b"detect me", live()).expect("compress");
+        assert!(
+            plugin.detect(&compressed),
+            "compress() output should be recognised by detect()"
+        );
+    }
+
+    #[test]
+    fn plugin_is_registered_in_the_distributed_slice() {
+        let found = COMPRESSION_ALGORITHMS
+            .iter()
+            .any(|p| p.metadata().magic_number == PLUGIN_MAGIC);
+        assert!(found, "parallel-deflate should be linkme-registered");
+    }
+}

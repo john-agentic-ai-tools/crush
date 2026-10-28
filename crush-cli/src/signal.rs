@@ -1,6 +1,6 @@
 use crush_core::cancel::{AtomicCancellationToken, CancellationToken};
-use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 
 /// Signal handler state containing both the high-level cancellation token
 /// and a raw `AtomicBool` that can be passed to `decompress_with_cancel`.

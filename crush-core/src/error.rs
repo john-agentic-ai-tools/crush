@@ -34,7 +34,9 @@ pub enum CrushError {
 
     /// The compressed file was produced by a different engine version.
     /// Decompression is refused; the user must use the named producer version.
-    #[error("Version mismatch: file was produced by engine {file_version}, current engine is {current_version}")]
+    #[error(
+        "Version mismatch: file was produced by engine {file_version}, current engine is {current_version}"
+    )]
     VersionMismatch {
         /// Version string of the engine that produced the file.
         file_version: String,

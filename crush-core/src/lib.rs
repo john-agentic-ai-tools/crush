@@ -75,11 +75,11 @@ pub mod inspection;
 pub mod plugin;
 
 pub use cancel::{AtomicCancellationToken, CancellationToken, ResourceTracker};
-pub use compression::{compress, compress_with_options, CompressionOptions};
+pub use compression::{CompressionOptions, compress, compress_with_options};
 pub use decompression::{decompress, decompress_with_cancel};
 pub use error::{CrushError, PluginError, Result, TimeoutError, ValidationError};
-pub use inspection::{inspect, InspectResult};
+pub use inspection::{InspectResult, inspect};
 pub use plugin::{
-    calculate_plugin_score, init_plugins, list_plugins, CompressionAlgorithm, CrushHeader,
-    PluginMetadata, PluginSelector, ScoringWeights, COMPRESSION_ALGORITHMS,
+    COMPRESSION_ALGORITHMS, CompressionAlgorithm, CrushHeader, PluginMetadata, PluginSelector,
+    ScoringWeights, calculate_plugin_score, init_plugins, list_plugins,
 };

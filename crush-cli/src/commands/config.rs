@@ -76,3 +76,118 @@ pub fn run(args: &ConfigArgs) -> Result<()> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::set_test_config_path;
+
+    /// Point config I/O at a fresh temp file for this thread and return the
+    /// tempdir (kept alive by the caller) plus its RAII override guard.
+    fn scratch_config() -> (tempfile::TempDir, crate::config::TestConfigPathGuard) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let guard = set_test_config_path(dir.path().join("config.toml"));
+        (dir, guard)
+    }
+
+    fn args(action: ConfigAction) -> ConfigArgs {
+        ConfigArgs { action }
+    }
+
+    #[test]
+    fn set_then_get_persists_the_value() {
+        let (_dir, _guard) = scratch_config();
+
+        run(&args(ConfigAction::Set {
+            key: "compression.level".to_string(),
+            value: "fast".to_string(),
+        }))
+        .expect("set");
+
+        // Round-trip through the file, not just in-memory state.
+        let stored = config::load_config().expect("load");
+        assert_eq!(stored.compression.level, "fast");
+
+        run(&args(ConfigAction::Get {
+            key: "compression.level".to_string(),
+        }))
+        .expect("get");
+    }
+
+    #[test]
+    fn set_rejects_a_value_that_fails_validation() {
+        let (_dir, _guard) = scratch_config();
+
+        let result = run(&args(ConfigAction::Set {
+            key: "compression.level".to_string(),
+            value: "ludicrous".to_string(),
+        }));
+
+        assert!(result.is_err(), "invalid level should not be accepted");
+        // And it must not have been written to disk.
+        let stored = config::load_config().expect("load");
+        assert_eq!(stored.compression.level, "balanced");
+    }
+
+    #[test]
+    fn set_rejects_an_unknown_key() {
+        let (_dir, _guard) = scratch_config();
+
+        let result = run(&args(ConfigAction::Set {
+            key: "no.such.key".to_string(),
+            value: "1".to_string(),
+        }));
+
+        assert!(result.is_err(), "unknown key should be rejected");
+    }
+
+    #[test]
+    fn get_rejects_an_unknown_key() {
+        let (_dir, _guard) = scratch_config();
+
+        let result = run(&args(ConfigAction::Get {
+            key: "no.such.key".to_string(),
+        }));
+
+        assert!(result.is_err(), "unknown key should be rejected");
+    }
+
+    #[test]
+    fn list_renders_the_current_config() {
+        let (_dir, _guard) = scratch_config();
+
+        run(&args(ConfigAction::Set {
+            key: "logging.level".to_string(),
+            value: "debug".to_string(),
+        }))
+        .expect("set");
+
+        run(&args(ConfigAction::List)).expect("list");
+
+        // `list` is display-only; verify it left the config untouched.
+        let stored = config::load_config().expect("load");
+        assert_eq!(stored.logging.level, "debug");
+    }
+
+    #[test]
+    fn reset_with_yes_restores_defaults_without_prompting() {
+        let (_dir, _guard) = scratch_config();
+
+        run(&args(ConfigAction::Set {
+            key: "compression.level".to_string(),
+            value: "best".to_string(),
+        }))
+        .expect("set");
+        assert_eq!(
+            config::load_config().expect("load").compression.level,
+            "best"
+        );
+
+        // `yes: true` must not touch stdin — an in-process read would hang here.
+        run(&args(ConfigAction::Reset { yes: true })).expect("reset");
+
+        let stored = config::load_config().expect("load");
+        assert_eq!(stored.compression.level, "balanced");
+        assert_eq!(stored.output.color, "auto");
+    }
+}

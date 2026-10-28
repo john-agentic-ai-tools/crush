@@ -1,7 +1,7 @@
 use crate::cli::{OutputFormat, PluginsAction, PluginsArgs};
 use crate::error::{CliError, Result};
 use crate::output;
-use crush_core::{compress_with_options, decompress, list_plugins, CompressionOptions};
+use crush_core::{CompressionOptions, compress_with_options, decompress, list_plugins};
 use tracing::info;
 
 pub fn run(args: &PluginsArgs) -> Result<()> {
@@ -49,7 +49,9 @@ pub fn run(args: &PluginsArgs) -> Result<()> {
                     }
                     Ok(None) => {
                         println!("  GPU Device:  Not available (no compatible GPU detected)");
-                        println!("  Note:        CPU fallback will be used for decompression of GPU-compressed files.");
+                        println!(
+                            "  Note:        CPU fallback will be used for decompression of GPU-compressed files."
+                        );
                     }
                     Err(e) => {
                         println!("  GPU Device:  Error during detection: {}", e);

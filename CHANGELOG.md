@@ -16,6 +16,74 @@ The workspace publishes four crates that version independently:
 
 This changelog begins at the versions below. For earlier history, see the git log.
 
+## [Unreleased]
+
+## [2026-10-27]
+
+Edition 2024, toolchain, and dependency update. Every crate receives a **minor**
+bump because the minimum supported Rust version rises from 1.97 to 1.99, which
+can break consumers pinned to an older compiler. No public Rust API changed in
+any library crate (`crush-cli` is a binary, so its internal functions are not
+API).
+
+- `crush-core` 0.3.0 → **0.4.0**
+- `crush-parallel` 0.2.0 → **0.3.0**
+- `crush-gpu` 0.2.0 → **0.3.0**
+- `crush-cli` 0.3.0 → **0.4.0**
+
+### Security
+
+- No open advisories. `cargo audit --deny warnings` (workspace and fuzz
+  lockfiles) and `cargo deny check` pass with **zero ignores** after updating
+  to current compatible releases of all dependencies.
+- The scheduled Security Audit workflow had been disabled by GitHub for
+  inactivity since 2026-10-05. It is re-enabled and now also supports manual
+  dispatch.
+
+### Changed
+
+- **Minimum supported Rust version is now 1.99** (`rust-version = "1.99"`); the
+  pinned toolchain moves 1.97.1 → 1.99.1. Clippy 1.99's new `assert_is_empty`
+  lint was applied to nine assertions; no behaviour change.
+- **`crush-cli`: `dirs` 6 → 7.** `config_dir()` is unchanged, so the config
+  file location on every platform is the same as before.
+- Compatible dependency updates across the workspace, including wgpu 30.0.1,
+  cudarc 0.19.10, clap 4.6.7, flate2 1.1.10, and memmap2 0.9.12.
+- CI actions updated: `actions/checkout` v7, `actions/upload-artifact` v7,
+  `actions/download-artifact` v8, `codecov/codecov-action` v7,
+  `Jimver/cuda-toolkit` v0.2.36.
+- **Migrated the workspace to Rust edition 2024** (all four crates and the three
+  fuzz crates). Most of the diff is rustfmt's 2024 style edition reordering
+  `use` items.
+- `crush-cli`: `merge_env_vars` now delegates to a new `merge_env_vars_from(config,
+  vars)`, which takes the variables explicitly instead of reading the process
+  environment. Added so the parsing rules can be tested without calling
+  `std::env::set_var`, which became `unsafe` in edition 2024.
+
+### Fixed
+
+- **CI coverage gate could never fail.** The threshold check parsed the last
+  column of `cargo llvm-cov`'s table, which is branch coverage and prints `-`,
+  so the comparison silently evaluated false; it also measured a different file
+  set than the report. Now enforced by `cargo llvm-cov report
+  --fail-under-lines 80` with the same `crush-gpu` exclusion. Line coverage is
+  85.5% after adding tests.
+- Removed the last source of environment mutation from `crush-cli`'s unit
+  tests. `cargo fix --edition` had wrapped 34 call sites in `unsafe` with
+  "FIXME: Audit that the environment access only happens in single-threaded
+  code" — an audit that would have failed, since `cargo test` runs them as
+  threads while siblings read the environment. The tests now use
+  `merge_env_vars_from` and a `#[cfg(test)]` thread-local config-path override,
+  so **no `unsafe` was added** and the tests are genuinely parallel-safe rather
+  than merely serialised behind the mutex added in the previous release.
+- Pinned the drop order of two `recv_timeout` tail expressions in
+  `crush_core::plugin::timeout` by binding the scrutinee to a local. Edition
+  2024 drops such temporaries before locals rather than after
+  (`tail-expr-drop-order`); binding makes the order identical in both editions
+  instead of dependent on the edition.
+- Rewrote six nested `if let` blocks as let-chains, now that edition 2024
+  enables them (`clippy::collapsible_if`).
+
 ## [2026-07-30]
 
 Toolchain and dependency modernisation. Every crate receives a **minor** bump
