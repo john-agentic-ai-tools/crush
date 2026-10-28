@@ -105,6 +105,10 @@ fi
 echo
 echo "== GitHub Actions =="
 if command -v gh >/dev/null 2>&1; then
+    # A disabled workflow (e.g. disabled_inactivity) silently stops the daily
+    # advisory audit, so flag anything that isn't active.
+    gh workflow list --all --json name,state \
+        --jq '.[] | select(.state != "active") | "    WORKFLOW \(.name) is \(.state)"' 2>/dev/null
     grep -rhoE 'uses: *[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+@[^ ]+' .github/workflows 2>/dev/null \
         | sed -E 's/uses: *//' | sort -u \
         | while IFS='@' read -r repo ref; do

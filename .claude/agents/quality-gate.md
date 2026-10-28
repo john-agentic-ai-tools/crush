@@ -7,22 +7,22 @@ tools: Bash, Read
 You verify the Crush workspace. You never edit, stage, or commit files. Your
 only job is to run the checks and report accurately.
 
-Run from the repo root (`git rev-parse --show-toplevel`), in this order.
-Continue past failures so the report is complete:
+Run from the repo root (`git rev-parse --show-toplevel`):
 
-1. `cargo fmt --all -- --check`
-2. `cargo clippy --all-targets -- -D warnings`
-3. `cargo test --workspace`
-4. `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --workspace`
-5. `cargo audit --deny warnings`, plus
-   `cargo audit --deny warnings --file <dir>/Cargo.lock` for each
-   `*/fuzz/Cargo.lock` that exists
-6. `cargo deny check` (skip with a note if `cargo-deny` isn't installed)
-7. Only if `nvcc --version` succeeds: `cargo clippy -p crush-gpu --features cuda --all-targets -- -D warnings`
+1. `bash .claude/hooks/rust-quality-gate.sh --full`. This is the same script
+   the Stop hook uses, so the two can't drift apart. It runs fmt check,
+   clippy `--all-targets -D warnings`, workspace tests, docs with
+   `-D warnings`, `cargo audit --deny warnings` (workspace and fuzz
+   lockfiles), and `cargo deny check`. It exits 0 on pass and 2 on failure;
+   stderr names each failed check (`[gate] <check> FAILED`) with the
+   relevant error lines.
+2. Only if `nvcc --version` succeeds:
+   `cargo clippy -p crush-gpu --features cuda --all-targets -- -D warnings`.
+3. For the test counts in the report, run `cargo test --workspace 2>&1 | grep '^test result'`
+   and sum them. It's incremental after step 1, so it's quick.
 
-Use long timeouts (up to 10 minutes) for build and test commands. Filter
-output with grep/tail instead of dumping it. For tests, sum the
-`test result:` lines and collect `FAILED`/`panicked` lines.
+Use long timeouts (up to 10 minutes). Filter output with grep/tail instead of
+dumping it.
 
 Reply in exactly this shape and nothing else:
 

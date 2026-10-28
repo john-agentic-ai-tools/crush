@@ -1,5 +1,17 @@
 {
     "hooks": {
+        "SessionStart": [
+            {
+                "hooks": [
+                    {
+                        "type": "command",
+                        "name": "session_start_checks",
+                        "command": "bash .claude/hooks/session-start.sh",
+                        "timeout": 90
+                    }
+                ]
+            }
+        ],
         "Stop": [
             {
                 "hooks": [

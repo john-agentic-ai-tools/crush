@@ -1,71 +1,90 @@
 #!/usr/bin/env bash
-# Rust Quality Gate Hook
+# Rust Quality Gate
 #
-# This hook enforces code quality standards before stopping work.
+# Single source of truth for Crush's local quality gate. Used two ways:
+#
+#   bash .claude/hooks/rust-quality-gate.sh          Stop hook (fast path)
+#   bash .claude/hooks/rust-quality-gate.sh --full   quality-gate subagent
+#
+# Default mode exits 0 immediately when no Rust sources or manifests changed,
+# otherwise runs the same fmt/clippy/test commands as CI. --full always runs
+# and adds docs, cargo audit (incl. fuzz lockfiles), and cargo deny.
+#
+# Exit codes: 0 = pass, 2 = fail. Exit 2 is what makes a Claude Code Stop hook
+# block and feed stderr back to Claude; exit 1 would only warn the user.
+#
 # Requirements: bash (included with Git for Windows on Windows platforms)
-#
-# If this script fails to run on Windows, ensure Git for Windows is installed
-# and that Git Bash is in your PATH.
 
-set -eo pipefail
+set -uo pipefail
 
-# Find cargo executable
+FULL=0
+[ "${1:-}" = "--full" ] && FULL=1
+
+# Find cargo executable. Support Git Bash (/c/...) and WSL (/mnt/c/...) paths.
 CARGO=""
-
-# Try multiple common cargo installation locations
-# Support both Git Bash (/c/...) and WSL (/mnt/c/...) path formats
-CARGO_LOCATIONS=(
-    "$HOME/.cargo/bin/cargo"
-    "/mnt/c/Users/Admin/.cargo/bin/cargo.exe"
-    "/c/Users/Admin/.cargo/bin/cargo"
-    "/c/Users/Admin/.cargo/bin/cargo.exe"
-)
-
-for CARGO_PATH in "${CARGO_LOCATIONS[@]}"; do
-    echo "[hook] Checking: $CARGO_PATH" >&2
-    if [ -f "$CARGO_PATH" ]; then
-        echo "[hook] Found file: $CARGO_PATH" >&2
-        if [ -x "$CARGO_PATH" ]; then
-            echo "[hook] File is executable" >&2
-            CARGO="$CARGO_PATH"
-            break
-        else
-            echo "[hook] File exists but not executable" >&2
-        fi
-    else
-        echo "[hook] File not found" >&2
+for CARGO_PATH in \
+    "$(command -v cargo 2>/dev/null)" \
+    "$HOME/.cargo/bin/cargo" \
+    "$HOME/.cargo/bin/cargo.exe" \
+    "/mnt/c/Users/Admin/.cargo/bin/cargo.exe" \
+    "/c/Users/Admin/.cargo/bin/cargo.exe"; do
+    if [ -n "$CARGO_PATH" ] && [ -x "$CARGO_PATH" ]; then
+        CARGO="$CARGO_PATH"
+        break
     fi
 done
 
 if [ -z "$CARGO" ]; then
-    echo "[hook] ERROR: cargo not found. Please install Rust via rustup: https://rustup.rs" >&2
-    echo "[hook] HOME=${HOME:-unset}" >&2
-    exit 1
-else
-    echo "format success" >&2
+    echo "[gate] ERROR: cargo not found. Install Rust via rustup: https://rustup.rs" >&2
+    exit 2
 fi
 
-echo "[hook] Using cargo: $CARGO" >&2
+cd "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" || exit 2
 
-echo "[hook] Running Rust quality gate..." >&2
-
-# 1. Ensure code is formatted
-if ! "$CARGO" fmt 2>&1; then
-    echo "[hook] Failed to format code. Run: cargo fmt" >&2
-    exit 1
+if [ "$FULL" -eq 0 ]; then
+    # Tracked modifications and untracked files alike; renames show the new path.
+    if ! git status --porcelain 2>/dev/null \
+        | grep -qE '(\.rs|Cargo\.toml|rust-toolchain\.toml)$'; then
+        exit 0
+    fi
 fi
 
-# 2. Clippy with warnings as errors
-if ! "$CARGO" clippy -- -D warnings 2>&1; then
-  echo "[hook] Clippy warnings found." >&2
-  exit 1
+FAILED=()
+
+# Run a check; on failure keep the tail of its output for the report.
+run_check() {
+    local name="$1"; shift
+    local out
+    if ! out="$("$@" 2>&1)"; then
+        FAILED+=("$name")
+        {
+            echo "[gate] $name FAILED: $*"
+            printf '%s\n' "$out" | grep -E '^(error|warning)|^Diff in|-->|panicked|FAILED|^test .* FAILED' | head -40
+        } >&2
+    fi
+}
+
+run_check fmt    "$CARGO" fmt --all -- --check
+run_check clippy "$CARGO" clippy --all-targets -- -D warnings
+run_check test   "$CARGO" test --workspace --quiet
+
+if [ "$FULL" -eq 1 ]; then
+    run_check doc env RUSTDOCFLAGS="-D warnings" "$CARGO" doc --no-deps --workspace
+    run_check audit "$CARGO" audit --deny warnings
+    for lock in */fuzz/Cargo.lock; do
+        [ -f "$lock" ] && run_check "audit:$lock" "$CARGO" audit --deny warnings --file "$lock"
+    done
+    if "$CARGO" deny --version >/dev/null 2>&1; then
+        run_check deny "$CARGO" deny check
+    else
+        echo "[gate] deny: skipped (cargo-deny not installed)" >&2
+    fi
 fi
 
-# 3. Tests
-if ! "$CARGO" test --quiet 2>&1; then
-  echo "[hook] Tests failed." >&2
-  exit 1
+if [ "${#FAILED[@]}" -gt 0 ]; then
+    echo "[gate] Quality gate FAILED: ${FAILED[*]}. Fix these before finishing." >&2
+    exit 2
 fi
 
-echo "[hook] Rust quality gate passed." >&2
+echo "[gate] Quality gate passed." >&2
 exit 0
