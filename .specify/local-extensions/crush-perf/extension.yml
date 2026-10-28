@@ -1,0 +1,29 @@
+schema_version: "1.0"
+
+extension:
+  id: crush-perf
+  name: "Crush Performance Gate"
+  version: "1.0.0"
+  description: "Runs the /perf skill after implementation: a regression check when performance crates changed, and goal runs for the spec's performance success criteria (constitution: benchmarks show no regression > 5%)"
+  author: crush
+  repository: https://github.com/john-agentic-ai-tools/crush
+  license: MIT
+
+requires:
+  speckit_version: ">=1.2.0"
+
+provides:
+  commands:
+    - name: speckit.crush-perf.gate
+      file: commands/speckit.crush-perf.gate.md
+      description: "Run /perf check (and /perf goal for spec performance criteria) when performance crates changed"
+
+hooks:
+  after_implement:
+    command: speckit.crush-perf.gate
+    optional: false
+    description: "Benchmark regression gate after implementation"
+
+tags:
+  - "performance"
+  - "benchmarks"

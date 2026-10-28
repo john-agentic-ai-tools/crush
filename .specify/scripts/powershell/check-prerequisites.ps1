@@ -9,17 +9,21 @@
 #
 # OPTIONS:
 #   -Json               Output in JSON format
+#   -RequireSpec        Require spec.md to exist (for analysis phase)
 #   -RequireTasks       Require tasks.md to exist (for implementation phase)
 #   -IncludeTasks       Include tasks.md in AVAILABLE_DOCS list
 #   -PathsOnly          Only output path variables (no validation)
+#   -Template NAME      Include composed template content in JSON output
 #   -Help, -h           Show help message
 
 [CmdletBinding()]
 param(
     [switch]$Json,
+    [switch]$RequireSpec,
     [switch]$RequireTasks,
     [switch]$IncludeTasks,
     [switch]$PathsOnly,
+    [string]$Template,
     [switch]$Help
 )
 
@@ -34,18 +38,20 @@ Consolidated prerequisite checking for Spec-Driven Development workflow.
 
 OPTIONS:
   -Json               Output in JSON format
+  -RequireSpec        Require spec.md to exist (for analysis phase)
   -RequireTasks       Require tasks.md to exist (for implementation phase)
   -IncludeTasks       Include tasks.md in AVAILABLE_DOCS list
   -PathsOnly          Only output path variables (no prerequisite validation)
+  -Template NAME      Include composed template content in JSON output
   -Help, -h           Show this help message
 
 EXAMPLES:
   # Check task prerequisites (plan.md required)
   .\check-prerequisites.ps1 -Json
-  
+
   # Check implementation prerequisites (plan.md + tasks.md required)
   .\check-prerequisites.ps1 -Json -RequireTasks -IncludeTasks
-  
+
   # Get feature paths only (no validation)
   .\check-prerequisites.ps1 -PathsOnly
 
@@ -56,127 +62,133 @@ EXAMPLES:
 # Source common functions
 . "$PSScriptRoot/common.ps1"
 
-# Centralized output object
-$outputObject = [PSCustomObject]@{
-    Success = $true
-    Messages = @()
-    REPO_ROOT = $null
-    BRANCH = $null
-    HAS_GIT = $null
-    FEATURE_DIR = $null
-    FEATURE_SPEC = $null
-    IMPL_PLAN = $null
-    TASKS = $null
-    RESEARCH = $null # Initialize optional paths to null
-    DATA_MODEL = $null
-    QUICKSTART = $null
-    CONTRACTS_DIR = $null # Only if it exists and has files
-    AVAILABLE_DOCS = @()
+# Get feature paths.
+# In -PathsOnly mode this is pure resolution, so pass -NoPersist to opt out of
+# the feature.json write side effect (issue #3025).
+if ($PathsOnly) {
+    $paths = Get-FeaturePathsEnv -NoPersist
+} else {
+    $paths = Get-FeaturePathsEnv
 }
 
-# Custom function for logging errors/warnings into the JSON messages array or console
-function Log-Message {
-    param (
-        [string]$Type, # 'Error', 'Warning', 'Info'
-        [string]$Message
-    )
+# If paths-only mode, output paths and exit (no validation)
+if ($PathsOnly) {
     if ($Json) {
-        $script:outputObject.Messages += [PSCustomObject]@{ Type = $Type; Text = $Message }
-        if ($Type -eq 'Error') { $script:outputObject.Success = $false }
+        [PSCustomObject]@{
+            REPO_ROOT    = $paths.REPO_ROOT
+            BRANCH       = $paths.CURRENT_BRANCH
+            FEATURE_DIR  = $paths.FEATURE_DIR
+            FEATURE_SPEC = $paths.FEATURE_SPEC
+            IMPL_PLAN    = $paths.IMPL_PLAN
+            TASKS        = $paths.TASKS
+        } | ConvertTo-Json -Compress
     } else {
-        switch ($Type) {
-            'Error'   { Write-SpecifyError $Message }
-            'Warning' { Write-SpecifyWarning $Message }
-            'Info'    { Write-SpecifyInfo $Message }
-            default   { Write-Host $Message } # Still use Write-Host for default
-        }
+        Write-Output "REPO_ROOT: $($paths.REPO_ROOT)"
+        Write-Output "BRANCH: $($paths.CURRENT_BRANCH)"
+        Write-Output "FEATURE_DIR: $($paths.FEATURE_DIR)"
+        Write-Output "FEATURE_SPEC: $($paths.FEATURE_SPEC)"
+        Write-Output "IMPL_PLAN: $($paths.IMPL_PLAN)"
+        Write-Output "TASKS: $($paths.TASKS)"
     }
+    exit 0
 }
-
-# Get feature paths and validate branch
-$paths = Get-FeaturePathsEnv
-
-$outputObject.REPO_ROOT = $paths.REPO_ROOT
-$outputObject.BRANCH = $paths.CURRENT_BRANCH
-$outputObject.HAS_GIT = $paths.HAS_GIT
-$outputObject.FEATURE_DIR = $paths.FEATURE_DIR
-$outputObject.FEATURE_SPEC = $paths.FEATURE_SPEC
-$outputObject.IMPL_PLAN = $paths.IMPL_PLAN
-$outputObject.TASKS = $paths.TASKS
-
-if (-not (Test-FeatureBranch -Branch $paths.CURRENT_BRANCH -HasGit:$paths.HAS_GIT)) { 
-    Log-Message -Type 'Error' -Message "Branch validation failed for $($paths.CURRENT_BRANCH)."
-    if ($Json) { ConvertTo-Json -InputObject $outputObject -Compress; exit 1 } else { exit 1 }
-}
-
-
 
 # Validate required directories and files
-if (-not (Test-Path $paths.FEATURE_DIR -PathType Container)) {
-    Log-Message -Type 'Error' -Message "Feature directory not found: $($paths.FEATURE_DIR)"
-    Log-Message -Type 'Info' -Message "Run /speckit.specify first to create the feature structure."
-    if ($Json) { ConvertTo-Json -InputObject $outputObject -Compress; exit 1 } else { exit 1 }
+if (-not (Test-Path -LiteralPath $paths.FEATURE_DIR -PathType Container)) {
+    [Console]::Error.WriteLine("ERROR: Feature directory not found: $($paths.FEATURE_DIR)")
+    $specifyCommand = '/speckit-specify'
+    [Console]::Error.WriteLine("Run $specifyCommand first to create the feature structure.")
+    exit 1
 }
 
-if (-not (Test-Path $paths.IMPL_PLAN -PathType Leaf)) {
-    Log-Message -Type 'Error' -Message "plan.md not found in $($paths.FEATURE_DIR)"
-    Log-Message -Type 'Info' -Message "Run /speckit.plan first to create the implementation plan."
-    if ($Json) { ConvertTo-Json -InputObject $outputObject -Compress; exit 1 } else { exit 1 }
+if (-not (Test-Path -LiteralPath $paths.IMPL_PLAN -PathType Leaf)) {
+    [Console]::Error.WriteLine("ERROR: plan.md not found in $($paths.FEATURE_DIR)")
+    $planCommand = '/speckit-plan'
+    [Console]::Error.WriteLine("Run $planCommand first to create the implementation plan.")
+    exit 1
+}
+
+if ((Get-Item -LiteralPath $paths.IMPL_PLAN).Length -eq 0) {
+    [Console]::Error.WriteLine("ERROR: plan.md is empty in $($paths.FEATURE_DIR)")
+    $planCommand = '/speckit-plan'
+    [Console]::Error.WriteLine(
+        "Populate it, or remove the empty file and rerun $planCommand with a valid plan template."
+    )
+    exit 1
+}
+
+# Check for spec.md if required
+if ($RequireSpec -and -not (Test-Path -LiteralPath $paths.FEATURE_SPEC -PathType Leaf)) {
+    [Console]::Error.WriteLine("ERROR: spec.md not found in $($paths.FEATURE_DIR)")
+    $specifyCommand = '/speckit-specify'
+    [Console]::Error.WriteLine("Run $specifyCommand first to create the feature specification.")
+    exit 1
 }
 
 # Check for tasks.md if required
-if ($RequireTasks -and -not (Test-Path $paths.TASKS -PathType Leaf)) {
-    Log-Message -Type 'Error' -Message "tasks.md not found in $($paths.FEATURE_DIR)"
-    Log-Message -Type 'Info' -Message "Run /speckit.tasks first to create the task list."
-    if ($Json) { ConvertTo-Json -InputObject $outputObject -Compress; exit 1 } else { exit 1 }
+if ($RequireTasks -and -not (Test-Path -LiteralPath $paths.TASKS -PathType Leaf)) {
+    [Console]::Error.WriteLine("ERROR: tasks.md not found in $($paths.FEATURE_DIR)")
+    $tasksCommand = '/speckit-tasks'
+    [Console]::Error.WriteLine("Run $tasksCommand first to create the task list.")
+    exit 1
 }
 
-# Populate available document paths in outputObject
-if (Test-Path $paths.RESEARCH) { 
-    $outputObject.RESEARCH = $paths.RESEARCH;
-    $outputObject.AVAILABLE_DOCS += $paths.RESEARCH
-}
-if (Test-Path $paths.DATA_MODEL) { 
-    $outputObject.DATA_MODEL = $paths.DATA_MODEL;
-    $outputObject.AVAILABLE_DOCS += $paths.DATA_MODEL
-}
+# Build list of available documents
+$docs = @()
+
+# Always check these optional docs
+if (Test-Path -LiteralPath $paths.RESEARCH) { $docs += 'research.md' }
+if (Test-Path -LiteralPath $paths.DATA_MODEL) { $docs += 'data-model.md' }
+
 # Check contracts directory (only if it exists and has files)
-if ((Test-Path $paths.CONTRACTS_DIR) -and (Get-ChildItem -Path $paths.CONTRACTS_DIR -ErrorAction SilentlyContinue | Select-Object -First 1)) { 
-    $outputObject.CONTRACTS_DIR = $paths.CONTRACTS_DIR;
-    $outputObject.AVAILABLE_DOCS += $paths.CONTRACTS_DIR 
+if ((Test-Path -LiteralPath $paths.CONTRACTS_DIR) -and (Get-ChildItem -LiteralPath $paths.CONTRACTS_DIR -ErrorAction SilentlyContinue | Select-Object -First 1)) {
+    $docs += 'contracts/'
 }
-if (Test-Path $paths.QUICKSTART) { 
-    $outputObject.QUICKSTART = $paths.QUICKSTART;
-    $outputObject.AVAILABLE_DOCS += $paths.QUICKSTART 
-}
+
+if (Test-Path -LiteralPath $paths.QUICKSTART) { $docs += 'quickstart.md' }
+
 # Include tasks.md if requested and it exists
-if ($IncludeTasks -and (Test-Path $paths.TASKS)) { 
-    $outputObject.AVAILABLE_DOCS += $paths.TASKS 
+if ($IncludeTasks -and (Test-Path -LiteralPath $paths.TASKS)) {
+    $docs += 'tasks.md'
+}
+
+$templateContent = $null
+if ($Template) {
+    $templateContent = Resolve-TemplateContent -TemplateName $Template -RepoRoot $paths.REPO_ROOT
+    if ($null -eq $templateContent) {
+        [Console]::Error.WriteLine("ERROR: Could not resolve required $Template from the template override stack for $($paths.REPO_ROOT)")
+        exit 1
+    }
 }
 
 # Output results
 if ($Json) {
-    ConvertTo-Json -InputObject $outputObject -Compress
-} else {
-    # Original text output logic, or simplified version
-    Write-Output "REPO_ROOT: $($outputObject.REPO_ROOT)"
-    Write-Output "BRANCH: $($outputObject.BRANCH)"
-    Write-Output "FEATURE_DIR: $($outputObject.FEATURE_DIR)"
-    Write-Output "FEATURE_SPEC: $($outputObject.FEATURE_SPEC)"
-    Write-Output "IMPL_PLAN: $($outputObject.IMPL_PLAN)"
-    Write-Output "TASKS: $($outputObject.TASKS)"
-    # Iterate and print messages
-    foreach ($msg in $outputObject.Messages) {
-        # Need to use the newly named functions here
-        switch ($msg.Type) {
-            'Error'   { Write-SpecifyError $msg.Text }
-            'Warning' { Write-SpecifyWarning $msg.Text }
-            'Info'    { Write-SpecifyInfo $msg.Text }
-            default   { Write-Host $msg.Text }
-        }
+    # JSON output
+    $result = [ordered]@{
+        FEATURE_DIR = $paths.FEATURE_DIR
+        AVAILABLE_DOCS = $docs
     }
+    if ($Template) {
+        $result.TEMPLATE_CONTENT = $templateContent
+    }
+    [PSCustomObject]$result | ConvertTo-Json -Compress
+} else {
+    # Text output
+    Write-Output "FEATURE_DIR:$($paths.FEATURE_DIR)"
     Write-Output "AVAILABLE_DOCS:"
-    foreach ($doc in $outputObject.AVAILABLE_DOCS) {
-        Write-Output "  - $doc"
+
+    # Show status of each potential document.
+    # These helpers report their line with Write-Output and ALSO return a
+    # bool, both on the Success stream, so 'Out-Null' discarded the report
+    # line along with the return value and left AVAILABLE_DOCS empty. Drop
+    # only the boolean so the per-document lines reach stdout like the
+    # bash and Python twins.
+    Test-FileExists -Path $paths.RESEARCH -Description 'research.md' | Where-Object { $_ -isnot [bool] }
+    Test-FileExists -Path $paths.DATA_MODEL -Description 'data-model.md' | Where-Object { $_ -isnot [bool] }
+    Test-DirHasFiles -Path $paths.CONTRACTS_DIR -Description 'contracts/' | Where-Object { $_ -isnot [bool] }
+    Test-FileExists -Path $paths.QUICKSTART -Description 'quickstart.md' | Where-Object { $_ -isnot [bool] }
+
+    if ($IncludeTasks) {
+        Test-FileExists -Path $paths.TASKS -Description 'tasks.md' | Where-Object { $_ -isnot [bool] }
     }
 }

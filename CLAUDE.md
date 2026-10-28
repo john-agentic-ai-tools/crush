@@ -8,26 +8,45 @@ This is a **Speckit** project - a structured workflow system for feature develop
 
 ## Core Workflow
 
-Speckit enforces a strict workflow for all feature development:
+Speckit (spec-kit 1.2.5, Claude skills integration) enforces a strict workflow for all feature development:
 
-1. **Specification (`/speckit.specify`)**: Create detailed feature specs from natural language descriptions
-2. **Planning (`/speckit.plan`)**: Generate technical plans with research, data models, and API contracts
-3. **Task Breakdown (`/speckit.tasks`)**: Convert plans into dependency-ordered, executable tasks
-4. **Implementation (`/speckit.implement`)**: Execute the task list phase by phase
+1. **Specification (`/speckit-specify`)**: Create detailed feature specs from natural language descriptions
+2. **Planning (`/speckit-plan`)**: Generate technical plans with research, data models, and API contracts
+3. **Task Breakdown (`/speckit-tasks`)**: Convert plans into dependency-ordered, executable tasks
+4. **Implementation (`/speckit-implement`)**: Execute the task list phase by phase
 
-### Available Commands
+### Available Skills
 
-All commands are invoked via the Skill tool:
+Installed as `.claude/skills/speckit-*/SKILL.md` and invoked via the Skill tool (model-invocable):
 
-- `/speckit.specify <description>` - Create feature specification from natural language
-- `/speckit.clarify` - Identify and resolve underspecified requirements
-- `/speckit.plan` - Generate technical implementation plan
-- `/speckit.tasks` - Break plan into actionable, dependency-ordered tasks
-- `/speckit.implement` - Execute the implementation
-- `/speckit.analyze` - Cross-artifact consistency analysis
-- `/speckit.checklist` - Generate custom validation checklists
-- `/speckit.constitution` - Create/update project principles
-- `/speckit.taskstoissues` - Convert tasks to GitHub issues
+- `/speckit-specify <description>` - Create feature specification from natural language
+- `/speckit-clarify` - Identify and resolve underspecified requirements
+- `/speckit-plan` - Generate technical implementation plan
+- `/speckit-tasks` - Break plan into actionable, dependency-ordered tasks
+- `/speckit-implement` - Execute the implementation
+- `/speckit-converge` - Assess the code against spec/plan/tasks and append remaining work as tasks
+- `/speckit-analyze` - Cross-artifact consistency analysis
+- `/speckit-checklist` - Generate custom validation checklists
+- `/speckit-constitution` - Create/update project principles
+- `/speckit-taskstoissues` - Convert tasks to GitHub issues (deprecated upstream)
+
+### Extensions and Hooks
+
+Registered in `.specify/extensions.yml`; the core skills run them before/after each phase:
+
+- **git** (bundled): `before_specify` creates the numbered feature branch (`/speckit-git-feature`); optional auto-commit hooks are disabled in `.specify/extensions/git/git-config.yml`.
+- **crush-perf** (local, source in `.specify/local-extensions/crush-perf/`): mandatory `after_implement` hook `/speckit-crush-perf-gate`, which runs `/perf check` when performance crates changed and `/perf goal` for the spec's performance criteria.
+
+### Upgrading Spec Kit
+
+Spec Kit files are manifest-managed (`.specify/integration.json`, `.specify/integrations/*.manifest.json`). Don't hand-edit `.claude/skills/speckit-*` or the managed scripts/templates; customize through an extension or preset instead. Upgrade with:
+
+```
+specify self upgrade
+specify integration upgrade claude
+specify extension update
+specify extension add --dev .specify/local-extensions/crush-perf --force   # if the local extension changed
+```
 
 ## Feature Organization
 
@@ -48,23 +67,21 @@ Example:
                                /checklists/
 ```
 
-Branch numbers are auto-incremented per feature name. The system checks:
-- Remote branches (`git ls-remote`)
-- Local branches (`git branch`)
-- Spec directories (`specs/[###-name]`)
+Branch numbers are sequential (git extension, `branch_numbering: sequential`). The active feature directory is recorded in `.specify/feature.json` (local, gitignored), so later phases find it without relying on the branch name; set `SPECIFY_FEATURE_DIRECTORY` to override.
 
 ## Key Scripts (PowerShell)
 
-Located in `.specify/scripts/powershell/`:
+Located in `.specify/scripts/powershell/` (managed by spec-kit; called by the skills):
 
-- `create-new-feature.ps1 -Json <description> [-ShortName name] [-Number N]` - Initialize new feature
-- `setup-plan.ps1 -Json` - Setup planning context
-- `check-prerequisites.ps1 -Json [-RequireTasks] [-IncludeTasks]` - Validate feature prerequisites
-- `update-agent-context.ps1 -AgentType claude` - Update AI agent context files
+- `check-prerequisites.ps1 -Json [-RequireTasks] [-IncludeTasks] [-PathsOnly]` - Resolve the feature directory and available docs
+- `setup-plan.ps1 -Json` / `setup-tasks.ps1 -Json` - Prepare planning / task generation
+- `resolve-template.ps1` - Resolve templates through presets and overrides
+- `create-new-feature.ps1` - Legacy feature/branch creation (branching now lives in the git extension)
+- `detect-duplicates.ps1 [-Json] [-Path dir] [-MinLines N]` - **Crush-specific**: jscpd duplicate detection for the constitution's cleanup phase (see `.specify/docs/duplicate-detection.md`); exits 1 when duplicates are found
 
-**Usage pattern**: All scripts support `-Json` flag for structured output. Parse the JSON to get paths like `BRANCH_NAME`, `SPEC_FILE`, `FEATURE_DIR`, etc.
+**Usage pattern**: Scripts support `-Json` for structured output. Run them through the PowerShell tool (its process execution policy is Bypass; a plain `powershell -File` may be blocked by the machine policy).
 
-**Escaping**: For single quotes in arguments (e.g., "I'm Groot"), use escape syntax: `'I'\''m Groot'` or use double quotes: `"I'm Groot"`
+**Escaping**: For single quotes in arguments (e.g., "I'm Groot"), use escape syntax: `'I'''m Groot'` or use double quotes: `"I'm Groot"`
 
 ## Specification Principles
 
@@ -140,8 +157,7 @@ Located in `.specify/templates/`:
 - `plan-template.md` - Technical plan structure with phases
 - `tasks-template.md` - Task breakdown structure
 - `checklist-template.md` - Custom checklist format
-- `constitution.md` - Project constitution template
-- `agent-file-template.md` - Agent context file template
+- `constitution-template.md` - Constitution template (the live constitution is `.specify/memory/constitution.md`)
 
 ## Constitution System
 
@@ -183,14 +199,16 @@ The constitution acts as a gate in the planning phase - violations must be justi
 
 ## Implementation Execution
 
-When running `/speckit.implement`:
+When running `/speckit-implement`:
 
-1. **Checklist validation**: All checklists in `checklists/` must pass before proceeding
-2. **Context loading**: Reads tasks.md, plan.md, data-model.md, contracts/, research.md
-3. **Ignore file creation**: Auto-detects tech stack and creates/updates .gitignore, .dockerignore, etc.
-4. **Phase-by-phase execution**: Respects dependencies, parallel markers [P], TDD approach
-5. **Progress tracking**: Marks tasks as [X] when completed
-6. **Error handling**: Halts on sequential task failures, reports parallel task failures
+1. **Pre-hooks**: Runs `before_implement` extension hooks (git auto-commit, disabled by config)
+2. **Checklist validation**: All checklists in `checklists/` must pass before proceeding
+3. **Context loading**: Reads tasks.md, plan.md, data-model.md, contracts/, research.md, quickstart.md
+4. **Ignore file creation**: Auto-detects tech stack and creates/updates .gitignore, .dockerignore, etc.
+5. **Phase-by-phase execution**: Respects dependencies, parallel markers [P], TDD approach
+6. **Progress tracking**: Marks tasks as [X] when completed
+7. **Error handling**: Halts on sequential task failures, reports parallel task failures
+8. **Post-hooks**: Runs `after_implement` hooks, including the mandatory crush-perf benchmark gate
 
 ## Test Strategy
 
@@ -205,11 +223,7 @@ Test tasks are marked with story labels and must be written before implementatio
 
 ## Agent Context Files
 
-The system maintains AI agent-specific context in `.specify/memory/`:
-
-- Stores technology stack learned during planning
-- Preserves manual additions between markers
-- Updated via `update-agent-context.ps1 -AgentType claude`
+`.specify/memory/claude.md` holds architecture notes (CRSH format, key API patterns, code style). Spec-kit 1.x no longer generates it (`update-agent-context.ps1` was removed upstream), so keep it current by hand when a feature changes those areas.
 
 ## Workflow Anti-Patterns to Avoid
 

@@ -1,0 +1,37 @@
+{
+  "schema_version": "1.0",
+  "extensions": {
+    "git": {
+      "version": "1.0.1",
+      "source": "local",
+      "manifest_hash": "sha256:698cc7089602db44622de39730555db4999cda94ab47195bcfe18f41d08b430a",
+      "enabled": true,
+      "priority": 10,
+      "registered_commands": {
+        "claude": [
+          "speckit.git.feature",
+          "speckit.git.validate",
+          "speckit.git.remote",
+          "speckit.git.initialize",
+          "speckit.git.commit"
+        ]
+      },
+      "registered_skills": [],
+      "installed_at": "2026-10-28T20:10:20.051959+00:00"
+    },
+    "crush-perf": {
+      "version": "1.0.0",
+      "source": "local",
+      "manifest_hash": "sha256:7e10e3793ed0669058e69462f6b31010ae952d115d2fb8c61d56acd21844205f",
+      "enabled": true,
+      "priority": 10,
+      "registered_commands": {
+        "claude": [
+          "speckit.crush-perf.gate"
+        ]
+      },
+      "registered_skills": [],
+      "installed_at": "2026-10-28T20:10:37.276154+00:00"
+    }
+  }
+}
