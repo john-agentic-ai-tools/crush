@@ -28,6 +28,12 @@ tempfile = "3.27"
 [dev-dependencies]
 criterion = { workspace = true }
 proptest = "1.11"
+# Installs .cargo-husky/hooks/* into .git/hooks on the first `cargo test`
+# (constitution: pre-commit hooks managed by cargo-husky). Declared here, not
+# in the workspace root as the constitution's example shows, because the root
+# is a virtual manifest and cannot have dev-dependencies. `user-hooks` without
+# the default features installs only our hook scripts, not husky's built-ins.
+cargo-husky = { version = "1.5", default-features = false, features = ["user-hooks"] }
 
 [[bench]]
 name = "plugin_discovery"

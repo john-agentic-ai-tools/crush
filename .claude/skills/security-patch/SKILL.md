@@ -174,7 +174,10 @@ errors): leave everything staged, and tell the user to run, from the prompt:
 Wait for them to confirm, verify with `git log -1`, then continue.
 
 The cargo-husky pre-commit hook reruns fmt and clippy. If it fails, fix the
-issue and commit again. Never bypass it.
+issue and commit again. Never bypass it. cargo-husky installs the hook into
+`.git/hooks/` the first time `crush-core`'s tests are built, so in a fresh
+clone or worktree, run the quality gate (step 5) before the first commit.
+That gate already includes `cargo test`.
 
 If `--no-pr`, stop here and report.
 
@@ -196,6 +199,21 @@ If `--no-pr`, stop here and report.
    only the checklist items you actually verified. End with the PR attribution
    line from the session's attribution instructions.
 3. `gh pr create --base develop --title "<commit subject>" --body-file <file>`.
+4. If that fails with `Resource not accessible by personal access token` (403),
+   the token in `GITHUB_TOKEN`/`GH_TOKEN` lacks `pull_requests=write`. A
+   fine-grained PAT can push without being allowed to create PRs. Then:
+   - Retry once with the user's keyring `gh` login, for that one command only:
+     `env -u GITHUB_TOKEN -u GH_TOKEN gh pr create …` (same arguments). Don't
+     change env vars, `gh auth` state, or config.
+   - If that fails too (or `gh auth status` shows no keyring login), stop and
+     give the user the compare link
+     `https://github.com/<owner>/<repo>/compare/develop...<branch>?expand=1`
+     plus the absolute path of the body file. Tell them the PAT needs
+     "Pull requests: Read and write" on this repo. Resume at step 8 once they
+     confirm the PR exists. CI runs on `pull_request`, so it won't start before then.
+   - Don't try the GitHub MCP connector as a fallback. It is usually backed by
+     the same PAT.
+   - Report which credential created the PR.
 
 ## 8. Monitor CI and auto-fix (max 3 fix rounds, max 2 infra re-runs)
 
