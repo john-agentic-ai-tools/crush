@@ -117,6 +117,7 @@ You **MUST** consider the user input before proceeding (if not empty).
    - **Core development**: Implement models, services, CLI commands, endpoints
    - **Integration work**: Database connections, middleware, logging, external services
    - **Polish and validation**: Unit tests, performance optimization, documentation
+   - **Performance gate (Polish phase)**: If the feature changed `crush-core/src`, `crush-parallel/src`, or `crush-gpu/src`, run `/perf check` and resolve any significant regression > 5% before completion. If spec.md has performance success criteria (throughput, latency, memory targets), run `/perf goal "<criterion>"` for each one not yet verified, and record the before/after tables in the feature's `perf-log.md`.
 
 8. Progress tracking and error handling:
    - Report progress after each completed task
