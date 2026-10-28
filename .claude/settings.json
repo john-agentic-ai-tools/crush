@@ -19,6 +19,12 @@
                         "type": "command",
                         "name": "rust_quality_gate",
                         "command": "bash .claude/hooks/rust-quality-gate.sh"
+                    },
+                    {
+                        "type": "command",
+                        "name": "perf_trigger",
+                        "command": "bash .claude/hooks/perf-trigger.sh",
+                        "timeout": 15
                     }
                 ]
             }
