@@ -5,6 +5,7 @@
 //! with logarithmic throughput scaling and min-max normalization.
 
 use crate::error::{PluginError, Result, ValidationError};
+use crate::plugin::registry::list_plugins_with_awareness;
 use crate::plugin::{PluginMetadata, list_plugins};
 
 /// Scoring weights for plugin selection
@@ -167,6 +168,15 @@ pub fn calculate_plugin_score(
     weights.throughput * norm_throughput + weights.compression_ratio * norm_ratio
 }
 
+/// Plugins that take part in weight-based scoring: everything that isn't
+/// content-aware (see `CompressionAlgorithm::content_aware`).
+fn scoring_candidates(all: &[(PluginMetadata, bool)]) -> Vec<PluginMetadata> {
+    all.iter()
+        .filter(|(_, aware)| !aware)
+        .map(|(m, _)| *m)
+        .collect()
+}
+
 /// Plugin selector with scoring logic
 pub struct PluginSelector {
     weights: ScoringWeights,
@@ -188,33 +198,38 @@ impl PluginSelector {
     ///
     /// Returns an error if no plugins are available.
     pub fn select(&self) -> Result<PluginMetadata> {
-        let plugins = list_plugins();
-
-        if plugins.is_empty() {
+        let candidates = list_plugins_with_awareness();
+        if candidates.is_empty() {
             return Err(PluginError::NotFound(
                 "No plugins available. Call init_plugins() first.".to_string(),
             )
             .into());
         }
+        self.best_by_score(&scoring_candidates(&candidates))
+    }
 
-        // Calculate scores for all plugins
-        let mut scored_plugins: Vec<(f64, &PluginMetadata)> = plugins
+    /// Highest-scoring plugin among `plugins` (ties broken by name).
+    fn best_by_score(&self, plugins: &[PluginMetadata]) -> Result<PluginMetadata> {
+        let mut scored: Vec<(f64, &PluginMetadata)> = plugins
             .iter()
             .map(|plugin| {
-                let score = calculate_plugin_score(plugin, &plugins, &self.weights);
-                (score, plugin)
+                (
+                    calculate_plugin_score(plugin, plugins, &self.weights),
+                    plugin,
+                )
             })
             .collect();
 
         // Sort by score (descending), then by name (ascending) for ties
-        scored_plugins.sort_by(|a, b| {
+        scored.sort_by(|a, b| {
             b.0.partial_cmp(&a.0)
                 .unwrap_or(std::cmp::Ordering::Equal)
                 .then_with(|| a.1.name.cmp(b.1.name))
         });
 
-        // Return the highest-scoring plugin
-        Ok(*scored_plugins[0].1)
+        scored.first().map(|(_, p)| **p).ok_or_else(|| {
+            PluginError::NotFound("No plugins eligible for automatic selection".to_string()).into()
+        })
     }
 
     /// Select a plugin by name (manual override)
@@ -249,6 +264,42 @@ impl Default for PluginSelector {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn meta(name: &'static str, magic: u8, throughput: f64, ratio: f64) -> PluginMetadata {
+        PluginMetadata {
+            name,
+            version: "1.0.0",
+            magic_number: [0x43, 0x52, 0x01, magic],
+            throughput,
+            compression_ratio: ratio,
+            description: "test",
+        }
+    }
+
+    /// Content-aware plugins are left out of weight-based scoring, so adding
+    /// one never changes what `select()` picks (FR-010).
+    #[test]
+    #[allow(clippy::expect_used)]
+    fn content_aware_plugins_are_not_scored() {
+        let deflate = meta("deflate", 0x00, 200.0, 0.35);
+        let gpu = meta("gpu", 0x03, 2000.0, 0.65);
+        // Would win at balanced weights if it were scored.
+        let fast = meta("fast", 0x04, 900.0, 0.44);
+        let candidates = [(deflate, false), (gpu, false), (fast, true)];
+
+        let scored = scoring_candidates(&candidates);
+        assert_eq!(scored.len(), 2);
+        assert!(scored.iter().all(|p| p.name != "fast"));
+
+        let balanced = ScoringWeights::new(0.5, 0.5).expect("weights");
+        let pick = PluginSelector::new(balanced)
+            .best_by_score(&scored)
+            .expect("pick");
+        let without = PluginSelector::new(balanced)
+            .best_by_score(&[deflate, gpu])
+            .expect("pick");
+        assert_eq!(pick.name, without.name);
+    }
 
     #[test]
     fn test_scoring_weights_validation() {

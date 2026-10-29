@@ -5,11 +5,13 @@ members = [
     "crush-cli",
     "crush-parallel",
     "crush-gpu",
+    "crush-lz",
 ]
 exclude = [
     "crush-core/fuzz",
     "crush-parallel/fuzz",
     "crush-gpu/fuzz",
+    "crush-lz/fuzz",
 ]
 
 [workspace.package]

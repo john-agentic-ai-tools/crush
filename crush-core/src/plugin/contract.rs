@@ -141,4 +141,24 @@ pub trait CompressionAlgorithm: Send + Sync {
     /// This method should execute in sub-millisecond time as it may be called
     /// for every plugin during file type detection.
     fn detect(&self, file_header: &[u8]) -> bool;
+
+    /// True if automatic selection may use this plugin only after
+    /// [`estimate_ratio`](Self::estimate_ratio) shows the input compresses
+    /// well with it. Content-aware plugins are never picked by weight-based
+    /// scoring alone, so registering one doesn't change what other callers get.
+    /// Explicit selection by name is unaffected.
+    fn content_aware(&self) -> bool {
+        false
+    }
+
+    /// Cheap estimate of `input.len() / compressed_len` for this plugin, taken
+    /// from samples of `input`. `None` means no estimate is available; a
+    /// content-aware plugin is then not selected automatically.
+    ///
+    /// Implementations should cost no more than about 2% of compressing
+    /// `input` with this plugin.
+    fn estimate_ratio(&self, input: &[u8]) -> Option<f64> {
+        let _ = input;
+        None
+    }
 }

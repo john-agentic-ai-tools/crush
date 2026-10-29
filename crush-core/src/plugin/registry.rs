@@ -184,6 +184,18 @@ pub fn list_plugins() -> Vec<PluginMetadata> {
         .unwrap_or_default()
 }
 
+/// All registered plugins with their content-aware flag (internal use by the selector).
+pub(crate) fn list_plugins_with_awareness() -> Vec<(PluginMetadata, bool)> {
+    list_plugins()
+        .into_iter()
+        .map(|m| {
+            let aware = get_plugin_by_magic(m.magic_number)
+                .is_some_and(CompressionAlgorithm::content_aware);
+            (m, aware)
+        })
+        .collect()
+}
+
 /// Get a plugin by magic number (internal use)
 ///
 /// Used by decompression to route to the correct plugin based on file header.
