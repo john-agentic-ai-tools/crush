@@ -1,6 +1,7 @@
 //! `fast-lz` block compressor: greedy LZ77 with a single-probe hash table.
 //!
-//! Design (research R4): a 2^14-entry table of positions, reused across
+//! Design (research R4): a 2^12-entry table of positions (16 KB, stays in
+//! L1; 2^14 compressed 2% better but 16% slower), reused across
 //! blocks without clearing (entries older than the current block fail the
 //! range check); 4-byte matches found by a multiplicative hash; matches
 //! extended 8 bytes at a time; the probe step grows while no match is found,
@@ -10,7 +11,7 @@ use crate::format::{BLOCK_HEADER_SIZE, BlockHeader, END_MARKER, FrameHeader, com
 use crush_core::error::{PluginError, Result};
 use std::sync::atomic::{AtomicBool, Ordering};
 
-const HASH_LOG: u32 = 14;
+const HASH_LOG: u32 = 12;
 const HASH_SIZE: usize = 1 << HASH_LOG;
 const MIN_MATCH: usize = 4;
 const MAX_OFFSET: usize = 65_535;
@@ -19,7 +20,7 @@ const SKIP_TRIGGER: u32 = 6;
 /// Matches only start where 8 bytes can be read.
 const READ_AHEAD: usize = 8;
 
-/// Reusable compressor state (about 64 kilobytes).
+/// Reusable compressor state (about 16 kilobytes).
 pub(crate) struct Compressor {
     table: Box<[u32; HASH_SIZE]>,
     /// Table value of the current block's first byte. Positions are stored as
@@ -28,7 +29,7 @@ pub(crate) struct Compressor {
 }
 
 impl Compressor {
-    // 64 KB built on the stack then moved into the box: small enough for
+    // 16 KB built on the stack then moved into the box: small enough for
     // every thread's stack, and it keeps the table a fixed-size array so
     // indexing with `& (HASH_SIZE - 1)` needs no bounds check.
     #[allow(clippy::large_stack_arrays)]

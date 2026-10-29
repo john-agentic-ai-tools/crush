@@ -100,3 +100,30 @@ the other five benchmarks are noise.
 Emission was not the main cost; the match search is. Its miss path is about
 20 instructions per probed position. Next: lz4's default table is 4,096
 entries (16 KB, fits L1); ours is 16,384 (64 KB).
+
+## Experiment 3 — hash table 2^14 -> 2^12 entries (T023), kept
+
+lz4's default table is 4,096 entries (16 KB, fits the 48 KB L1); ours was
+16,384 (64 KB). Screening, WSL same session as lz4 (compress MB/s, ratio):
+
+| table | compress | vs lz4 | ratio |
+|---|---|---|---|
+| 2^14 (before) | 508 | 0.64x | 2.335 |
+| 2^13 | 538 | 0.70x | 2.308 |
+| 2^12 (kept) | 588 | 0.75x | 2.256 |
+| 2^11 | 598 | 0.76x | 2.173 (below 2.18) |
+| 2^10 | 594 | 0.75x | 2.066 |
+
+`bench.py ab --ref HEAD --suite fast-lz` (goal-fastlz-exp3): IMPROVED.
+
+| benchmark | HEAD | exp3 | time | ratio |
+|---|---|---|---|---|
+| compress/file | 504 MB/s | 609 MB/s | -17.1% | 2.335 -> 2.256 |
+| compress/text-64MB | 507 MB/s | 487 MB/s | +4.2% (CI +3.0..+5.4, floor 5.9%: noise) | 1.847 -> 1.792 |
+| compress/random-64MB | | | +1.3% (noise) | 1.000 |
+| decompress/* | | | noise | |
+
+Watch: the text corpus compresses slightly slower with the smaller table
+(CI entirely above zero, under its noise floor), and most of the ratio
+margin is used (2.256 vs the 2.18 floor). The ratio alone cannot buy the
+remaining compress gap (0.75x of 1.15x).
