@@ -49,12 +49,33 @@ impl Compressor {
         }
     }
 
-    /// Append the sequences for `src` (one block) to `dst`.
-    pub(crate) fn compress_block(&mut self, src: &[u8], dst: &mut Vec<u8>) {
+    /// Write the sequences for `src` (one block) to `dst`, which must hold
+    /// at least `src.len() + WILD` bytes. Returns the number of bytes
+    /// written, or `None` as soon as the block cannot come out smaller than
+    /// `src` (the caller then stores it).
+    pub(crate) fn compress_block(&mut self, src: &[u8], dst: &mut [u8]) -> Option<usize> {
         self.start_block(src.len());
         let base = self.base;
         let len = src.len();
         let mut anchor = 0usize;
+        let mut op = 0usize;
+        let result = self.find_sequences(src, dst, base, &mut anchor, &mut op);
+        self.base = base + pos32(len) + 1;
+        result?;
+        emit_last_literals(dst, &mut op, &src[anchor..], len)?;
+        Some(op)
+    }
+
+    /// The match search over `src`; emits every sequence but the last.
+    fn find_sequences(
+        &mut self,
+        src: &[u8],
+        dst: &mut [u8],
+        base: u32,
+        anchor: &mut usize,
+        op: &mut usize,
+    ) -> Option<()> {
+        let len = src.len();
 
         if len > READ_AHEAD + MIN_MATCH {
             let limit = len - READ_AHEAD;
@@ -71,14 +92,14 @@ impl Compressor {
                 if cand >= base && i - c <= MAX_OFFSET && read_u32(src, c) == word {
                     // Extend backwards over equal bytes not yet emitted.
                     let (mut s, mut c) = (i, c);
-                    while s > anchor && c > 0 && src[s - 1] == src[c - 1] {
+                    while s > *anchor && c > 0 && src[s - 1] == src[c - 1] {
                         s -= 1;
                         c -= 1;
                     }
                     let mlen = MIN_MATCH + count_equal(src, s + MIN_MATCH, c + MIN_MATCH);
-                    emit_sequence(dst, &src[anchor..s], s - c, mlen);
+                    emit_sequence(dst, op, src, *anchor, s, s - c, mlen)?;
                     i = s + mlen;
-                    anchor = i;
+                    *anchor = i;
                     misses = 0;
                     // Index a position inside the match for the next search.
                     if i < limit && i >= 2 {
@@ -90,9 +111,7 @@ impl Compressor {
                 }
             }
         }
-
-        emit_last_literals(dst, &src[anchor..]);
-        self.base = base + pos32(len) + 1;
+        Some(())
     }
 }
 
@@ -142,13 +161,27 @@ fn count_equal(src: &[u8], mut a: usize, mut b: usize) -> usize {
     a - start
 }
 
-fn push_length_ext(dst: &mut Vec<u8>, mut n: usize) {
+/// Bytes a literal copy may write past its end; `dst` has this much slack.
+pub(crate) const WILD: usize = 16;
+
+/// Bytes a length of `n` takes after its 4-bit field (`n >= 15`).
+#[inline]
+fn ext_len(n: usize) -> usize {
+    if n >= 15 { (n - 15) / 255 + 1 } else { 0 }
+}
+
+/// Write the 255-continued extension of `n` (`n >= 15`) at `dst[*op..]`.
+#[inline]
+fn put_length_ext(dst: &mut [u8], op: &mut usize, n: usize) {
+    let mut n = n - 15;
     while n >= 255 {
-        dst.push(255);
+        dst[*op] = 255;
+        *op += 1;
         n -= 255;
     }
     // n < 255 here
-    dst.push(u8::try_from(n).unwrap_or(254));
+    dst[*op] = u8::try_from(n).unwrap_or(254);
+    *op += 1;
 }
 
 #[inline]
@@ -156,25 +189,69 @@ fn nibble(n: usize) -> u8 {
     u8::try_from(n.min(15)).unwrap_or(15)
 }
 
-fn emit_sequence(dst: &mut Vec<u8>, literals: &[u8], offset: usize, mlen: usize) {
-    let ml = mlen - MIN_MATCH;
-    dst.push((nibble(literals.len()) << 4) | nibble(ml));
-    if literals.len() >= 15 {
-        push_length_ext(dst, literals.len() - 15);
+/// Write `src[from..to]` as literals at `dst[*op..]`: 16-byte steps that
+/// may run up to `WILD - 1` bytes past the end (into later output or the
+/// slack) when `src` has room to read them, an exact copy otherwise.
+#[inline]
+fn put_literals(dst: &mut [u8], op: &mut usize, src: &[u8], from: usize, to: usize) {
+    let n = to - from;
+    if n <= WILD && from + WILD <= src.len() {
+        dst[*op..*op + WILD].copy_from_slice(&src[from..from + WILD]);
+    } else {
+        dst[*op..*op + n].copy_from_slice(&src[from..to]);
     }
-    dst.extend_from_slice(literals);
-    dst.extend_from_slice(&u16::try_from(offset).unwrap_or(0).to_le_bytes());
-    if ml >= 15 {
-        push_length_ext(dst, ml - 15);
-    }
+    *op += n;
 }
 
-fn emit_last_literals(dst: &mut Vec<u8>, literals: &[u8]) {
-    dst.push(nibble(literals.len()) << 4);
-    if literals.len() >= 15 {
-        push_length_ext(dst, literals.len() - 15);
+/// Emit literals `src[anchor..s]` and a match of `mlen` at `offset`.
+/// `None` once the output would reach the block's own size: the block is
+/// then stored, as it would have been after a full encode.
+#[inline]
+fn emit_sequence(
+    dst: &mut [u8],
+    op: &mut usize,
+    src: &[u8],
+    anchor: usize,
+    s: usize,
+    offset: usize,
+    mlen: usize,
+) -> Option<()> {
+    let lit = s - anchor;
+    let ml = mlen - MIN_MATCH;
+    let need = 1 + ext_len(lit) + lit + 2 + ext_len(ml);
+    if *op + need >= src.len() {
+        return None;
     }
-    dst.extend_from_slice(literals);
+    // From here every write ends within src.len() + WILD <= dst.len().
+    dst[*op] = (nibble(lit) << 4) | nibble(ml);
+    *op += 1;
+    if lit >= 15 {
+        put_length_ext(dst, op, lit);
+    }
+    put_literals(dst, op, src, anchor, s);
+    dst[*op..*op + 2].copy_from_slice(&u16::try_from(offset).unwrap_or(0).to_le_bytes());
+    *op += 2;
+    if ml >= 15 {
+        put_length_ext(dst, op, ml);
+    }
+    Some(())
+}
+
+/// Emit the final, literals-only sequence; `None` if the block would not
+/// come out smaller than `len` bytes.
+fn emit_last_literals(dst: &mut [u8], op: &mut usize, literals: &[u8], len: usize) -> Option<()> {
+    let lit = literals.len();
+    if *op + 1 + ext_len(lit) + lit >= len {
+        return None;
+    }
+    dst[*op] = nibble(lit) << 4;
+    *op += 1;
+    if lit >= 15 {
+        put_length_ext(dst, op, lit);
+    }
+    dst[*op..*op + lit].copy_from_slice(literals);
+    *op += lit;
+    Some(())
 }
 
 /// Compress `input` into a full `fast-lz` payload with blocks of `2^block_size_log2` bytes.
@@ -193,11 +270,13 @@ pub(crate) fn compress_frame(
             return Err(PluginError::Cancelled.into());
         }
         let header_at = out.len();
-        out.extend_from_slice(&[0; BLOCK_HEADER_SIZE]);
-        let payload_at = out.len();
-        compressor.compress_block(chunk, &mut out);
-        let stored = out.len() - payload_at >= chunk.len();
-        if stored {
+        let payload_at = header_at + BLOCK_HEADER_SIZE;
+        out.resize(payload_at + chunk.len() + WILD, 0);
+        let written = compressor.compress_block(chunk, &mut out[payload_at..]);
+        let stored = written.is_none();
+        if let Some(n) = written {
+            out.truncate(payload_at + n);
+        } else {
             out.truncate(payload_at);
             out.extend_from_slice(chunk);
         }

@@ -75,3 +75,28 @@ Noise floors (A/A, goal-fastlz-noise2): compress 4.2-5.9%, decompress
 SC-002 still MISS (0.46x of 0.60x). The remaining gap is the decode loop
 (about 49 ms vs about 37 ms needed); no sampling profiler is available on
 this machine (samply not installed, WPR needs elevation, no perf in WSL).
+
+## Experiment 2 — compressor output path (T023), kept
+
+Change: sequences are written into a pre-sized slice (block size + 16 bytes
+of slack) instead of `Vec::push`/`extend_from_slice`; literal runs of
+<= 16 bytes are copied in one fixed 16-byte step; a block gives up as soon
+as its output would reach the block size (it is stored then, as before).
+The match search is unchanged and the output is byte-identical to v0 on the
+128 MB corpus (`cmp` of `CODEC_BENCH_DUMP` dumps). Tests first:
+`blocks_near_the_stored_threshold` (compressed blocks are always smaller
+than their data).
+
+| codec (WSL, best of 7) | compress MB/s | decompress MB/s | ratio |
+|---|---|---|---|
+| lz4 -1 | 797 | 4,530 | 2.296 |
+| fast-lz exp2 | 508 | 2,166 | 2.335 |
+| fast-lz / lz4 | 0.64x | 0.48x | 1.017 |
+
+`bench.py ab --ref HEAD --suite fast-lz` (goal-fastlz-exp2): IMPROVED.
+compress/file 480 -> 506 MB/s (-5.1% time, CI [-6.4%, -4.0%], floor 4.2%);
+the other five benchmarks are noise.
+
+Emission was not the main cost; the match search is. Its miss path is about
+20 instructions per probed position. Next: lz4's default table is 4,096
+entries (16 KB, fits L1); ours is 16,384 (64 KB).

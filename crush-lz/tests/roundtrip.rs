@@ -111,6 +111,47 @@ fn random_data_is_stored_with_bounded_overhead() {
     assert_eq!(packed.len(), data.len() + 8 + 2 * 8 + 4);
 }
 
+/// Every block in `packed` (64-kilobyte blocks): compressed blocks are
+/// strictly smaller than their data, otherwise the block is stored.
+fn assert_blocks_beat_stored(packed: &[u8]) {
+    let mut pos = FRAME_HEADER_SIZE;
+    loop {
+        let c = u32::from_le_bytes(packed[pos..pos + 4].try_into().unwrap());
+        if c == 0 {
+            break;
+        }
+        let u = u32::from_le_bytes(packed[pos + 4..pos + 8].try_into().unwrap());
+        let (stored, clen) = (c >> 31 == 1, c & 0x7FFF_FFFF);
+        if stored {
+            assert_eq!(clen, u, "stored block length");
+        } else {
+            assert!(clen < u, "compressed block of {clen} bytes for {u} bytes");
+        }
+        pos += 8 + clen as usize;
+    }
+}
+
+#[test]
+fn blocks_near_the_stored_threshold() {
+    // Random data with repeats dense enough that a block lands right around
+    // its stored size: whichever way it goes, it must never be larger.
+    for density in [0usize, 64, 96, 128, 160, 192, 256, 512, 2048] {
+        let mut data = xorshift(4 << 16, density as u64 + 7);
+        if density > 0 {
+            let mut at = 64;
+            while at + 8 < data.len() {
+                let len = 4 + (at % 9);
+                for k in 0..len {
+                    data[at + k] = data[at + k - 32];
+                }
+                at += density;
+            }
+        }
+        let packed = roundtrip(&data, config(16));
+        assert_blocks_beat_stored(&packed);
+    }
+}
+
 #[test]
 fn text_compresses() {
     let data = wordy(4 << 20);
