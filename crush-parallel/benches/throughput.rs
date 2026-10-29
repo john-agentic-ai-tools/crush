@@ -222,9 +222,44 @@ fn bench_phase_isolated(c: &mut Criterion) {
     group.finish();
 }
 
+/// Incompressible input: every block ends up stored raw. pigz is faster than
+/// crush on this at 24 cores (perf/comparisons), so it gets its own benchmark.
+fn bench_compress_incompressible(c: &mut Criterion) {
+    let mut state: u64 = 0x9E37_79B9_7F4A_7C15;
+    let data: Vec<u8> = (0..128 * 1024 * 1024 / 8)
+        .flat_map(|_| {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state.to_le_bytes()
+        })
+        .collect();
+
+    let mut group = c.benchmark_group("compress_incompressible");
+    group.throughput(Throughput::Bytes(data.len() as u64));
+    group.sample_size(10);
+
+    // Default configuration (1 MB blocks), as used by `crush compress`.
+    for (label, workers) in [("default", 0usize), ("1", 1)] {
+        let config = EngineConfiguration::builder()
+            .workers(workers)
+            .build()
+            .expect("config");
+        group.bench_with_input(
+            BenchmarkId::new(format!("threads={label}"), "random-128MB"),
+            &data,
+            |b, data| {
+                b.iter(|| compress(data, &config).expect("compress"));
+            },
+        );
+    }
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_compression,
+    bench_compress_incompressible,
     bench_decompression,
     bench_phase_isolated
 );
