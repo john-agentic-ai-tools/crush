@@ -1,0 +1,453 @@
+{
+  "machine": {
+    "slug": "windows-12th-gen-intel-core-i9-12900k-16c24t",
+    "os": "Windows 11",
+    "cpu": "12th Gen Intel(R) Core(TM) i9-12900K",
+    "physical_cores": 16,
+    "logical_cores": 24,
+    "power_profile": "Ultimate Performance"
+  },
+  "commit": "3a1cb288a6e3feb12e85669278e6d36203f079c0",
+  "branch": "develop",
+  "date": "2026-10-28",
+  "rustc": "rustc 1.99.1 (58cf8f9c3 2026-10-13)",
+  "criterion_baseline": "develop-3a1cb28",
+  "benchmarks": {
+    "compress_large/10MB": {
+      "mean_ns": 27422822.2,
+      "ci95_ns": [
+        27347205.5,
+        27495432.0
+      ],
+      "mb_per_s": 382.4
+    },
+    "compress_medium/1MB": {
+      "mean_ns": 2736137.9,
+      "ci95_ns": [
+        2719842.2,
+        2754889.2
+      ],
+      "mb_per_s": 383.2
+    },
+    "compress_small/1KB": {
+      "mean_ns": 55681.1,
+      "ci95_ns": [
+        55163.8,
+        56312.4
+      ],
+      "mb_per_s": 18.4
+    },
+    "compress_throughput/cpu/binary-1MB": {
+      "mean_ns": 14645674.8,
+      "ci95_ns": [
+        14602015.0,
+        14714806.5
+      ],
+      "mb_per_s": 71.6
+    },
+    "compress_throughput/cpu/log-1MB": {
+      "mean_ns": 5707473.2,
+      "ci95_ns": [
+        5699939.1,
+        5715582.4
+      ],
+      "mb_per_s": 183.7
+    },
+    "compress_throughput/cpu/mixed-10MB": {
+      "mean_ns": 99062063.0,
+      "ci95_ns": [
+        98904741.0,
+        99250184.3
+      ],
+      "mb_per_s": 105.9
+    },
+    "compress_throughput/cpu/mixed-1MB": {
+      "mean_ns": 10337407.4,
+      "ci95_ns": [
+        10324101.2,
+        10351334.8
+      ],
+      "mb_per_s": 101.4
+    },
+    "compress_throughput/threads=1/block=1024KB": {
+      "mean_ns": 1409075950.0,
+      "ci95_ns": [
+        1404028150.0,
+        1414850020.0
+      ],
+      "mb_per_s": 95.3
+    },
+    "compress_throughput/threads=1/block=512KB": {
+      "mean_ns": 1413170060.0,
+      "ci95_ns": [
+        1392811813.8,
+        1443995510.0
+      ],
+      "mb_per_s": 95.0
+    },
+    "compress_throughput/threads=1/block=64KB": {
+      "mean_ns": 1400762060.0,
+      "ci95_ns": [
+        1386984790.0,
+        1415068857.0
+      ],
+      "mb_per_s": 95.8
+    },
+    "compress_throughput/threads=2/block=1024KB": {
+      "mean_ns": 746576060.0,
+      "ci95_ns": [
+        715107620.0,
+        783869350.0
+      ],
+      "mb_per_s": 179.8
+    },
+    "compress_throughput/threads=2/block=512KB": {
+      "mean_ns": 707906290.0,
+      "ci95_ns": [
+        699274642.2,
+        716607040.0
+      ],
+      "mb_per_s": 189.6
+    },
+    "compress_throughput/threads=2/block=64KB": {
+      "mean_ns": 708075770.0,
+      "ci95_ns": [
+        702735050.0,
+        714628377.8
+      ],
+      "mb_per_s": 189.6
+    },
+    "compress_throughput/threads=4/block=1024KB": {
+      "mean_ns": 372847850.0,
+      "ci95_ns": [
+        360554590.0,
+        387610053.2
+      ],
+      "mb_per_s": 360.0
+    },
+    "compress_throughput/threads=4/block=512KB": {
+      "mean_ns": 369316350.0,
+      "ci95_ns": [
+        365245520.0,
+        373690460.0
+      ],
+      "mb_per_s": 363.4
+    },
+    "compress_throughput/threads=4/block=64KB": {
+      "mean_ns": 375171015.0,
+      "ci95_ns": [
+        372963062.2,
+        377593535.0
+      ],
+      "mb_per_s": 357.8
+    },
+    "compress_throughput/threads=8/block=1024KB": {
+      "mean_ns": 248555845.0,
+      "ci95_ns": [
+        231751722.4,
+        262434779.4
+      ],
+      "mb_per_s": 540.0
+    },
+    "compress_throughput/threads=8/block=512KB": {
+      "mean_ns": 233724443.3,
+      "ci95_ns": [
+        222477286.7,
+        245359786.7
+      ],
+      "mb_per_s": 574.3
+    },
+    "compress_throughput/threads=8/block=64KB": {
+      "mean_ns": 223182356.7,
+      "ci95_ns": [
+        212571416.7,
+        236056260.2
+      ],
+      "mb_per_s": 601.4
+    },
+    "compress_throughput/threads=default/block=1024KB": {
+      "mean_ns": 121760379.6,
+      "ci95_ns": [
+        118236536.1,
+        126041751.5
+      ],
+      "mb_per_s": 1102.3
+    },
+    "compress_throughput/threads=default/block=512KB": {
+      "mean_ns": 116661916.1,
+      "ci95_ns": [
+        113837720.4,
+        119670651.5
+      ],
+      "mb_per_s": 1150.5
+    },
+    "compress_throughput/threads=default/block=64KB": {
+      "mean_ns": 122091094.9,
+      "ci95_ns": [
+        120514171.0,
+        123648809.8
+      ],
+      "mb_per_s": 1099.3
+    },
+    "compression_ratio/gdeflate/binary": {
+      "mean_ns": 14983140.2,
+      "ci95_ns": [
+        14925019.3,
+        15070241.6
+      ]
+    },
+    "compression_ratio/gdeflate/log-text": {
+      "mean_ns": 6132821.1,
+      "ci95_ns": [
+        6120232.0,
+        6145573.1
+      ]
+    },
+    "compression_ratio/gdeflate/mixed": {
+      "mean_ns": 10432867.4,
+      "ci95_ns": [
+        10375350.5,
+        10502044.7
+      ]
+    },
+    "decompress_medium/1MB": {
+      "mean_ns": 461919.2,
+      "ci95_ns": [
+        458570.7,
+        465389.1
+      ],
+      "mb_per_s": 2270.0
+    },
+    "decompress_small/1KB": {
+      "mean_ns": 2445.7,
+      "ci95_ns": [
+        2433.1,
+        2459.3
+      ],
+      "mb_per_s": 418.7
+    },
+    "decompress_throughput/cpu/binary-1MB": {
+      "mean_ns": 7141921.5,
+      "ci95_ns": [
+        7099417.1,
+        7187433.2
+      ],
+      "mb_per_s": 146.8
+    },
+    "decompress_throughput/cpu/log-1MB": {
+      "mean_ns": 3106361.9,
+      "ci95_ns": [
+        3070959.1,
+        3146548.4
+      ],
+      "mb_per_s": 337.6
+    },
+    "decompress_throughput/cpu/mixed-10MB": {
+      "mean_ns": 49040253.0,
+      "ci95_ns": [
+        48696668.8,
+        49431840.2
+      ],
+      "mb_per_s": 213.8
+    },
+    "decompress_throughput/cpu/mixed-1MB": {
+      "mean_ns": 4976342.8,
+      "ci95_ns": [
+        4949055.2,
+        5008580.1
+      ],
+      "mb_per_s": 210.7
+    },
+    "decompress_throughput/gpu/binary-1MB": {
+      "mean_ns": 11907678.5,
+      "ci95_ns": [
+        11874921.2,
+        11942199.8
+      ],
+      "mb_per_s": 88.1
+    },
+    "decompress_throughput/gpu/log-1MB": {
+      "mean_ns": 7372165.8,
+      "ci95_ns": [
+        7345145.0,
+        7402006.5
+      ],
+      "mb_per_s": 142.2
+    },
+    "decompress_throughput/gpu/mixed-10MB": {
+      "mean_ns": 27046167.5,
+      "ci95_ns": [
+        26540998.3,
+        27574390.8
+      ],
+      "mb_per_s": 387.7
+    },
+    "decompress_throughput/gpu/mixed-1MB": {
+      "mean_ns": 11053048.2,
+      "ci95_ns": [
+        10988994.0,
+        11118925.6
+      ],
+      "mb_per_s": 94.9
+    },
+    "decompress_throughput/threads/1": {
+      "mean_ns": 147280905.8,
+      "ci95_ns": [
+        145130405.4,
+        150922704.0
+      ],
+      "mb_per_s": 911.3
+    },
+    "decompress_throughput/threads/2": {
+      "mean_ns": 78253558.3,
+      "ci95_ns": [
+        77483516.7,
+        79319727.5
+      ],
+      "mb_per_s": 1715.2
+    },
+    "decompress_throughput/threads/4": {
+      "mean_ns": 44932150.0,
+      "ci95_ns": [
+        43668794.2,
+        47170862.5
+      ],
+      "mb_per_s": 2987.1
+    },
+    "decompress_throughput/threads/8": {
+      "mean_ns": 29679668.2,
+      "ci95_ns": [
+        29457352.0,
+        29933922.5
+      ],
+      "mb_per_s": 4522.2
+    },
+    "decompress_throughput/threads/default": {
+      "mean_ns": 22609470.9,
+      "ci95_ns": [
+        21724046.6,
+        23705736.4
+      ],
+      "mb_per_s": 5936.3
+    },
+    "phase_isolated/compress_assembly_dominated/block=64KB": {
+      "mean_ns": 53899993.1,
+      "ci95_ns": [
+        53513621.1,
+        54289982.1
+      ],
+      "mb_per_s": 1245.1
+    },
+    "phase_isolated/compress_parallel_dominated/block=4MB": {
+      "mean_ns": 88049086.9,
+      "ci95_ns": [
+        86865242.0,
+        89187804.5
+      ],
+      "mb_per_s": 762.2
+    },
+    "phase_isolated/decompress_parallel_dominated/block=1MB": {
+      "mean_ns": 11078144.4,
+      "ci95_ns": [
+        10793723.9,
+        11439359.8
+      ],
+      "mb_per_s": 6057.8
+    },
+    "phase_isolated/decompress_read_phase_only/block=1MB": {
+      "mean_ns": 75710573.1,
+      "ci95_ns": [
+        74875783.5,
+        76532742.8
+      ],
+      "mb_per_s": 886.4
+    },
+    "plugin_auto_selection": {
+      "mean_ns": 5.1,
+      "ci95_ns": [
+        5.0,
+        5.1
+      ]
+    },
+    "plugin_discovery": {
+      "mean_ns": 21.1,
+      "ci95_ns": [
+        21.0,
+        21.2
+      ]
+    },
+    "plugin_listing": {
+      "mean_ns": 33.7,
+      "ci95_ns": [
+        33.5,
+        33.8
+      ]
+    },
+    "plugin_manual_selection": {
+      "mean_ns": 25.1,
+      "ci95_ns": [
+        25.0,
+        25.3
+      ]
+    },
+    "plugin_reinit": {
+      "mean_ns": 20.9,
+      "ci95_ns": [
+        20.8,
+        21.0
+      ]
+    },
+    "plugin_weighted_selection": {
+      "mean_ns": 5.1,
+      "ci95_ns": [
+        5.0,
+        5.1
+      ]
+    },
+    "random_access/decompress_first_block": {
+      "mean_ns": 1139109.8,
+      "ci95_ns": [
+        1131560.0,
+        1147141.8
+      ]
+    },
+    "random_access/decompress_last_block": {
+      "mean_ns": 1114861.9,
+      "ci95_ns": [
+        1109926.4,
+        1120229.0
+      ]
+    },
+    "random_access/lookup_10k_blocks": {
+      "mean_ns": 121339.6,
+      "ci95_ns": [
+        120772.3,
+        121910.2
+      ]
+    },
+    "roundtrip/1024": {
+      "mean_ns": 56408.9,
+      "ci95_ns": [
+        55907.0,
+        56957.5
+      ],
+      "mb_per_s": 18.2
+    },
+    "roundtrip/10240": {
+      "mean_ns": 84166.0,
+      "ci95_ns": [
+        83003.6,
+        85347.2
+      ],
+      "mb_per_s": 121.7
+    },
+    "roundtrip/102400": {
+      "mean_ns": 359194.8,
+      "ci95_ns": [
+        350738.7,
+        368669.8
+      ],
+      "mb_per_s": 285.1
+    }
+  }
+}
