@@ -59,3 +59,43 @@ its payload (`mem::take` + truncate, no copy) and the worker callocs a new one.
 | compress_mixed/* (other 4) | | | -1.7% … +0.2% | | improved/noise |
 | compress_throughput/threads=1/block=1024KB | 1.32 s | 1.35 s | +1.9% | [+1.0, +2.8] | slower, under gate |
 | compress_throughput/threads=default/block=1024KB | 114 ms | 116 ms | +1.3% | [-2.7, +4.9] | noise |
+
+## Exp 3 (H2): incompressibility probe + entropy guard — KEPT (third variant)
+
+`compress_block_with_scratch` first asks `looks_incompressible`; if true the
+block is stored without a full DEFLATE attempt. `EngineConfiguration::
+incompressible_probe` (default true; false = previous behaviour).
+
+Ratio report (`cargo test -p crush-parallel --release --test probe_ratio --
+--ignored --nocapture`, 64 MB inputs, 1 MB blocks), size change probe on vs off:
+
+| input | v1: 8 samples | v2/v3: samples + entropy guard |
+|---|---|---|
+| random | 0 | 0 |
+| corpus | 0 | 0 |
+| adversarial-gaps (random at sample positions, text between) | **+137.5%** | 0 |
+| near-incompressible 2/5/10% | 0 | 0 |
+| mixed-archive (compressed + text segments, unaligned) | **+0.239%** | 0 |
+
+v1 (8 × 16 KB DEFLATE samples, store if none shrinks) missed text between
+samples: 0.24% loss on the realistic mix, over the 0.1% limit. v2 adds a
+byte-entropy guard: every 4 KB window must have collision entropy ≥ 7.8
+bits/byte (integer histogram, sum of squares ≤ 75,281). A/B of v2: random
+-74%, but adversarial-gaps +9.5% REGRESSION (8 doomed samples + scan + full
+DEFLATE). v3 (kept) reorders the same checks: sample 0, entropy scan (stops at
+the first text-like window), samples 1-7.
+
+v3 A/B vs 7668978:
+
+| bench | A HEAD | B | Δ | 95% CI | verdict |
+|---|---|---|---|---|---|
+| compress_incompressible/threads=default | 95.3 ms | 25.2 ms | -73.5% | [-74.0, -73.0] | improved |
+| compress_incompressible/threads=1 | 1.02 s | 132 ms | -87.1% | [-87.2, -87.0] | improved |
+| compress_with_options_incompressible/threads=default | 119 ms | 52.1 ms | -56.1% | [-56.7, -55.5] | improved |
+| compress_mixed/adversarial-gaps | 59 ms | 58.6 ms | -0.7% | [-4.8, +2.9] | noise |
+| compress_mixed/mixed-archive | 54.4 ms | 49.5 ms | -8.9% | [-9.8, -7.8] | improved |
+| compress_mixed/near-incompressible-2pct | 52.3 ms | 54.3 ms | +3.7% | [+0.9, +6.9] | slower, under gate |
+| compress_mixed/near-incompressible-5pct | 52.4 ms | 53.8 ms | +2.6% | [-0.7, +5.6] | noise |
+| compress_mixed/near-incompressible-10pct | 50.3 ms | 50 ms | -0.4% | [-1.8, +1.1] | noise |
+| compress_throughput/threads=1/block=1024KB | 1.35 s | 1.37 s | +1.5% | [+0.3, +2.6] | noise |
+| compress_throughput/threads=default/block=1024KB | 113 ms | 116 ms | +2.5% | [-0.1, +4.8] | noise |

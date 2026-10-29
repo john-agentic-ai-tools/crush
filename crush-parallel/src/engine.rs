@@ -783,4 +783,58 @@ mod tests {
             _ => unreachable!("no golden value for {name}"),
         }
     }
+
+    // --- Incompressibility probe (perf goal 2026-10-29) ---
+
+    fn probe_config(probe: bool) -> EngineConfiguration {
+        EngineConfiguration::builder()
+            .block_size(256 * 1024)
+            .incompressible_probe(probe)
+            .build()
+            .expect("config")
+    }
+
+    /// On inputs where every block either clearly compresses or clearly
+    /// doesn't, the probe must not change a single output byte.
+    #[test]
+    fn probe_output_identical_on_clear_cut_inputs() {
+        let cases: [(&str, Vec<u8>); 4] = [
+            ("random", xorshift_bytes(1_000_000, 0x9E37_79B9_7F4A_7C15)),
+            ("text", wordy_bytes(1_000_000)),
+            ("zeros", vec![0u8; 1_000_000]),
+            ("random-then-text", {
+                let mut v = xorshift_bytes(600_000, 3);
+                v.extend(wordy_bytes(400_000));
+                v
+            }),
+        ];
+        for (name, data) in &cases {
+            let on = compress(data, &probe_config(true)).expect("compress");
+            let off = compress(data, &probe_config(false)).expect("compress");
+            assert!(on == off, "probe changed output for {name}");
+        }
+    }
+
+    proptest::proptest! {
+        #![proptest_config(proptest::prelude::ProptestConfig::with_cases(32))]
+        /// Random data with compressible spans at arbitrary offsets: whatever
+        /// the probe decides, the data must round-trip.
+        #[test]
+        fn probe_roundtrip_mixed_blocks(
+            seed in proptest::prelude::any::<u64>(),
+            spans in proptest::collection::vec((0usize..600_000, 1usize..40_000), 0..12),
+        ) {
+            let mut data = xorshift_bytes(600_000, seed | 1);
+            for (start, len) in spans {
+                let end = (start + len).min(data.len());
+                for (i, b) in data[start..end].iter_mut().enumerate() {
+                    *b = b"compressible text "[i % 18];
+                }
+            }
+            let config = probe_config(true);
+            let compressed = compress(&data, &config).expect("compress");
+            let recovered = decompress(&compressed, &config).expect("decompress");
+            proptest::prop_assert_eq!(data, recovered);
+        }
+    }
 }
