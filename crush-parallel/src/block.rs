@@ -4,11 +4,19 @@ use crate::config::EngineConfiguration;
 use crate::format::{BlockFlags, BlockHeader};
 use crush_core::error::{CrushError, Result};
 use libdeflater::{CompressionLvl, Compressor, Decompressor};
+use std::borrow::Cow;
 
 /// Result of compressing a single block.
 pub struct CompressedBlock {
     pub header: BlockHeader,
     pub payload: Vec<u8>,
+}
+
+/// Result of compressing a single block for the engine: a stored block's
+/// payload borrows the input instead of copying it.
+pub(crate) struct BlockOutput<'a> {
+    pub header: BlockHeader,
+    pub payload: Cow<'a, [u8]>,
 }
 
 /// Resolve a config-level `compression_level` (0-9) to libdeflater's `CompressionLvl`.
@@ -38,6 +46,29 @@ pub fn compress_block(
     block_index: usize,
     config: &EngineConfiguration,
 ) -> Result<CompressedBlock> {
+    let mut scratch = Vec::new();
+    let out = compress_block_with_scratch(compressor, &mut scratch, input, block_index, config)?;
+    Ok(CompressedBlock {
+        header: out.header,
+        payload: out.payload.into_owned(),
+    })
+}
+
+/// [`compress_block`] for the engine's workers. DEFLATE writes into the
+/// worker's `scratch` buffer. A stored block borrows `input` and leaves
+/// `scratch` for the next block (no allocation, no copy); a compressed block
+/// takes `scratch` as its payload.
+///
+/// # Errors
+///
+/// Returns an error if DEFLATE encoding fails internally.
+pub(crate) fn compress_block_with_scratch<'a>(
+    compressor: &mut Compressor,
+    scratch: &mut Vec<u8>,
+    input: &'a [u8],
+    block_index: usize,
+    config: &EngineConfiguration,
+) -> Result<BlockOutput<'a>> {
     let checksum = if config.checksums {
         crc32fast::hash(input)
     } else {
@@ -51,12 +82,15 @@ pub fn compress_block(
         ))
     })?;
 
-    // deflate_compress_bound gives the exact worst-case output size — no over-allocation.
+    // deflate_compress_bound gives the exact worst-case output size. A fresh
+    // zeroed Vec (calloc) is cheaper than resizing, which memsets.
     let buf_size = compressor.deflate_compress_bound(in_len);
-    let mut compressed = vec![0u8; buf_size];
+    if scratch.len() < buf_size {
+        *scratch = vec![0u8; buf_size];
+    }
 
     let bytes_written = compressor
-        .deflate_compress(input, &mut compressed)
+        .deflate_compress(input, &mut scratch[..buf_size])
         .map_err(|e| {
             CrushError::InvalidFormat(format!(
                 "DEFLATE encode error at block {block_index}: {e:?}"
@@ -66,28 +100,31 @@ pub fn compress_block(
         bytes_written <= buf_size,
         "libdeflater returned {bytes_written} > capacity {buf_size}"
     );
-    compressed.truncate(bytes_written);
 
     // Fall back to raw storage if compressed output is not smaller enough.
     // Precision loss from usize→f64 is acceptable for this ratio heuristic.
     #[allow(clippy::cast_precision_loss)]
     let use_stored =
-        in_len > 0 && (compressed.len() as f64 / in_len as f64) > config.max_expansion_ratio;
+        in_len > 0 && (bytes_written as f64 / in_len as f64) > config.max_expansion_ratio;
 
     let (payload, flags, cs) = if use_stored {
         (
-            input.to_vec(),
+            Cow::Borrowed(input),
             BlockFlags::default().with_stored(),
             uncompressed_size,
         )
     } else {
-        let cs = u32::try_from(compressed.len()).map_err(|_| {
+        let cs = u32::try_from(bytes_written).map_err(|_| {
             CrushError::InvalidConfig(format!("compressed block {block_index} exceeds u32::MAX"))
         })?;
-        (compressed, BlockFlags::default(), cs)
+        // Hand the buffer itself over instead of copying the output out of it;
+        // the worker allocates a new one for its next block.
+        let mut payload = std::mem::take(scratch);
+        payload.truncate(bytes_written);
+        (Cow::Owned(payload), BlockFlags::default(), cs)
     };
 
-    Ok(CompressedBlock {
+    Ok(BlockOutput {
         header: BlockHeader {
             compressed_size: cs,
             uncompressed_size,

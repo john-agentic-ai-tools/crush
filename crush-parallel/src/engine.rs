@@ -1,7 +1,7 @@
 //! Main compression and decompression entry points.
 
 use crate::block::{
-    CompressedBlock, compress_block, decompress_block_into, resolve_compression_level,
+    BlockOutput, compress_block_with_scratch, decompress_block_into, resolve_compression_level,
 };
 use crate::config::{EngineConfiguration, ProgressEvent, ProgressPhase};
 use crate::format::{BlockHeader, BlockIndexEntry, FileFlags, FileFooter, FileHeader, IndexHeader};
@@ -44,23 +44,25 @@ pub fn compress(input: &[u8], config: &EngineConfiguration) -> Result<Vec<u8>> {
     // Resolve compression level once on the driver, not per-block (Slice A).
     let lvl = resolve_compression_level(config.compression_level)?;
 
-    // Slice A: pool one Compressor per worker thread via map_init.
-    // The first block on each worker allocates its Compressor; every subsequent
-    // block on that worker reuses it.
-    let results: Vec<Result<CompressedBlock>> = with_pool(config, || {
+    // Slice A: pool one Compressor and one DEFLATE scratch buffer per worker
+    // thread via map_init. The first block on each worker allocates them;
+    // every subsequent block on that worker reuses them.
+    let results: Vec<Result<BlockOutput>> = with_pool(config, || {
         blocks
             .par_iter()
             .enumerate()
             .map_init(
-                || Compressor::new(lvl),
-                |compressor, (i, chunk)| compress_block(compressor, chunk, i, config),
+                || (Compressor::new(lvl), Vec::new()),
+                |(compressor, scratch), (i, chunk)| {
+                    compress_block_with_scratch(compressor, scratch, chunk, i, config)
+                },
             )
             .collect()
     });
 
     // block count fits usize: validated against u32::MAX in the index write path.
     #[allow(clippy::cast_possible_truncation)]
-    let mut compressed_blocks: Vec<CompressedBlock> = Vec::with_capacity(total_blocks as usize);
+    let mut compressed_blocks: Vec<BlockOutput> = Vec::with_capacity(total_blocks as usize);
     for r in results {
         compressed_blocks.push(r?);
     }
@@ -708,6 +710,77 @@ mod tests {
             let compressed = compress(&data, &config).unwrap();
             let recovered = decompress(&compressed, &config).unwrap();
             proptest::prop_assert_eq!(data, recovered);
+        }
+    }
+
+    // --- Golden output (perf work must not change the compressed bytes) ---
+
+    fn xorshift_bytes(len: usize, seed: u64) -> Vec<u8> {
+        let mut state = seed;
+        (0..len)
+            .map(|_| {
+                state ^= state << 13;
+                state ^= state >> 7;
+                state ^= state << 17;
+                state.to_le_bytes()[0]
+            })
+            .collect()
+    }
+
+    /// Text-like input: words from a small vocabulary picked pseudo-randomly.
+    fn wordy_bytes(len: usize) -> Vec<u8> {
+        const WORDS: &[&[u8]] = &[
+            b"fn ", b"let ", b"crush ", b"block ", b"0x1f ", b"
+", b"error ",
+        ];
+        let picks = xorshift_bytes(len, 0x0BAD_5EED_1234_5678);
+        let mut out = Vec::with_capacity(len + 8);
+        let mut i = 0;
+        while out.len() < len {
+            out.extend_from_slice(WORDS[usize::from(picks[i % picks.len()]) % WORDS.len()]);
+            i += 1;
+        }
+        out.truncate(len);
+        out
+    }
+
+    /// (crc32, length) of `compress()` output, pinned before the per-worker
+    /// scratch buffer and borrowed stored payloads (perf goal, 2026-10-29).
+    #[test]
+    fn compress_output_matches_golden() {
+        let config = EngineConfiguration::builder()
+            .block_size(64 * 1024)
+            .build()
+            .expect("config");
+        let cases: [(&str, Vec<u8>); 4] = [
+            ("random", xorshift_bytes(300_000, 0x9E37_79B9_7F4A_7C15)),
+            ("text", wordy_bytes(300_000)),
+            ("zeros", vec![0u8; 300_000]),
+            // random first blocks, text tail, partial last block
+            ("mixed-partial", {
+                let mut v = xorshift_bytes(150_001, 7);
+                v.extend(wordy_bytes(70_000));
+                v
+            }),
+        ];
+        let mut mismatches = Vec::new();
+        for (name, data) in &cases {
+            let out = compress(data, &config).expect("compress");
+            let got = (crc32fast::hash(&out), out.len());
+            if got != golden(name) {
+                mismatches.push(*name);
+            }
+        }
+        assert!(mismatches.is_empty(), "output changed for {mismatches:?}");
+    }
+
+    fn golden(name: &str) -> (u32, usize) {
+        match name {
+            "random" => (4_000_492_043, 300_276),
+            "text" => (2_413_880_173, 45_728),
+            "zeros" => (592_274_169, 641),
+            "mixed-partial" => (1_403_566_687, 161_425),
+            _ => unreachable!("no golden value for {name}"),
         }
     }
 }

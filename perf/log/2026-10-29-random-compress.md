@@ -35,3 +35,27 @@ fills the CRC in. Byte-identical (golden test vs the old assembly).
 | compress_mixed/* (5 variants) | | | -4.9% … +1.7% | | improved/noise |
 
 Wrapper overhead (with_options minus engine): 51 ms → 27 ms.
+
+## Exp 2 (H3): per-worker DEFLATE scratch, stored blocks borrow input — KEPT (second variant)
+
+First variant (exp2): scratch reused for every block, compressed output copied
+out with `to_vec`. Random improved (-8.3%) but near-incompressible-2pct
+regressed +6.8% [+2.3, +11.0] and compress_throughput default +4.1%: the copy
+of each nearly-1 MB compressed payload costs more than the old calloc+truncate.
+
+Second variant (exp2b, kept): a stored block borrows the input (`Cow::Borrowed`)
+and leaves `scratch` for the next block; a compressed block takes `scratch` as
+its payload (`mem::take` + truncate, no copy) and the worker callocs a new one.
+`compress_block` (public) keeps its signature; the engine uses
+`compress_block_with_scratch`. Golden test pins `engine::compress` output
+(crc32 + length) for random, text, zeros, mixed with a partial last block.
+
+| bench | A HEAD | B | Δ | 95% CI | verdict |
+|---|---|---|---|---|---|
+| compress_incompressible/threads=default | 101 ms | 93.4 ms | -7.9% | [-9.1, -6.6] | improved |
+| compress_incompressible/threads=1 | 1.08 s | 1.03 s | -4.8% | [-5.5, -4.1] | improved |
+| compress_with_options_incompressible/threads=default | 127 ms | 125 ms | -1.7% | [-4.9, +2.2] | noise |
+| compress_mixed/near-incompressible-2pct | 53.8 ms | 51.1 ms | -5.0% | [-9.0, -1.8] | improved |
+| compress_mixed/* (other 4) | | | -1.7% … +0.2% | | improved/noise |
+| compress_throughput/threads=1/block=1024KB | 1.32 s | 1.35 s | +1.9% | [+1.0, +2.8] | slower, under gate |
+| compress_throughput/threads=default/block=1024KB | 114 ms | 116 ms | +1.3% | [-2.7, +4.9] | noise |
