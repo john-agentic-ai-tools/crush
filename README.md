@@ -176,32 +176,21 @@ cargo bench -p crush-gpu --bench ratio
 
 ### Comparing Against gzip/pigz
 
-To compare crush against standard compression tools:
+`perf/compare.py` runs crush, gzip, and pigz on 128 MB text, repetitive,
+random, and real-file data, pinned to 1, 4, and all CPUs, with all I/O in
+tmpfs. It reports the median of 5 runs, checks every round-trip, and writes
+`perf/comparisons/<machine>.json`. It needs Linux (on Windows, use WSL) and
+`pigz`:
 
 ```bash
-# Build crush first
-cargo build --release
-
-# Run comparison script (Linux/Mac/WSL)
-bash benchmark-compare.sh
-
-# Manual comparison example
-echo "Test data..." > test.txt
-
-# Crush
-time ./target/release/crush compress test.txt
-ls -lh test.txt.crush
-
-# gzip --fast (comparable compression ratio to crush)
-time gzip --fast --keep test.txt
-ls -lh test.txt.gz
-
-# pigz (parallel gzip)
-time pigz --keep test.txt
-ls -lh test.txt.gz
+sudo apt-get install pigz
+cargo build --release -p crush-cli
+python3 perf/compare.py          # or: bash benchmark-compare.sh
 ```
 
-**Note**: Crush currently optimizes for speed over compression ratio. For fairest comparisons, compare against `gzip --fast` rather than default gzip, as they have similar compression ratios while crush provides significantly higher throughput.
+crush's default output is about the size of `gzip -6` (slightly smaller on
+real files), so compare it against `gzip -6`/`pigz -6`; `-1` trades about 15%
+larger output for speed. See `perf/README.md` for the latest results.
 
 ## Installation
 
