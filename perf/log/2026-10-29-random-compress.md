@@ -99,3 +99,43 @@ v3 A/B vs 7668978:
 | compress_mixed/near-incompressible-10pct | 50.3 ms | 50 ms | -0.4% | [-1.8, +1.1] | noise |
 | compress_throughput/threads=1/block=1024KB | 1.35 s | 1.37 s | +1.5% | [+0.3, +2.6] | noise |
 | compress_throughput/threads=default/block=1024KB | 113 ms | 116 ms | +2.5% | [-0.1, +4.8] | noise |
+
+## Goal check: end to end (WSL2, 128 MB, all 24 CPUs, ABBA, median of 10)
+
+| data | tool | MB/s | vs start | ratio |
+|---|---|---|---|---|
+| random | crush 844698c (start) | 571 | | 1.0000 |
+| random | crush 4664ca2 | 1,067 | +86.8% | 1.0000 |
+| random | pigz -6 | 692 | | 0.9997 |
+| random | pigz -1 | 728 | | 0.9997 |
+| real files | crush 844698c | 956 | | 3.5030 |
+| real files | crush 4664ca2 | 992 | +3.8% | 3.5030 |
+| real files | pigz -6 | 601 | | 3.4809 |
+| real files | pigz -1 | 1,324 | | 3.0294 |
+
+Goal (+15-20%, beat pigz) met: crush is 47-54% faster than pigz on random
+data; real-file ratio unchanged. Run spread 15-34% (WSL), far below the gain.
+
+## Gate
+
+- Quality gate: fmt, clippy, tests (502), docs, cuda clippy pass. `cargo audit`
+  / `cargo deny` fail on RUSTSEC-2026-0418 (libz-sys 1.1.30 via flate2), which
+  is in develop's lockfile too; fix separately with `cargo update -p libz-sys`.
+- Fuzz (WSL, nightly), 100k runs each, clean: fuzz_probe_roundtrip (new),
+  fuzz_roundtrip, crush-core compress. The crush-parallel fuzz crate could not
+  build before (missing `[workspace]`); fixed.
+- Full suite ABBA vs develop (3feab3e): 11 REGRESSION rows at threads=4/8 and
+  in decompression (identical code on both sides), GPU decompress -9 to -14%
+  (untouched). Confirmation runs, same day:
+  - A/A noise floors at threads=8: compress 5.6-7.1%, decompress 6.8%,
+    decompress threads=default 12.6%.
+  - ab vs 3feab3e, cpu-compress: threads=4 noise; threads=8 -10 to -14%
+    (faster); all else within ±2.8% (noise / under gate).
+  - ab vs 3feab3e, cpu-decompress: threads=8 -14.6% (faster), threads=1 +3.9%
+    (under gate), rest noise.
+  - ab vs 3feab3e, quick-core: NEUTRAL. roundtrip/102400 +3.3% [+1.6, +5.7]
+    (full run: +6.6%), under its 3.8% floor and the 5% gate; consistent
+    direction in both runs, no code cause found (compress() assembly does the
+    same work for 100 KB). Flagged, not claimed as noise.
+  Conclusion: the threads=4/8 swings are machine variance on the 8P+8E CPU
+  (they reversed sign between sessions); no confirmed regression > 5%.
