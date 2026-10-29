@@ -175,8 +175,11 @@ def run_benches(cwd: Path, entries, name: str, quick: bool, env: dict) -> list[s
     with log.open("w", encoding="utf-8") as fh:
         for pkg, bench, flt in entries:
             cmd = ["cargo", "bench", "-p", pkg]
-            if bench:
-                cmd += ["--bench", bench]
+            # Select bench targets explicitly: with no selector, or with
+            # --benches (which includes the lib, bench = true by default),
+            # cargo also runs the lib's libtest harness, and that rejects
+            # criterion flags like --save-baseline.
+            cmd += ["--bench", bench or "*"]
             cmd += ["--"]
             if flt:
                 cmd.append(flt)
