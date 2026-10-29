@@ -9,77 +9,12 @@ use crush_parallel::{EngineConfiguration, compress, decompress, decompress_block
 use std::hint::black_box;
 use std::io::Cursor;
 
-/// Generate a realistic benchmark corpus simulating source-code / log-file content.
-///
-/// Uses a seeded `XorShift64` PRNG — deterministic, no external dependencies.
-/// Mixes code vocabulary tokens (structure/repetition) with pseudo-random ASCII
-/// bytes (entropy variation), yielding a ~2–4x compression ratio representative
-/// of real text workloads.
-fn generate_corpus(size: usize, seed: u64) -> Vec<u8> {
-    const TOKENS: &[&[u8]] = &[
-        b"fn ",
-        b"let ",
-        b"mut ",
-        b"pub ",
-        b"use ",
-        b"mod ",
-        b"struct ",
-        b"impl ",
-        b"return ",
-        b"match ",
-        b"if ",
-        b"else ",
-        b"for ",
-        b"while ",
-        b"Vec<u8>",
-        b"Result<",
-        b"    ",
-        b"\n",
-        b"// comment\n",
-        b"Ok(",
-        b"Err(",
-        b"Some(",
-        b"None",
-        b"true",
-        b"false",
-        b"self",
-        b"type ",
-        b"trait ",
-        b"where ",
-        b"0x",
-        b"ERROR: ",
-        b"WARN: ",
-        b"INFO: ",
-        b"2026-02-",
-        b"::new()",
-    ];
-
-    let mut data = Vec::with_capacity(size);
-    let mut state = seed;
-
-    while data.len() < size {
-        state ^= state << 13;
-        state ^= state >> 7;
-        state ^= state << 17;
-
-        if state.is_multiple_of(3) {
-            // ~33%: pseudo-random printable ASCII byte (adds entropy)
-            data.push(((state >> 8) & 0x5F) as u8 + 32);
-        } else {
-            // ~67%: vocabulary token (adds structure and repetition)
-            let token = TOKENS[(state as usize >> 4) % TOKENS.len()];
-            let remaining = size - data.len();
-            data.extend_from_slice(&token[..token.len().min(remaining)]);
-        }
-    }
-
-    data.truncate(size);
-    data
-}
+#[path = "common/variants.rs"]
+mod variants;
 
 fn bench_compression(c: &mut Criterion) {
     // 128 MB realistic corpus (source-code / log-file character distribution)
-    let data = generate_corpus(128 * 1024 * 1024, 0xDEAD_BEEF_CAFE_1234);
+    let data = variants::generate_corpus(128 * 1024 * 1024, 0xDEAD_BEEF_CAFE_1234);
 
     let mut group = c.benchmark_group("compress_throughput");
     group.throughput(Throughput::Bytes(data.len() as u64));
@@ -109,7 +44,7 @@ fn bench_compression(c: &mut Criterion) {
 
 fn bench_decompression(c: &mut Criterion) {
     // 128 MB realistic corpus — same seed family as compression bench for consistency
-    let data = generate_corpus(128 * 1024 * 1024, 0xCAFE_BABE_0000_0001);
+    let data = variants::generate_corpus(128 * 1024 * 1024, 0xCAFE_BABE_0000_0001);
 
     // Use default (global pool) for pre-compression to avoid capping available threads
     let config_compress = EngineConfiguration::builder()
@@ -154,7 +89,7 @@ fn bench_decompression(c: &mut Criterion) {
 /// - `decompress_parallel_dominated` — full `decompress` path; compare against `decompress_read_phase_only` to isolate the par-decompress win.
 fn bench_phase_isolated(c: &mut Criterion) {
     // 64 MB fixture — small enough to iterate fast, large enough for stable numbers.
-    let data = generate_corpus(64 * 1024 * 1024, 0xFADE_C0DE_BEEF_0007);
+    let data = variants::generate_corpus(64 * 1024 * 1024, 0xFADE_C0DE_BEEF_0007);
 
     let mut group = c.benchmark_group("phase_isolated");
     group.throughput(Throughput::Bytes(data.len() as u64));
@@ -225,15 +160,7 @@ fn bench_phase_isolated(c: &mut Criterion) {
 /// Incompressible input: every block ends up stored raw. pigz is faster than
 /// crush on this at 24 cores (perf/comparisons), so it gets its own benchmark.
 fn bench_compress_incompressible(c: &mut Criterion) {
-    let mut state: u64 = 0x9E37_79B9_7F4A_7C15;
-    let data: Vec<u8> = (0..128 * 1024 * 1024 / 8)
-        .flat_map(|_| {
-            state ^= state << 13;
-            state ^= state >> 7;
-            state ^= state << 17;
-            state.to_le_bytes()
-        })
-        .collect();
+    let data = variants::random(128 * 1024 * 1024);
 
     let mut group = c.benchmark_group("compress_incompressible");
     group.throughput(Throughput::Bytes(data.len() as u64));
@@ -256,10 +183,77 @@ fn bench_compress_incompressible(c: &mut Criterion) {
     group.finish();
 }
 
+/// Same random input through `crush_core::compress_with_options`, the path
+/// `crush compress` takes: the difference from `compress_incompressible` is the
+/// cost of the crush-core outer format (header, metadata, CRC32, copies).
+fn bench_compress_with_options_incompressible(c: &mut Criterion) {
+    crush_core::init_plugins().expect("init plugins");
+    let data = variants::random(128 * 1024 * 1024);
+    let options = crush_core::CompressionOptions::default()
+        .with_plugin("parallel-deflate")
+        .with_file_metadata(crush_core::plugin::FileMetadata {
+            mtime: Some(1_700_000_000),
+            #[cfg(unix)]
+            permissions: Some(0o644),
+        });
+
+    let mut group = c.benchmark_group("compress_with_options_incompressible");
+    group.throughput(Throughput::Bytes(data.len() as u64));
+    group.sample_size(10);
+    group.bench_with_input(
+        BenchmarkId::new("threads=default", "random-128MB"),
+        &data,
+        |b, data| {
+            b.iter(|| crush_core::compress_with_options(data, &options).expect("compress"));
+        },
+    );
+    group.finish();
+}
+
+/// Worst cases for an incompressibility shortcut, plus a realistic mix: how
+/// fast each compresses. `tests/probe_ratio.rs` reports their ratios.
+fn bench_compress_mixed(c: &mut Criterion) {
+    const SIZE: usize = 64 * 1024 * 1024;
+    let text = variants::generate_corpus(8 * 1024 * 1024, 0x5EED_0000_0000_0001);
+    let inputs = [
+        ("adversarial-gaps", variants::adversarial_gaps(SIZE, &text)),
+        (
+            "near-incompressible-2pct",
+            variants::near_incompressible(SIZE, 2),
+        ),
+        (
+            "near-incompressible-5pct",
+            variants::near_incompressible(SIZE, 5),
+        ),
+        (
+            "near-incompressible-10pct",
+            variants::near_incompressible(SIZE, 10),
+        ),
+        ("mixed-archive", variants::mixed_archive(SIZE, &text)),
+    ];
+    let config = EngineConfiguration::builder().build().expect("config");
+
+    let mut group = c.benchmark_group("compress_mixed");
+    group.throughput(Throughput::Bytes(SIZE as u64));
+    group.sample_size(10);
+    for (name, data) in &inputs {
+        group.bench_with_input(
+            BenchmarkId::new("threads=default", name),
+            data,
+            |b, data| {
+                b.iter(|| compress(data, &config).expect("compress"));
+            },
+        );
+    }
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_compression,
     bench_compress_incompressible,
+    bench_compress_with_options_incompressible,
+    bench_compress_mixed,
     bench_decompression,
     bench_phase_isolated
 );
@@ -277,7 +271,7 @@ criterion_main!(benches);
 //   recovers the gap.
 //
 // Data generation note:
-//   All throughput benchmarks use generate_corpus() — a seeded XorShift64 generator that
+//   All throughput benchmarks use variants::generate_corpus() — a seeded XorShift64 generator that
 //   mixes code-vocabulary tokens with pseudo-random ASCII bytes to simulate ~2–4x
 //   compressible real-world data. The old cycle() approach produced near-perfectly
 //   repetitive input and measured DEFLATE at close to memcpy speed, which was not
