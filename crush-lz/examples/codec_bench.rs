@@ -1,6 +1,7 @@
 //! In-memory single-thread timing of `fast-lz` on one file, comparable with
 //! `lz4 -b`: prints the best and median of N runs for compression and
-//! decompression, and the ratio.
+//! decompression, and the ratio. `CODEC_BENCH_DUMP=path` also writes the
+//! compressed payload there.
 //!
 //! ```text
 //! cargo run --release -p crush-lz --example codec_bench -- FILE [RUNS]
@@ -33,6 +34,9 @@ fn main() {
         packed = compress(&data, &config).expect("compress");
         ct.push(t.elapsed().as_secs_f64());
     }
+    if let Ok(dump) = std::env::var("CODEC_BENCH_DUMP") {
+        std::fs::write(dump, &packed).expect("write CODEC_BENCH_DUMP");
+    }
     let mut dt = Vec::new();
     for _ in 0..runs {
         let t = Instant::now();
@@ -41,6 +45,16 @@ fn main() {
         assert_eq!(out.len(), data.len());
     }
     assert_eq!(decompress(&packed, data.len()).expect("decompress"), data);
+
+    // Floor for any decoder that returns a fresh buffer: allocate and
+    // zero-fill one of the output size (first-touch page faults included).
+    let mut ft = Vec::new();
+    for _ in 0..runs {
+        let t = Instant::now();
+        let v = std::hint::black_box(vec![1u8; data.len()]);
+        ft.push(t.elapsed().as_secs_f64());
+        drop(v);
+    }
 
     let (cb, cm) = stats(ct);
     let (db, dm) = stats(dt);
@@ -53,5 +67,10 @@ fn main() {
         mbs(data.len(), cm),
         mbs(data.len(), db),
         mbs(data.len(), dm),
+    );
+    println!(
+        "fresh {}-byte buffer fill best {:.1} MB/s",
+        data.len(),
+        mbs(data.len(), stats(ft).0)
     );
 }
