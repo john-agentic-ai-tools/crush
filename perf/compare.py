@@ -1,9 +1,16 @@
 #!/usr/bin/env python3
-"""Compare the crush CLI against gzip and pigz (Linux, including WSL).
+"""Compare the crush CLI against gzip, pigz, zstd, and lz4 (Linux, including WSL).
 
 Every tool reads from and writes to tmpfs, is pinned to the same CPUs with
 taskset, and runs REPS times; the median is reported and each run's output is
 checked to round-trip. Results go to perf/comparisons/<machine>.json.
+
+gzip and pigz are required (the constitution's targets). zstd and lz4 are
+optional and skipped when not on PATH; they use their own formats, so they
+are a reference point for speed and ratio, not a like-for-like DEFLATE
+comparison. Use lz4 >= 1.10 for multithreading (-T); older lz4 runs
+single-threaded at every core count. Tools built into ~/.local/bin take
+precedence when it is first on PATH.
 
     cargo build --release -p crush-cli
     python3 perf/compare.py [--reps 5] [--size-mb 128] [--crush PATH]
@@ -59,8 +66,15 @@ def core_sets():
     return sets
 
 
+# Single-threaded tools: measured at 1 core only.
+SINGLE_THREADED = ("gzip-6", "gzip-1")
+# Optional tools: (binary, version command).
+OPTIONAL = {"zstd": "zstd --version", "lz4": "lz4 --version"}
+
+
 def tools(crush, threads):
-    return {
+    """Compress and decompress commands; optional tools only when installed."""
+    all_tools = {
         "crush": (f"{crush} compress {{i}} -o {{o}} -f >/dev/null 2>&1",
                   f"{crush} decompress {{o}} -o {{d}} -f >/dev/null 2>&1"),
         "gzip-6": ("gzip -6 -c {i} > {o}", "gzip -dc {o} > {d}"),
@@ -69,7 +83,13 @@ def tools(crush, threads):
                    f"pigz -dc -p {threads} {{o}} > {{d}}"),
         "pigz-1": (f"pigz -1 -p {threads} -c {{i}} > {{o}}",
                    f"pigz -dc -p {threads} {{o}} > {{d}}"),
+        "zstd-1": (f"zstd -q -1 -T{threads} -c {{i}} > {{o}}", "zstd -q -dc {o} > {d}"),
+        "zstd-3": (f"zstd -q -3 -T{threads} -c {{i}} > {{o}}", "zstd -q -dc {o} > {d}"),
+        "lz4-1": (f"lz4 -q -1 -T{threads} -c {{i}} > {{o}}", "lz4 -q -dc {o} > {d}"),
+        "lz4-9": (f"lz4 -q -9 -T{threads} -c {{i}} > {{o}}", "lz4 -q -dc {o} > {d}"),
     }
+    return {name: cmds for name, cmds in all_tools.items()
+            if name.split("-")[0] not in OPTIONAL or shutil.which(name.split("-")[0])}
 
 
 def timed(cmd):
@@ -131,8 +151,8 @@ def main():
             for ds in DATASETS:
                 i = os.path.join(a.data_dir, f"{ds}.bin")
                 for tool, (c, x) in tools(a.crush, threads).items():
-                    if cores != "1" and tool.startswith("gzip"):
-                        continue  # single-threaded; measured at 1 core only
+                    if cores != "1" and tool in SINGLE_THREADED:
+                        continue
                     pin = f"taskset -c {cpus} "
                     ct, dt = [], []
                     for _ in range(a.reps):
@@ -147,7 +167,7 @@ def main():
                          "comp_spread_pct": round(
                              (max(ct) - min(ct)) / statistics.median(ct) * 100, 1)}
                     results.append(r)
-                    print(f"{cores:>3} {ds:<10} {tool:<7} compress {r['comp_mbs']:>8} MB/s"
+                    print(f"{cores:>3} {ds:<10} {tool:<8} compress {r['comp_mbs']:>8} MB/s"
                           f"  decompress {r['decomp_mbs']:>8} MB/s  ratio {r['ratio']}",
                           flush=True)
     finally:
@@ -164,6 +184,8 @@ def main():
             "crush": out(f"{a.crush} --version"),
             "gzip": out("gzip --version | head -1"),
             "pigz": out("pigz --version 2>&1"),
+            **{t: out(f"{cmd} 2>&1 | head -1") for t, cmd in OPTIONAL.items()
+               if shutil.which(t)},
         },
         "method": {"size_mb": a.size_mb, "reps": a.reps, "statistic": "median",
                    "io": "tmpfs", "pinning": "taskset",
