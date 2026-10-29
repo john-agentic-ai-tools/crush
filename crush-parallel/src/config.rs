@@ -51,6 +51,11 @@ pub struct EngineConfiguration {
     pub max_decompression_ratio: f64,
     /// Enable per-block CRC32 checksums.
     pub checksums: bool,
+    /// Before compressing a block, DEFLATE a few small samples of it; if none
+    /// shrinks, store the block without the full DEFLATE attempt. Saves most
+    /// of the CPU on incompressible data; can store a block that full DEFLATE
+    /// would have shrunk slightly.
+    pub incompressible_probe: bool,
     /// Optional progress callback.
     pub progress: Option<Arc<Mutex<ProgressCallback>>>,
 }
@@ -65,6 +70,7 @@ impl Default for EngineConfiguration {
             max_expansion_ratio: 1.0,
             max_decompression_ratio: 1024.0,
             checksums: true,
+            incompressible_probe: true,
             progress: None,
         }
     }
@@ -130,6 +136,14 @@ impl EngineConfigurationBuilder {
     #[must_use]
     pub fn checksums(mut self, enabled: bool) -> Self {
         self.inner.checksums = enabled;
+        self
+    }
+
+    /// Enable or disable the incompressibility probe (see
+    /// [`EngineConfiguration::incompressible_probe`]).
+    #[must_use]
+    pub fn incompressible_probe(mut self, enabled: bool) -> Self {
+        self.inner.incompressible_probe = enabled;
         self
     }
 

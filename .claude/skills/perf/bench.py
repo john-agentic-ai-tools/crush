@@ -75,6 +75,9 @@ SUITES: dict[str, list[tuple[str, str, str | None]]] = {
         ("crush-parallel", "throughput", r"^compress_throughput/"),
         ("crush-core", "compression", r"^compress_(medium|large)/"),
     ],
+    "cpu-compress-random": [
+        ("crush-parallel", "throughput", r"^(compress_incompressible/|compress_with_options_incompressible/|compress_mixed/|compress_throughput/threads=(1|default)/block=1024KB$)"),
+    ],
     "cpu-decompress": [
         ("crush-parallel", "throughput", r"^decompress_throughput/"),
         ("crush-core", "compression", r"^decompress_"),

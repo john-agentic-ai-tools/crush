@@ -9,6 +9,7 @@ use crate::plugin::registry::{get_default_plugin, get_plugin_by_magic};
 use crate::plugin::timeout::{run_with_timeout_and_cancel_scoped, run_with_timeout_scoped};
 use crate::plugin::{CrushHeader, FileMetadata, PluginSelector, ScoringWeights};
 use crc32fast::Hasher;
+use rayon::prelude::*;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -145,21 +146,8 @@ pub fn compress(input: &[u8]) -> Result<Vec<u8>> {
         })
     })?;
 
-    // Calculate CRC32 of compressed payload
-    let mut hasher = Hasher::new();
-    hasher.update(&compressed_payload);
-    let crc32 = hasher.finalize();
-
-    // Create header with original size and CRC32
     let header = CrushHeader::new(default_magic, input.len() as u64).with_crc32();
-
-    // Build final output: header + compressed payload
-    let mut output = Vec::with_capacity(CrushHeader::SIZE + 4 + compressed_payload.len());
-    output.extend_from_slice(&header.to_bytes());
-    output.extend_from_slice(&crc32.to_le_bytes());
-    output.extend_from_slice(&compressed_payload);
-
-    Ok(output)
+    Ok(assemble_output(header, &[], &compressed_payload))
 }
 
 /// Compress data with custom options (plugin selection, scoring weights)
@@ -235,20 +223,6 @@ pub fn compress_with_options(input: &[u8], options: &CompressionOptions) -> Resu
         .as_ref()
         .map_or(Vec::new(), super::plugin::metadata::FileMetadata::to_bytes);
 
-    let mut payload_with_metadata = Vec::new();
-    if !metadata_bytes.is_empty() {
-        #[allow(clippy::cast_possible_truncation)]
-        let metadata_len = metadata_bytes.len() as u16; // FileMetadata is always < 64KB
-        payload_with_metadata.extend_from_slice(&metadata_len.to_le_bytes());
-        payload_with_metadata.extend_from_slice(&metadata_bytes);
-    }
-    payload_with_metadata.extend_from_slice(&compressed_payload);
-
-    // Calculate CRC32 of compressed payload + metadata
-    let mut hasher = Hasher::new();
-    hasher.update(&payload_with_metadata);
-    let crc32 = hasher.finalize();
-
     // Create header with original size and CRC32
     let mut header =
         CrushHeader::new(selected_metadata.magic_number, input.len() as u64).with_crc32();
@@ -256,13 +230,62 @@ pub fn compress_with_options(input: &[u8], options: &CompressionOptions) -> Resu
         header = header.with_metadata();
     }
 
-    // Build final output: header + CRC32 + payload_with_metadata
-    let mut output = Vec::with_capacity(CrushHeader::SIZE + 4 + payload_with_metadata.len());
-    output.extend_from_slice(&header.to_bytes());
-    output.extend_from_slice(&crc32.to_le_bytes());
-    output.extend_from_slice(&payload_with_metadata);
+    Ok(assemble_output(
+        header,
+        &metadata_bytes,
+        &compressed_payload,
+    ))
+}
 
-    Ok(output)
+/// Payloads at least this large get their CRC32 computed in parallel.
+const CRC_PARALLEL_MIN: usize = 8 * 1024 * 1024;
+/// Chunk size for the parallel CRC32.
+const CRC_PARALLEL_CHUNK: usize = 4 * 1024 * 1024;
+
+/// Build the outer format in one exact-size buffer:
+/// `header | crc32 | [metadata_len: u16 | metadata] | payload`.
+///
+/// The CRC32 covers everything after the CRC field. `metadata` is empty when
+/// the header has no metadata flag.
+fn assemble_output(header: CrushHeader, metadata: &[u8], payload: &[u8]) -> Vec<u8> {
+    let metadata_block = if metadata.is_empty() {
+        0
+    } else {
+        2 + metadata.len()
+    };
+    let crc_start = CrushHeader::SIZE + 4;
+    let mut output = Vec::with_capacity(crc_start + metadata_block + payload.len());
+    output.extend_from_slice(&header.to_bytes());
+    output.extend_from_slice(&[0; 4]);
+    if !metadata.is_empty() {
+        #[allow(clippy::cast_possible_truncation)]
+        let metadata_len = metadata.len() as u16; // FileMetadata is always < 64KB
+        output.extend_from_slice(&metadata_len.to_le_bytes());
+        output.extend_from_slice(metadata);
+    }
+    output.extend_from_slice(payload);
+
+    let crc32 = parallel_crc32(&output[crc_start..]);
+    output[CrushHeader::SIZE..crc_start].copy_from_slice(&crc32.to_le_bytes());
+    output
+}
+
+/// CRC32 of `data`, split across the rayon pool for large inputs.
+fn parallel_crc32(data: &[u8]) -> u32 {
+    if data.len() < CRC_PARALLEL_MIN {
+        return crc32fast::hash(data);
+    }
+    data.par_chunks(CRC_PARALLEL_CHUNK)
+        .map(|chunk| {
+            let mut h = Hasher::new();
+            h.update(chunk);
+            h
+        })
+        .reduce(Hasher::new, |mut a, b| {
+            a.combine(&b);
+            a
+        })
+        .finalize()
 }
 
 #[cfg(test)]
@@ -512,5 +535,84 @@ mod tests {
         assert_eq!(options.timeout, Duration::from_secs(30));
         assert!(options.file_metadata.is_some());
         assert!(options.cancel_token.is_some());
+    }
+
+    // --- Outer-format assembly (perf: one exact-size buffer, parallel CRC) ---
+
+    /// The assembly as `compress_with_options` did it before the single-buffer
+    /// rewrite: concatenate metadata and payload, CRC that, copy again.
+    fn reference_assemble(header: CrushHeader, metadata: &[u8], payload: &[u8]) -> Vec<u8> {
+        let mut payload_with_metadata = Vec::new();
+        if !metadata.is_empty() {
+            #[allow(clippy::cast_possible_truncation)]
+            let metadata_len = metadata.len() as u16;
+            payload_with_metadata.extend_from_slice(&metadata_len.to_le_bytes());
+            payload_with_metadata.extend_from_slice(metadata);
+        }
+        payload_with_metadata.extend_from_slice(payload);
+        let crc32 = crc32fast::hash(&payload_with_metadata);
+        let mut output = Vec::new();
+        output.extend_from_slice(&header.to_bytes());
+        output.extend_from_slice(&crc32.to_le_bytes());
+        output.extend_from_slice(&payload_with_metadata);
+        output
+    }
+
+    fn pseudo_random(len: usize) -> Vec<u8> {
+        let mut state: u64 = 0x1234_5678_9ABC_DEF1;
+        (0..len)
+            .map(|_| {
+                state ^= state << 13;
+                state ^= state >> 7;
+                state ^= state << 17;
+                state.to_le_bytes()[0]
+            })
+            .collect()
+    }
+
+    #[test]
+    fn assemble_output_is_byte_identical_to_reference() {
+        let metadata = FileMetadata {
+            mtime: Some(1_700_000_000),
+            #[cfg(unix)]
+            permissions: Some(0o644),
+        }
+        .to_bytes();
+        for len in [0usize, 1, 5 * 1024 * 1024, 9 * 1024 * 1024 + 7] {
+            let payload = pseudo_random(len);
+            for meta in [&[][..], &metadata[..]] {
+                let mut header = CrushHeader::new([0x43, 0x52, 0x01, 0x02], 42).with_crc32();
+                if !meta.is_empty() {
+                    header = header.with_metadata();
+                }
+                assert_eq!(
+                    assemble_output(header, meta, &payload),
+                    reference_assemble(header, meta, &payload),
+                    "len {len}, metadata {}",
+                    meta.len()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn parallel_crc32_matches_serial() {
+        let data = pseudo_random(3 * CRC_PARALLEL_CHUNK + 5);
+        for len in [
+            0,
+            1,
+            CRC_PARALLEL_CHUNK - 1,
+            CRC_PARALLEL_CHUNK,
+            CRC_PARALLEL_CHUNK + 1,
+            CRC_PARALLEL_MIN - 1,
+            CRC_PARALLEL_MIN,
+            data.len(),
+        ] {
+            assert_eq!(
+                parallel_crc32(&data[..len]),
+                crc32fast::hash(&data[..len]),
+                "len {len}"
+            );
+        }
     }
 }

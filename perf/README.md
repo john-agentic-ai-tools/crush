@@ -48,3 +48,31 @@ python .claude/skills/perf/bench.py compare before after
 `compare` bootstraps a 95% CI for each benchmark's change in mean time. A
 change counts only when the CI excludes zero; a significant slowdown above 5%
 is a `REGRESSION`, which fails the constitution's benchmark gate.
+
+## gzip / pigz / zstd / lz4 comparisons
+
+`comparisons/<machine>.json` holds the latest `perf/compare.py` run for one
+machine: crush, gzip, pigz, zstd (`-1`, `-3`), and lz4 (`-1`, `-9`) on 128 MB
+of text, repetitive, random, and real-file data (a tar of `/usr/lib` and
+`/usr/share`), pinned with `taskset` to 1 CPU, 4 CPUs on distinct physical
+cores, and all CPUs. It records the median of 5 runs, the compression ratio,
+and the tool versions. gzip and pigz are the constitution's external
+reference point ("within 5% of gzip single-threaded, match pigz on 4+
+cores"); zstd and lz4 are optional (skipped when not on PATH) and use their
+own formats. Linux only; on Windows run it in WSL with crush built there.
+
+The current WSL file was measured with tools built from source into
+`~/.local/bin` (pigz 2.8, zstd 1.5.7, lz4 1.10.0) because Ubuntu 20.04 ships
+lz4 1.9.2, which has no multithreading:
+
+```sh
+export PATH=~/.local/bin:$PATH
+```
+
+```sh
+cargo build --release -p crush-cli
+python3 perf/compare.py
+```
+
+These are wall-clock CLI numbers including file I/O and process start, so
+they aren't comparable with the criterion baselines above.
