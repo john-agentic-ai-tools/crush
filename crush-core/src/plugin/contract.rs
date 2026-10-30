@@ -99,6 +99,27 @@ pub trait CompressionAlgorithm: Send + Sync {
     /// - `ValidationError::CorruptedData` if input is invalid
     fn compress(&self, input: &[u8], cancel_flag: Arc<AtomicBool>) -> Result<Vec<u8>>;
 
+    /// Compress `input`, appending the payload to `out` after the bytes it
+    /// already holds (the library's header prefix).
+    ///
+    /// The provided implementation calls [`Self::compress`] and copies its
+    /// result. Plugins that can write their output in place override it to
+    /// save that copy; the bytes appended must equal what `compress` returns.
+    ///
+    /// # Errors
+    ///
+    /// As for [`Self::compress`]. On error, `out` may hold a partial payload.
+    fn compress_into(
+        &self,
+        input: &[u8],
+        cancel_flag: Arc<AtomicBool>,
+        out: &mut Vec<u8>,
+    ) -> Result<()> {
+        let payload = self.compress(input, cancel_flag)?;
+        out.extend_from_slice(&payload);
+        Ok(())
+    }
+
     /// Decompress compressed data
     ///
     /// # Parameters
@@ -160,5 +181,51 @@ pub trait CompressionAlgorithm: Send + Sync {
     fn estimate_ratio(&self, input: &[u8]) -> Option<f64> {
         let _ = input;
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Returns its input reversed: enough to see where the payload lands.
+    struct Reverse;
+
+    impl CompressionAlgorithm for Reverse {
+        fn name(&self) -> &'static str {
+            "reverse"
+        }
+        fn metadata(&self) -> PluginMetadata {
+            PluginMetadata {
+                name: "reverse",
+                version: "0",
+                magic_number: [0x43, 0x52, 0x01, 0x7F],
+                throughput: 1.0,
+                compression_ratio: 1.0,
+                description: "test",
+            }
+        }
+        fn compress(&self, input: &[u8], _: Arc<AtomicBool>) -> Result<Vec<u8>> {
+            Ok(input.iter().rev().copied().collect())
+        }
+        fn decompress(&self, input: &[u8], _: Arc<AtomicBool>) -> Result<Vec<u8>> {
+            Ok(input.iter().rev().copied().collect())
+        }
+        fn detect(&self, _: &[u8]) -> bool {
+            false
+        }
+    }
+
+    /// The provided `compress_into` keeps the caller's prefix and appends
+    /// exactly what `compress` returns.
+    #[test]
+    #[allow(clippy::expect_used)]
+    fn default_compress_into_appends_compress_output() {
+        let flag = Arc::new(AtomicBool::new(false));
+        let mut out = b"prefix".to_vec();
+        Reverse
+            .compress_into(b"abc", Arc::clone(&flag), &mut out)
+            .expect("compress_into");
+        assert_eq!(out, b"prefixcba");
     }
 }

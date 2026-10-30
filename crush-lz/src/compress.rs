@@ -266,8 +266,20 @@ pub(crate) fn compress_frame(
     frame: FrameHeader,
     cancel: Option<&AtomicBool>,
 ) -> Result<Vec<u8>> {
+    let mut out = Vec::new();
+    compress_frame_into(input, frame, cancel, &mut out)?;
+    Ok(out)
+}
+
+/// [`compress_frame`], appending the payload to `out` after what it holds.
+pub(crate) fn compress_frame_into(
+    input: &[u8],
+    frame: FrameHeader,
+    cancel: Option<&AtomicBool>,
+    out: &mut Vec<u8>,
+) -> Result<()> {
     let block_size = frame.block_size();
-    let mut out = Vec::with_capacity(compress_bound(input.len(), block_size));
+    out.reserve(compress_bound(input.len(), block_size));
     out.extend_from_slice(&frame.to_bytes());
     let mut compressor = Compressor::new();
 
@@ -295,5 +307,5 @@ pub(crate) fn compress_frame(
     }
 
     out.extend_from_slice(&END_MARKER);
-    Ok(out)
+    Ok(())
 }

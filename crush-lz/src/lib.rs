@@ -126,6 +126,15 @@ impl CompressionAlgorithm for FastLzPlugin {
         compress::compress_frame(input, FrameHeader::default(), Some(&cancel_flag))
     }
 
+    fn compress_into(
+        &self,
+        input: &[u8],
+        cancel_flag: Arc<AtomicBool>,
+        out: &mut Vec<u8>,
+    ) -> Result<()> {
+        compress::compress_frame_into(input, FrameHeader::default(), Some(&cancel_flag), out)
+    }
+
     fn decompress(&self, input: &[u8], cancel_flag: Arc<AtomicBool>) -> Result<Vec<u8>> {
         // crush-core checks the total against the outer header's original size.
         decompress::decode_frame(input, None, Some(&cancel_flag))
@@ -159,6 +168,27 @@ mod plugin_tests {
 
     fn live() -> Arc<AtomicBool> {
         Arc::new(AtomicBool::new(false))
+    }
+
+    /// `compress_into` writes the same payload as `compress`, after
+    /// whatever the caller already put in the buffer (feature 023, T039).
+    #[test]
+    fn compress_into_appends_the_compress_output() {
+        let data: Vec<u8> = b"fast-lz writes in place "
+            .iter()
+            .copied()
+            .cycle()
+            .take(3 << 20)
+            .collect();
+        let alone = FastLzPlugin.compress(&data, live()).expect("compress");
+        for prefix_len in [0usize, 1, 20, 4096] {
+            let mut out = vec![0xA5; prefix_len];
+            FastLzPlugin
+                .compress_into(&data, live(), &mut out)
+                .expect("compress_into");
+            assert_eq!(&out[..prefix_len], &vec![0xA5; prefix_len][..]);
+            assert_eq!(&out[prefix_len..], &alone[..], "prefix {prefix_len}");
+        }
     }
 
     #[test]

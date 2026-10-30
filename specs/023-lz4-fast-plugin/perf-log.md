@@ -246,3 +246,36 @@ vs 70 ms for all of lz4); writing the materialised 128 MB result costs
 29 ms, which streaming blocks to the file (T040) would shrink.
 Byte-identity tests (`crush-cli/tests/pipeline_identity.rs`) pass on
 Windows and Linux.
+
+## US3 — no assembly copy (T039) and memory-mapped input (T041), 2026-10-30
+
+T039: `CompressionAlgorithm::compress_into` (provided: compress, then copy)
+appends the payload after crush-core's header prefix; `fast-lz` overrides it
+to encode in place, so the 60 MB payload is no longer copied into a second
+buffer. Output byte-identical (pipeline goldens unchanged).
+
+T041 (user approved the `unsafe`): regular input files of 1 MB or more are
+memory-mapped with `populate()` (MAP_POPULATE on Linux: one batched fault-in
+instead of 32 K demand faults; a plain map moved the faults into the codec
+phase and saved only 11 ms of the 22 ms read).
+
+Phase breakdown, same setup as the baseline (ms, CRUSH_TIMINGS, 4 runs):
+
+| | read | codec + core | write | total |
+|---|---|---|---|---|
+| baseline (fs::read, assembly copy) | 21.7 | 202 | 15.7 | 240 |
+| T039 + plain map | 0.01 | 215 | 14 | 229 |
+| T039 + populated map | 9.3 | 191 | 13.8 | 214 |
+
+End to end (compare.py, one core, ABBA, median of 10, real files):
+
+| | crush fast-lz | lz4 -1 | crush / lz4 |
+|---|---|---|---|
+| compress, baseline | 546.0 MB/s | 606.7 MB/s | 0.90x |
+| compress, T039 + T041 | 593.2 MB/s | 614.4 MB/s | 0.97x |
+| decompress (unchanged path) | 1,275.1 MB/s | 1,565.7 MB/s | 0.81x |
+
+Process start is not the gap (1-byte compress 1.73 ms vs lz4 1.31 ms, `true`
+1.19 ms). About 12 ms of crush's wall time falls outside the timed phases,
+most likely tearing down the 128 MB mapping and the output allocation at
+exit, which lz4's small streaming buffers avoid.

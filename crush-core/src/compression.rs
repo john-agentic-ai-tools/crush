@@ -139,15 +139,20 @@ pub fn compress(input: &[u8]) -> Result<Vec<u8>> {
 
     let default_magic = [0x43, 0x52, 0x01, 0x00];
 
+    let header = CrushHeader::new(default_magic, input.len() as u64).with_crc32();
+    let prefix = output_prefix(header, &[]);
+
     // Slice D: borrow `input` directly via a scoped thread — avoids a full-input clone on the hot path.
-    let compressed_payload = std::thread::scope(|s| {
+    // The plugin appends its payload after the prefix (no assembly copy).
+    let mut output = std::thread::scope(|s| {
         run_with_timeout_scoped(s, DEFAULT_TIMEOUT, |cancel_flag| {
-            plugin.compress(input, cancel_flag)
+            let mut out = prefix;
+            plugin.compress_into(input, cancel_flag, &mut out)?;
+            Ok(out)
         })
     })?;
-
-    let header = CrushHeader::new(default_magic, input.len() as u64).with_crc32();
-    Ok(assemble_output(header, &[], &compressed_payload))
+    seal_output(&mut output);
+    Ok(output)
 }
 
 /// Compress data with custom options (plugin selection, scoring weights)
@@ -213,13 +218,6 @@ pub fn compress_with_options(input: &[u8], options: &CompressionOptions) -> Resu
     let timeout = options.timeout;
     let cancel_token = options.cancel_token.clone();
 
-    // Slice D: borrow `input` directly via a scoped thread — avoids a full-input clone.
-    let compressed_payload = std::thread::scope(|s| {
-        run_with_timeout_and_cancel_scoped(s, timeout, cancel_token, |cancel_flag| {
-            plugin.compress(input, cancel_flag)
-        })
-    })?;
-
     // Handle file metadata
     let metadata_bytes = options
         .file_metadata
@@ -232,12 +230,19 @@ pub fn compress_with_options(input: &[u8], options: &CompressionOptions) -> Resu
     if !metadata_bytes.is_empty() {
         header = header.with_metadata();
     }
+    let prefix = output_prefix(header, &metadata_bytes);
 
-    Ok(assemble_output(
-        header,
-        &metadata_bytes,
-        &compressed_payload,
-    ))
+    // Slice D: borrow `input` directly via a scoped thread — avoids a full-input clone.
+    // The plugin appends its payload after the prefix (no assembly copy).
+    let mut output = std::thread::scope(|s| {
+        run_with_timeout_and_cancel_scoped(s, timeout, cancel_token, |cancel_flag| {
+            let mut out = prefix;
+            plugin.compress_into(input, cancel_flag, &mut out)?;
+            Ok(out)
+        })
+    })?;
+    seal_output(&mut output);
+    Ok(output)
 }
 
 /// Payloads at least this large get their CRC32 computed in parallel.
@@ -245,19 +250,14 @@ const CRC_PARALLEL_MIN: usize = 8 * 1024 * 1024;
 /// Chunk size for the parallel CRC32.
 const CRC_PARALLEL_CHUNK: usize = 4 * 1024 * 1024;
 
-/// Build the outer format in one exact-size buffer:
-/// `header | crc32 | [metadata_len: u16 | metadata] | payload`.
-///
-/// The CRC32 covers everything after the CRC field. `metadata` is empty when
-/// the header has no metadata flag.
-fn assemble_output(header: CrushHeader, metadata: &[u8], payload: &[u8]) -> Vec<u8> {
-    let metadata_block = if metadata.is_empty() {
-        0
-    } else {
-        2 + metadata.len()
-    };
-    let crc_start = CrushHeader::SIZE + 4;
-    let mut output = Vec::with_capacity(crc_start + metadata_block + payload.len());
+/// Offset of the CRC32 field; the CRC covers everything after it.
+const CRC_START: usize = CrushHeader::SIZE + 4;
+
+/// The outer format up to the payload:
+/// `header | crc32 (zero until sealed) | [metadata_len: u16 | metadata]`.
+/// `metadata` is empty when the header has no metadata flag.
+fn output_prefix(header: CrushHeader, metadata: &[u8]) -> Vec<u8> {
+    let mut output = Vec::with_capacity(CRC_START + 2 + metadata.len());
     output.extend_from_slice(&header.to_bytes());
     output.extend_from_slice(&[0; 4]);
     if !metadata.is_empty() {
@@ -266,10 +266,24 @@ fn assemble_output(header: CrushHeader, metadata: &[u8], payload: &[u8]) -> Vec<
         output.extend_from_slice(&metadata_len.to_le_bytes());
         output.extend_from_slice(metadata);
     }
-    output.extend_from_slice(payload);
+    output
+}
 
-    let crc32 = parallel_crc32(&output[crc_start..]);
-    output[CrushHeader::SIZE..crc_start].copy_from_slice(&crc32.to_le_bytes());
+/// Write the CRC32 of everything after the CRC field into it.
+fn seal_output(output: &mut [u8]) {
+    if let Some((head, rest)) = output.split_at_mut_checked(CRC_START) {
+        let crc32 = parallel_crc32(rest);
+        head[CrushHeader::SIZE..].copy_from_slice(&crc32.to_le_bytes());
+    }
+}
+
+/// The whole outer format around an existing payload (the tests compare
+/// the prefix/seal path with the reference layout through it).
+#[cfg(test)]
+fn assemble_output(header: CrushHeader, metadata: &[u8], payload: &[u8]) -> Vec<u8> {
+    let mut output = output_prefix(header, metadata);
+    output.extend_from_slice(payload);
+    seal_output(&mut output);
     output
 }
 
