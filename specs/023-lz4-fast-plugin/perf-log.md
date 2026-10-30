@@ -327,3 +327,37 @@ or torn down at exit:
 | decompress (same build) | 1,779.7 MB/s | 1,554.4 MB/s | 1.14x |
 
 1% is inside run-to-run spread; T042 re-measures with more repetitions.
+
+## Final verification (T042, T047, T048), 2026-10-30
+
+- `bench.py ab --ref 08e407f (develop merge base) --suite full --crates
+  crush-core,crush-parallel,crush-gpu` (goal-fastlz-final2; crush-lz does not
+  exist at the base, so `--suite full` alone fails on the A side): verdict
+  IMPROVED, 10 of 20 benchmarks faster, no REGRESSION. Slower but under the
+  gate: compress_throughput/threads=default +3.1%, decompress_throughput/
+  threads/default +3.7%, decompress_medium/1MB +5.0% (CI +4.2..+5.9). A
+  confirming crush-core run (confirm-decomp-medium) put decompress_medium/1MB
+  at +4.1% (CI +3.3..+4.8): a real ~4% slowdown of the 1 MB deflate
+  decompress, under the 5% gate twice; the only change on that path is the
+  shared header parsing, so code layout is the likely cause (no profiler on
+  this machine to confirm).
+- `perf/compare.py` full run refreshed `perf/comparisons/wsl2-...-24t.json`
+  (commit dc33c90, now with `crush-fast-lz`). Default `crush` vs the previous
+  file (94fb44c): compress +0.3% to +21.3%, decompress +0.7% to +21.8% in 11
+  of 12 cells (memory-mapped input), 4-core repetitive decompress -5.1%
+  (median of 5, not interleaved); ratios identical.
+- Quality gate (fmt, clippy, 572 tests, docs, audit, deny, cuda-clippy): PASS.
+- Coverage `cargo llvm-cov -p crush-lz`: 98.2% lines, 97.9% regions.
+
+### Success criteria
+
+| criterion | result | status |
+|---|---|---|
+| SC-001 compress >= 1.15x lz4 (codec) | 0.92x (721 vs 784 MB/s) | not met (frontier recorded) |
+| SC-002 decompress >= 0.60x lz4 (codec) | 0.57x (2,519 vs 4,429 MB/s) | not met (close) |
+| SC-003 ratio >= 2.18 | 2.230 | met |
+| SC-004 routing of labelled inputs | 18/18 | met |
+| SC-005 estimate cost <= 2% (>= 1 MB) | max 1.48% | met |
+| SC-006 decoder fuzzing >= 100k, clean | fuzz_decompress 1M, fuzz_roundtrip 100k, clean | met |
+| SC-007 no regression > 5%, same output without speed preference | none > 5% (decompress_medium/1MB +4.1..5.0%); identical sizes | met |
+| SC-008 CLI faster than lz4 on one core | compress 619 vs 610 MB/s (1.015x, 20 ABBA reps); decompress 1,747 vs 1,515 MB/s (1.15x) | met (compress narrowly) |

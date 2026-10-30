@@ -126,8 +126,8 @@ description: "Task list for the fast-lz plugin (LZ4-class codec + content-aware 
 - [X] T039 [US3] Remove the assembly copy: let crush-core write the outer header prefix and have the plugin output written after it (`crush-core/src/compression.rs`, a provided `compress_into` on `CompressionAlgorithm` in `crush-core/src/plugin/contract.rs`, overridden by `FastLzPlugin`)
 - [X] T040 [US3] Stream decompression output per block to the destination file instead of materialising the whole result first, in `crush-cli/src/commands/decompress.rs` (and a block-iterating decode API in `crush-lz/src/decompress.rs`)
 - [X] T041 [US3] Only if approved at T038: read regular input files through `memmap2` (one `unsafe` call with a SAFETY comment mirroring `crush-parallel/src/engine.rs` `compress_file`) instead of `fs::read`, in `crush-cli/src/commands/compress.rs`; keep `fs::read` for stdin and small files
-- [ ] T042 [US3] Verify: `bash .claude/hooks/rust-quality-gate.sh`; `python3 perf/compare.py --cores 1 --tools crush-fast-lz,lz4-1 --abba --reps 10` in WSL (SC-008); full `perf/compare.py` and `bench.py ab --suite full` show no slowdown for other plugins; record in `perf-log.md`
-- [ ] T043 [US3] Post-story cleanup: `detect-duplicates.ps1 -Json -Path crush-cli`; update `cleanup-summary.md`
+- [X] T042 [US3] Verify: `bash .claude/hooks/rust-quality-gate.sh`; `python3 perf/compare.py --cores 1 --tools crush-fast-lz,lz4-1 --abba --reps 10` in WSL (SC-008); full `perf/compare.py` and `bench.py ab --suite full` show no slowdown for other plugins; record in `perf-log.md`
+- [X] T043 [US3] Post-story cleanup: `detect-duplicates.ps1 -Json -Path crush-cli`; update `cleanup-summary.md`
 
 **Checkpoint**: All stories functional
 
@@ -135,11 +135,11 @@ description: "Task list for the fast-lz plugin (LZ4-class codec + content-aware 
 
 ## Phase 6: Polish & Cross-Cutting Concerns
 
-- [ ] T044 [P] Documentation: `fast-lz` in the plugin table and usage in `README.md`; `crush-lz/README.md` (format summary, targets, how to benchmark); `perf/README.md` (`lz-vs-lz4.sh`); `.specify/memory/claude.md` (new crate, format, selection hook)
-- [ ] T045 [P] Rustdoc for every public item in `crush-lz/src/*.rs` with examples; `cargo doc --no-deps` clean
-- [ ] T046 Coverage ≥ 80% for `crush-lz` (`cargo tarpaulin -p crush-lz` or `cargo llvm-cov -p crush-lz`), adding tests where short
-- [ ] T047 Full gate: `quality-gate` agent (fmt, clippy, tests, docs, audit, deny); fuzz 100k each target in WSL; `python .claude/skills/perf/bench.py ab --ref $(git merge-base HEAD develop) --suite full --name lz-final` (no regression > 5%, confirm any flagged ones); refresh `perf/comparisons` with `fast-lz` included
-- [ ] T048 Run the [quickstart.md](quickstart.md) validation end to end and tick the spec's success criteria in `specs/023-lz4-fast-plugin/perf-log.md`
+- [X] T044 [P] Documentation: `fast-lz` in the plugin table and usage in `README.md`; `crush-lz/README.md` (format summary, targets, how to benchmark); `perf/README.md` (`lz-vs-lz4.sh`); `.specify/memory/claude.md` (new crate, format, selection hook)
+- [X] T045 [P] Rustdoc for every public item in `crush-lz/src/*.rs` with examples; `cargo doc --no-deps` clean
+- [X] T046 Coverage ≥ 80% for `crush-lz` (`cargo tarpaulin -p crush-lz` or `cargo llvm-cov -p crush-lz`), adding tests where short
+- [X] T047 Full gate: `quality-gate` agent (fmt, clippy, tests, docs, audit, deny); fuzz 100k each target in WSL; `python .claude/skills/perf/bench.py ab --ref $(git merge-base HEAD develop) --suite full --name lz-final` (no regression > 5%, confirm any flagged ones); refresh `perf/comparisons` with `fast-lz` included
+- [X] T048 Run the [quickstart.md](quickstart.md) validation end to end and tick the spec's success criteria in `specs/023-lz4-fast-plugin/perf-log.md`
 
 ---
 

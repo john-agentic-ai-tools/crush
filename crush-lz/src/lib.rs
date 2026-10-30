@@ -24,6 +24,18 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
 /// Codec configuration. Build with [`FastLzConfig::builder`].
+///
+/// # Examples
+///
+/// ```
+/// use crush_lz::FastLzConfig;
+///
+/// // 256-kilobyte blocks instead of the default 1 megabyte
+/// let config = FastLzConfig::builder().block_size_log2(18).build()?;
+/// assert_eq!(config.block_size(), 256 * 1024);
+/// assert!(FastLzConfig::builder().block_size_log2(21).build().is_err());
+/// # Ok::<(), crush_core::CrushError>(())
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct FastLzConfig {
     frame: FrameHeader,
@@ -97,13 +109,44 @@ pub fn compress(input: &[u8], config: &FastLzConfig) -> Result<Vec<u8>> {
 /// # Errors
 ///
 /// `CorruptedData` if the payload is malformed or doesn't decode to
-/// `expected_len` bytes. Memory grows block by block, so a payload claiming a
-/// huge size fails without allocating it.
+/// `expected_len` bytes. The output is reserved up front from
+/// `expected_len`, but never beyond what `payload` could expand to (256
+/// bytes per byte), so a forged length cannot force a huge allocation.
+///
+/// # Examples
+///
+/// ```
+/// use crush_lz::{FastLzConfig, compress, decompress};
+///
+/// let data = vec![7u8; 100_000];
+/// let packed = compress(&data, &FastLzConfig::default())?;
+/// assert_eq!(decompress(&packed, data.len())?, data);
+/// // the wrong length is an error, not a short or padded result
+/// assert!(decompress(&packed, data.len() + 1).is_err());
+/// # Ok::<(), crush_core::CrushError>(())
+/// ```
 pub fn decompress(payload: &[u8], expected_len: usize) -> Result<Vec<u8>> {
     decompress::decode_frame(payload, Some(expected_len), None)
 }
 
 /// The `fast-lz` plugin registered with crush-core.
+///
+/// Linking this crate registers it; select it by name, or let `--level fast`
+/// style weights pick it for data its estimate shows compresses well.
+///
+/// # Examples
+///
+/// ```
+/// use crush_core::{CompressionOptions, compress_with_options, decompress, init_plugins};
+/// use crush_lz as _; // registers fast-lz
+///
+/// init_plugins()?;
+/// let data = b"one line of a log file\n".repeat(1000);
+/// let options = CompressionOptions::default().with_plugin("fast-lz");
+/// let packed = compress_with_options(&data, &options)?;
+/// assert_eq!(decompress(&packed)?.data, data);
+/// # Ok::<(), crush_core::CrushError>(())
+/// ```
 pub struct FastLzPlugin;
 
 impl CompressionAlgorithm for FastLzPlugin {

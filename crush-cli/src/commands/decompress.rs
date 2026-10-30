@@ -101,21 +101,7 @@ fn decompress_stdin(
     utils::check_cancelled(&interrupted)?;
 
     // Detect plugin from header magic bytes for logging
-    let detected_plugin = if compressed_data.len() >= 4 {
-        let magic = [
-            compressed_data[0],
-            compressed_data[1],
-            compressed_data[2],
-            compressed_data[3],
-        ];
-        crush_core::list_plugins()
-            .iter()
-            .find(|p| p.magic_number == magic)
-            .map(|p| p.name.to_string())
-            .unwrap_or_else(|| "unknown".to_string())
-    } else {
-        "unknown".to_string()
-    };
+    let detected_plugin = plugin_name_for(&compressed_data);
     info!(
         plugin = %detected_plugin,
         input_size,
@@ -235,21 +221,7 @@ fn decompress_file(
     let start = Instant::now();
 
     // Detect plugin from header magic bytes for logging
-    let detected_plugin = if compressed_data.len() >= 4 {
-        let magic = [
-            compressed_data[0],
-            compressed_data[1],
-            compressed_data[2],
-            compressed_data[3],
-        ];
-        crush_core::list_plugins()
-            .iter()
-            .find(|p| p.magic_number == magic)
-            .map(|p| p.name.to_string())
-            .unwrap_or_else(|| "unknown".to_string())
-    } else {
-        "unknown".to_string()
-    };
+    let detected_plugin = plugin_name_for(&compressed_data);
     info!(
         plugin = %detected_plugin,
         input_size,
@@ -414,6 +386,18 @@ fn decompress_file(
 }
 
 /// Determine the output file path
+/// Name of the plugin whose magic starts `data`, for logging ("unknown"
+/// when none matches or `data` is too short).
+fn plugin_name_for(data: &[u8]) -> String {
+    data.first_chunk::<4>()
+        .and_then(|magic| {
+            crush_core::list_plugins()
+                .into_iter()
+                .find(|p| p.magic_number == *magic)
+        })
+        .map_or_else(|| "unknown".to_string(), |p| p.name.to_string())
+}
+
 /// Decompress `data` straight into a new file at `path`; the file is
 /// removed if anything fails part-way.
 fn stream_to_file(

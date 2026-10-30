@@ -122,5 +122,5 @@ A user runs `crush compress` / `crush decompress` with the fast plugin on one co
 
 ### Constraints (from the project constitution and the request)
 
-- The plugin is implemented within the project without new third-party dependencies, in fully memory-safe code (no exceptions for this feature), test-first, with no panicking shortcuts in production code, and with the decoder fuzzed (SC-006).
+- The plugin is implemented within the project without new third-party dependencies, in memory-safe code: the codec has no `unsafe`; the one exception, approved by the user on 2026-10-29 for Story 3, is the memory map the CLI uses to read large input files (same pattern as the parallel engine), test-first, with no panicking shortcuts in production code, and with the decoder fuzzed (SC-006).
 - Performance claims are verified with interleaved A/B measurements on the same machine, per the project's benchmark rules.

@@ -83,3 +83,61 @@ decision).
 - Test-data generators (`xorshift`, `base64`, `log_text`) shared through
   `crush-lz/tests/common/mod.rs`. The CLI test keeps its own small copies
   (separate crate).
+
+## US3 — End-to-end single-core speed through the CLI (P3)
+
+### What shipped
+
+- Byte-identity goldens and CLI == library checks
+  (`crush-cli/tests/pipeline_identity.rs`), `CRUSH_TIMINGS=1` phase timings,
+  `perf/compare.py` subsets and `--abba`.
+- crush-core plugin hooks, all with defaults that keep the old behaviour:
+  `compress_into` (payload after the header prefix, no assembly copy),
+  `streams_compressed_output` + `compress_to` with
+  `crush_core::compress_to_writer` (CRC patched by seeking back), and
+  `decompress_to` with `crush_core::decompress_to_writer` (CRC checked
+  before the first write). fast-lz implements all of them.
+- crush-cli: input files of 1 MB or more memory-mapped with `populate()`
+  (the one `unsafe`, user-approved, in `commands/utils.rs`); file output
+  streamed for compression and decompression, removed on error/interrupt.
+- Result (one core, real files, ABBA): compress 0.90x -> 1.01x of `lz4 -1`,
+  decompress 0.81x -> 1.15x of `lz4 -d`.
+
+### Changes to the plan
+
+- Streaming compression output was not in tasks.md; added after T039/T041
+  left compression at 0.97x of lz4.
+- The memory map also reads the compressed input of `decompress` (same
+  helper, same single `unsafe` call).
+- Behaviour change: with `--force`, a compression or decompression that
+  fails part-way now removes the output file it was writing (before, a
+  failure before the write left an existing file in place).
+
+### Duplications / dead code
+
+- `detect-duplicates.ps1`: crush-core and crush-lz 0 clones. crush-cli had 2,
+  both from before this feature: the plugin-name lookup duplicated in
+  `decompress.rs` (21 lines) is now one helper `plugin_name_for`; the clone
+  in `crush-cli/tests/compress.rs` (26 lines, untouched by this feature) is
+  left as is.
+
+## Polish
+
+- Docs: README (feature bullet, fast-lz section, plugin list), `crush-lz/README.md`,
+  `perf/README.md` (subset/ABBA runs, `lz-vs-lz4.sh`, `CRUSH_TIMINGS`),
+  `.specify/memory/claude.md` (crate, format, plugin hooks).
+- Rustdoc: no missing docs in crush-lz; examples on `FastLzConfig`,
+  `compress`, `decompress`, `FastLzPlugin`; `cargo doc` clean with
+  `-D warnings`.
+- Coverage crush-lz 98.2% lines.
+
+### Deferred / follow-ups
+
+- `bench.py ab --suite full` fails when a crate is missing at the base ref
+  (new crates); worked around with `--crates`. Tooling change for the user
+  (`.claude/`).
+- decompress_medium/1MB (deflate) about 4% slower, under the gate; cause
+  not identified without a profiler.
+- `--level fast` on incompressible small inputs picks `gpu-deflate` by
+  weight scoring (pre-existing): output 0.2% larger than the input at about
+  24 MB/s in the quickstart smoke test.
