@@ -1,6 +1,6 @@
 # Crush Development Guidelines
 
-Auto-generated from all feature plans. Last updated: 2026-02-21
+Auto-generated from all feature plans, maintained by hand since spec-kit 1.x. Last updated: 2026-10-30
 
 ## Active Technologies
 
@@ -44,6 +44,16 @@ crush/
 │   │       └── shaders/deflate.wgsl
 │   ├── benches/
 │   └── fuzz/
+├── crush-lz/            # fast-lz plugin: LZ4-class single-core codec (feature 023)
+│   ├── src/
+│   │   ├── lib.rs           # FastLzPlugin (linkme-registered), compress/decompress API
+│   │   ├── format.rs        # frame/block headers, bounds
+│   │   ├── compress.rs      # greedy LZ77, 2^12 table, 6-byte hash
+│   │   ├── decompress.rs    # validating decoder, fixed-size copies, streaming
+│   │   └── estimate.rs      # sampled ratio estimate for selection
+│   ├── benches/codec.rs     # bench.py suite `fast-lz`
+│   ├── examples/codec_bench.rs  # in-memory timing (perf/lz-vs-lz4.sh)
+│   └── fuzz/                # own [workspace]; fuzz_decompress, fuzz_roundtrip
 ├── crush-cli/           # Thin CLI wrapper
 │   ├── src/
 │   │   ├── main.rs
@@ -78,6 +88,38 @@ Binary format for parallel-decompress-friendly compressed files:
 - Per-block CRC32 via `crc32fast`
 - Incompressible blocks stored raw with flag bit
 - Default block size: 1 MB
+
+## fast-lz Format (Feature 023)
+
+Payload inside the Crush outer header (magic `43 52 01 04`):
+
+```
+[frame: "LZ" | version 1 | flags 0 | block_size_log2 16..=20 | 3 reserved]
+[block: u32 compressed_len (bit 31 = stored) | u32 uncompressed_len | data] ...
+[end marker: u32 0]
+```
+
+- LZ4-style sequences: token (literal/match nibbles), 255-continued
+  lengths, u16 offset, 64 KiB window, minimum match 4; matches stay
+  within their block.
+- Contract: `specs/023-lz4-fast-plugin/contracts/fast-lz-format.md`.
+
+## Plugin Contract Hooks (Feature 023)
+
+Provided methods on `CompressionAlgorithm` (defaults keep old behaviour):
+
+- `content_aware()` / `estimate_ratio(input)`: with speed preferred
+  (`throughput >= SPEED_PREFERRED_THROUGHPUT`, 0.8, i.e. `--level fast`)
+  and no plugin named, `PluginSelector::select_for_input` uses the best
+  content-aware plugin estimating `>= MIN_ESTIMATED_RATIO` (1.10);
+  otherwise scoring is unchanged and content-aware plugins are excluded.
+- `compress_into(input, cancel, &mut Vec)`: append the payload after
+  crush-core's header prefix (no assembly copy).
+- `streams_compressed_output()` + `compress_to(input, cancel, &mut dyn
+  Write)`: `crush_core::compress_to_writer` (Write + Seek) streams and
+  patches the CRC by seeking back.
+- `decompress_to(input, cancel, &mut dyn Write)`:
+  `crush_core::decompress_to_writer` checks the CRC first, then streams.
 
 ## Key API Patterns
 
@@ -126,7 +168,8 @@ cargo doc --no-deps                  # build docs
 ## Recent Changes
 
 - **006-cancel-via-ctrl-c**: Added `AtomicCancellationToken` to `crush-core/src/cancel.rs`; wired `ctrlc` in crush-cli
-- **007-parallel-gzip-engine** *(in progress)*: New `crush-parallel` crate; CRSH binary format; rayon parallel DEFLATE; wgpu GPU feature; progress callback API; random access via block index
+- **007-parallel-gzip-engine**: New `crush-parallel` crate; CRSH binary format; rayon parallel DEFLATE; wgpu GPU feature; progress callback API; random access via block index
+- **023-lz4-fast-plugin**: New `crush-lz` crate (`fast-lz` plugin); content-aware selection at `--level fast`; plugin hooks for in-place/streamed compression and streamed decompression; CLI memory-maps input files >= 1 MB (the one `unsafe`, in `crush-cli/src/commands/utils.rs`) and streams file output; `CRUSH_TIMINGS=1` phase timings; `perf/compare.py` subsets and `--abba`
 
 <!-- MANUAL ADDITIONS START -->
 <!-- MANUAL ADDITIONS END -->

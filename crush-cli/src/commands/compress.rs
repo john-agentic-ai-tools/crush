@@ -5,7 +5,7 @@ use crate::error::{CliError, Result};
 use crate::output::{self, CompressionResult};
 use crush_core::cancel::CancellationToken;
 use crush_core::plugin::FileMetadata;
-use crush_core::{CompressionOptions, compress_with_options};
+use crush_core::{CompressionOptions, compress_to_writer, compress_with_options};
 use filetime::FileTime;
 use indicatif::{ProgressBar, ProgressStyle};
 use is_terminal::IsTerminal;
@@ -173,6 +173,8 @@ fn compress_file(
     // Check for cancellation before starting
     utils::check_cancelled(&interrupted)?;
 
+    let mut phases = crate::timings::Phases::start();
+
     // Validate input file
     utils::validate_input(input_path)?;
 
@@ -259,7 +261,9 @@ fn compress_file(
 
     // Read input file
     trace!("Reading input file: {}", input_path.display());
-    let input_data = fs::read(input_path)?;
+    phases.mark("setup");
+    let input_data = utils::read_input_file(input_path, input_size)?;
+    phases.mark("read");
     debug!("Read {} bytes from input file", input_data.len());
 
     // Check for cancellation after reading
@@ -268,16 +272,25 @@ fn compress_file(
     // Start timing
     let start = Instant::now();
 
-    // Compress
+    // Compress. Output to a file goes straight into it (streamed when the
+    // plugin supports it, feature 023); stdout gets the in-memory result.
     trace!("Starting compression operation");
-    let compressed_data = compress_with_options(&input_data, &options)?;
+    let (compressed_data, output_size) = if args.stdout {
+        let data = compress_with_options(&input_data, &options)?;
+        let size = data.len() as u64;
+        (data, size)
+    } else {
+        let size = compress_to_file(&input_data, &options, &output_path)?;
+        (Vec::new(), size)
+    };
+    phases.mark("compress");
 
     // Stop timing
     let duration = start.elapsed();
     debug!(
         "Compression completed in {:.3}s, output size: {} bytes",
         duration.as_secs_f64(),
-        compressed_data.len()
+        output_size
     );
 
     // Clear spinner
@@ -285,34 +298,24 @@ fn compress_file(
         pb.finish_and_clear();
     }
 
-    // Check for interrupt before writing
-    if interrupted.is_cancelled() {
-        return Err(CliError::Interrupted);
-    }
-
     // Write output
     if args.stdout {
-        // Write to stdout
-        trace!("Writing compressed data to stdout");
-        utils::write_to_stdout(&compressed_data)?;
-    } else {
-        // Write output file (T085: cleanup on failure/interrupt)
-        if let Err(e) = fs::write(&output_path, &compressed_data) {
-            // If write failed, ensure no partial file remains
-            let _ = fs::remove_file(&output_path);
-            return Err(e.into());
-        }
-
-        // Check for interrupt after writing (cleanup partial file if interrupted)
+        // Check for interrupt before writing
         if interrupted.is_cancelled() {
-            // Remove the output file we just wrote
-            let _ = fs::remove_file(&output_path);
             return Err(CliError::Interrupted);
         }
+        trace!("Writing compressed data to stdout");
+        utils::write_to_stdout(&compressed_data)?;
+    } else if interrupted.is_cancelled() {
+        // The output file was written during compression (T085: no partial
+        // file is left behind on interrupt)
+        let _ = fs::remove_file(&output_path);
+        return Err(CliError::Interrupted);
     }
+    phases.mark("write");
+    phases.report("compress", input_size);
 
     // Calculate statistics
-    let output_size = compressed_data.len() as u64;
     let compression_ratio = utils::calculate_compression_ratio(input_size, output_size);
     let throughput_mbps = utils::calculate_throughput_mbps(input_size, duration);
 
@@ -399,6 +402,20 @@ fn determine_output_path(input: &Path, output_arg: &Option<PathBuf>) -> Result<P
         };
         output.set_extension(new_ext);
         Ok(output)
+    }
+}
+
+/// Compress `input` into a new file at `path`; the file is removed if
+/// anything fails part-way.
+fn compress_to_file(input: &[u8], options: &CompressionOptions, path: &Path) -> Result<u64> {
+    let mut file = fs::File::create(path)?;
+    match compress_to_writer(input, options, &mut file) {
+        Ok(size) => Ok(size),
+        Err(e) => {
+            drop(file);
+            let _ = fs::remove_file(path);
+            Err(e.into())
+        }
     }
 }
 

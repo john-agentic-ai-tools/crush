@@ -7,9 +7,12 @@ use crate::cancel::CancellationToken;
 use crate::error::Result;
 use crate::plugin::registry::{get_default_plugin, get_plugin_by_magic};
 use crate::plugin::timeout::{run_with_timeout_and_cancel_scoped, run_with_timeout_scoped};
-use crate::plugin::{CrushHeader, FileMetadata, PluginSelector, ScoringWeights};
+use crate::plugin::{
+    CompressionAlgorithm, CrushHeader, FileMetadata, PluginSelector, ScoringWeights,
+};
 use crc32fast::Hasher;
 use rayon::prelude::*;
+use std::io::{Seek, SeekFrom, Write};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -139,22 +142,29 @@ pub fn compress(input: &[u8]) -> Result<Vec<u8>> {
 
     let default_magic = [0x43, 0x52, 0x01, 0x00];
 
+    let header = CrushHeader::new(default_magic, input.len() as u64).with_crc32();
+    let prefix = output_prefix(header, &[]);
+
     // Slice D: borrow `input` directly via a scoped thread — avoids a full-input clone on the hot path.
-    let compressed_payload = std::thread::scope(|s| {
+    // The plugin appends its payload after the prefix (no assembly copy).
+    let mut output = std::thread::scope(|s| {
         run_with_timeout_scoped(s, DEFAULT_TIMEOUT, |cancel_flag| {
-            plugin.compress(input, cancel_flag)
+            let mut out = prefix;
+            plugin.compress_into(input, cancel_flag, &mut out)?;
+            Ok(out)
         })
     })?;
-
-    let header = CrushHeader::new(default_magic, input.len() as u64).with_crc32();
-    Ok(assemble_output(header, &[], &compressed_payload))
+    seal_output(&mut output);
+    Ok(output)
 }
 
 /// Compress data with custom options (plugin selection, scoring weights)
 ///
 /// Provides fine-grained control over plugin selection through either:
 /// - Manual plugin override by name
-/// - Automatic selection with custom scoring weights
+/// - Automatic selection with custom scoring weights; when speed is
+///   preferred, a content-aware plugin is used if it estimates that `input`
+///   compresses well with it (see [`PluginSelector::select_for_input`])
 ///
 /// # Errors
 ///
@@ -181,6 +191,87 @@ pub fn compress(input: &[u8]) -> Result<Vec<u8>> {
 /// let compressed = compress_with_options(data, &options).expect("Compression failed");
 /// ```
 pub fn compress_with_options(input: &[u8], options: &CompressionOptions) -> Result<Vec<u8>> {
+    let (plugin, prefix) = select_and_prefix(input, options)?;
+    compress_in_memory(plugin, prefix, input, options)
+}
+
+/// Compress `input` as [`compress_with_options`] does, writing the result to
+/// `out` instead of returning it; returns the number of bytes written.
+///
+/// Plugins that stream their output (`fast-lz`) write it piece by piece:
+/// the header goes first with a zero CRC, the CRC32 is computed as the
+/// payload passes through, and the CRC field is then patched by seeking
+/// back, so the whole output is never held in memory. Other plugins
+/// compress in memory and the result is written once. The bytes are the
+/// same either way, and `out` is left positioned after them.
+///
+/// # Errors
+///
+/// As for [`compress_with_options`], plus I/O errors from `out`. On error,
+/// `out` may hold a partial output; callers writing a file should remove it.
+pub fn compress_to_writer<W: Write + Seek + Send>(
+    input: &[u8],
+    options: &CompressionOptions,
+    out: &mut W,
+) -> Result<u64> {
+    let (plugin, prefix) = select_and_prefix(input, options)?;
+    if !plugin.streams_compressed_output() {
+        let output = compress_in_memory(plugin, prefix, input, options)?;
+        out.write_all(&output)?;
+        return Ok(output.len() as u64);
+    }
+
+    let start = out.stream_position()?;
+    out.write_all(&prefix)?;
+    let mut hasher = Hasher::new();
+    hasher.update(&prefix[CRC_START..]);
+    let mut sink = CrcWriter {
+        inner: &mut *out,
+        hasher,
+        written: 0,
+    };
+    let timeout = options.timeout;
+    let cancel_token = options.cancel_token.clone();
+    std::thread::scope(|s| {
+        run_with_timeout_and_cancel_scoped(s, timeout, cancel_token, |cancel_flag| {
+            plugin.compress_to(input, cancel_flag, &mut sink)
+        })
+    })?;
+    let (payload_len, crc32) = (sink.written, sink.hasher.finalize());
+
+    out.seek(SeekFrom::Start(start + CrushHeader::SIZE as u64))?;
+    out.write_all(&crc32.to_le_bytes())?;
+    let total = prefix.len() as u64 + payload_len;
+    out.seek(SeekFrom::Start(start + total))?;
+    Ok(total)
+}
+
+/// Pass-through writer that hashes (CRC32) and counts what it writes.
+struct CrcWriter<'a, W: Write> {
+    inner: &'a mut W,
+    hasher: Hasher,
+    written: u64,
+}
+
+impl<W: Write> Write for CrcWriter<'_, W> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let n = self.inner.write(buf)?;
+        self.hasher.update(&buf[..n]);
+        self.written += n as u64;
+        Ok(n)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.inner.flush()
+    }
+}
+
+/// Check cancellation, select the plugin (by name, or for this input), and
+/// build the outer-format prefix (header, CRC placeholder, metadata).
+fn select_and_prefix(
+    input: &[u8],
+    options: &CompressionOptions,
+) -> Result<(&'static dyn CompressionAlgorithm, Vec<u8>)> {
     // Check if already cancelled before starting
     if let Some(ref token) = options.cancel_token
         && token.is_cancelled()
@@ -195,8 +286,9 @@ pub fn compress_with_options(input: &[u8], options: &CompressionOptions) -> Resu
         // Manual override
         selector.select_by_name(plugin_name)?
     } else {
-        // Automatic selection
-        selector.select()?
+        // Automatic selection; content-aware plugins may take part when
+        // speed is preferred (they estimate how well `input` compresses).
+        selector.select_for_input(input)?
     };
 
     // Get the actual plugin from registry
@@ -205,16 +297,6 @@ pub fn compress_with_options(input: &[u8], options: &CompressionOptions) -> Resu
             "Plugin '{}' metadata found but not in registry",
             selected_metadata.name
         ))
-    })?;
-
-    let timeout = options.timeout;
-    let cancel_token = options.cancel_token.clone();
-
-    // Slice D: borrow `input` directly via a scoped thread — avoids a full-input clone.
-    let compressed_payload = std::thread::scope(|s| {
-        run_with_timeout_and_cancel_scoped(s, timeout, cancel_token, |cancel_flag| {
-            plugin.compress(input, cancel_flag)
-        })
     })?;
 
     // Handle file metadata
@@ -229,12 +311,31 @@ pub fn compress_with_options(input: &[u8], options: &CompressionOptions) -> Resu
     if !metadata_bytes.is_empty() {
         header = header.with_metadata();
     }
+    Ok((plugin, output_prefix(header, &metadata_bytes)))
+}
 
-    Ok(assemble_output(
-        header,
-        &metadata_bytes,
-        &compressed_payload,
-    ))
+/// Run the plugin (with the options' timeout and cancellation) appending its
+/// payload after `prefix`, then fill in the CRC.
+fn compress_in_memory(
+    plugin: &'static dyn CompressionAlgorithm,
+    prefix: Vec<u8>,
+    input: &[u8],
+    options: &CompressionOptions,
+) -> Result<Vec<u8>> {
+    let timeout = options.timeout;
+    let cancel_token = options.cancel_token.clone();
+
+    // Slice D: borrow `input` directly via a scoped thread — avoids a full-input clone.
+    // The plugin appends its payload after the prefix (no assembly copy).
+    let mut output = std::thread::scope(|s| {
+        run_with_timeout_and_cancel_scoped(s, timeout, cancel_token, |cancel_flag| {
+            let mut out = prefix;
+            plugin.compress_into(input, cancel_flag, &mut out)?;
+            Ok(out)
+        })
+    })?;
+    seal_output(&mut output);
+    Ok(output)
 }
 
 /// Payloads at least this large get their CRC32 computed in parallel.
@@ -242,19 +343,14 @@ const CRC_PARALLEL_MIN: usize = 8 * 1024 * 1024;
 /// Chunk size for the parallel CRC32.
 const CRC_PARALLEL_CHUNK: usize = 4 * 1024 * 1024;
 
-/// Build the outer format in one exact-size buffer:
-/// `header | crc32 | [metadata_len: u16 | metadata] | payload`.
-///
-/// The CRC32 covers everything after the CRC field. `metadata` is empty when
-/// the header has no metadata flag.
-fn assemble_output(header: CrushHeader, metadata: &[u8], payload: &[u8]) -> Vec<u8> {
-    let metadata_block = if metadata.is_empty() {
-        0
-    } else {
-        2 + metadata.len()
-    };
-    let crc_start = CrushHeader::SIZE + 4;
-    let mut output = Vec::with_capacity(crc_start + metadata_block + payload.len());
+/// Offset of the CRC32 field; the CRC covers everything after it.
+const CRC_START: usize = CrushHeader::SIZE + 4;
+
+/// The outer format up to the payload:
+/// `header | crc32 (zero until sealed) | [metadata_len: u16 | metadata]`.
+/// `metadata` is empty when the header has no metadata flag.
+fn output_prefix(header: CrushHeader, metadata: &[u8]) -> Vec<u8> {
+    let mut output = Vec::with_capacity(CRC_START + 2 + metadata.len());
     output.extend_from_slice(&header.to_bytes());
     output.extend_from_slice(&[0; 4]);
     if !metadata.is_empty() {
@@ -263,10 +359,24 @@ fn assemble_output(header: CrushHeader, metadata: &[u8], payload: &[u8]) -> Vec<
         output.extend_from_slice(&metadata_len.to_le_bytes());
         output.extend_from_slice(metadata);
     }
-    output.extend_from_slice(payload);
+    output
+}
 
-    let crc32 = parallel_crc32(&output[crc_start..]);
-    output[CrushHeader::SIZE..crc_start].copy_from_slice(&crc32.to_le_bytes());
+/// Write the CRC32 of everything after the CRC field into it.
+fn seal_output(output: &mut [u8]) {
+    if let Some((head, rest)) = output.split_at_mut_checked(CRC_START) {
+        let crc32 = parallel_crc32(rest);
+        head[CrushHeader::SIZE..].copy_from_slice(&crc32.to_le_bytes());
+    }
+}
+
+/// The whole outer format around an existing payload (the tests compare
+/// the prefix/seal path with the reference layout through it).
+#[cfg(test)]
+fn assemble_output(header: CrushHeader, metadata: &[u8], payload: &[u8]) -> Vec<u8> {
+    let mut output = output_prefix(header, metadata);
+    output.extend_from_slice(payload);
+    seal_output(&mut output);
     output
 }
 
@@ -568,6 +678,23 @@ mod tests {
                 state.to_le_bytes()[0]
             })
             .collect()
+    }
+
+    /// Plugins that don't stream are compressed in memory and written once:
+    /// same bytes as `compress_with_options`, writer left after them.
+    #[test]
+    #[allow(clippy::expect_used)]
+    fn compress_to_writer_matches_in_memory_for_non_streaming_plugins() {
+        use std::io::Cursor;
+        init_plugins().expect("init");
+        let data = pseudo_random(200_000);
+        let options = CompressionOptions::default().with_plugin("deflate");
+        let whole = compress_with_options(&data, &options).expect("compress");
+        let mut sink = Cursor::new(Vec::new());
+        let n = compress_to_writer(&data, &options, &mut sink).expect("stream");
+        assert_eq!(n, whole.len() as u64);
+        assert_eq!(sink.position(), n);
+        assert_eq!(sink.into_inner(), whole);
     }
 
     #[test]

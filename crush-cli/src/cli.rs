@@ -371,3 +371,18 @@ pub enum GpuBackend {
     /// Force wgpu backend (Vulkan / Metal / DX12)
     Wgpu,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Only `fast` prefers speed enough for content-aware plugins (feature
+    /// 023): keeps the level presets and crush-core's threshold in step.
+    #[test]
+    fn only_fast_level_prefers_speed() {
+        let threshold = crush_core::SPEED_PREFERRED_THROUGHPUT;
+        assert!(CompressionLevel::Fast.to_weights().throughput >= threshold);
+        assert!(CompressionLevel::Balanced.to_weights().throughput < threshold);
+        assert!(CompressionLevel::Best.to_weights().throughput < threshold);
+    }
+}

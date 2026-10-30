@@ -76,3 +76,23 @@ python3 perf/compare.py
 
 These are wall-clock CLI numbers including file I/O and process start, so
 they aren't comparable with the criterion baselines above.
+
+The tool `crush-fast-lz` (`crush compress --plugin fast-lz`) is measured at
+one core only. To compare a subset in alternating order, which is how
+feature 023 measured fast-lz against lz4:
+
+```sh
+python3 perf/compare.py --cores 1 --tools crush-fast-lz,lz4-1 --data real --abba --reps 10
+```
+
+`--cores`, `--tools` and `--data` pick subsets; `--abba` interleaves the
+tools' runs (A B B A ...) so drift hits all of them alike. Subset runs print
+their table and write JSON only with `--out`.
+
+## fast-lz vs lz4, in memory
+
+`perf/lz-vs-lz4.sh [RUNS]` (WSL/Linux) times the `fast-lz` codec and
+`lz4 -b1` on the same 128 MB real-file corpus in one session, one core, and
+checks the spec's codec targets (exit 1 on a miss). `CRUSH_TIMINGS=1` makes
+`crush compress`/`decompress` print per-phase times (read, codec, write) to
+stderr for pipeline work.

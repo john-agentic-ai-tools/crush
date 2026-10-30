@@ -22,6 +22,7 @@ Crush is built to:
 - **Parallel CPU Compression**: Multi-threaded compression scaling near-linearly to all available cores (~1.1 GiB/s at default workers, post-011 hot-path optimizations)
 - **GPU-Accelerated Decompression**: GDeflate-based GPU decompression via CUDA (560 MiB/s) or wgpu Vulkan/Metal/DX12 (386 MiB/s) with automatic CPU fallback
 - **Plugin Architecture**: Extensible system supporting multiple compression algorithms with automatic scoring and selection
+- **Fast single-core codec (`fast-lz`)**: an LZ4-class plugin for maximum single-core speed at an LZ4-like ratio; `--level fast` uses it automatically, but only for data a quick sampled estimate shows it compresses well
 - **Random Access**: O(1) tile-based decompression for seeking into large archives without full decompression
 - **Metadata Preservation**: Automatically preserves file modification times and Unix permissions
 - **Pipeline Integration**: Full stdin/stdout support for seamless Unix pipeline integration
@@ -196,6 +197,37 @@ alternative. lz4 needs version 1.10 or later for multithreading (`-T`); older
 distribution packages run it on one thread. See `perf/README.md` for the
 latest results.
 
+### Fast single-core compression (`fast-lz`)
+
+`fast-lz` is an LZ4-class codec (byte-oriented LZ77, no entropy coding) for
+when single-core speed matters more than ratio:
+
+```bash
+crush compress --plugin fast-lz big.log        # always use it
+crush compress --level fast big.log            # use it only if it pays off
+crush decompress big.log.crush                 # detected from the file
+```
+
+With `--level fast` and no plugin named, crush compresses evenly spaced
+samples (about 1% of the input, under 2% of the compression time) and picks
+`fast-lz` only when they shrink by at least 10%; base64 text, random and
+already-compressed data go to DEFLATE instead. Other levels choose exactly as
+before. Inputs of 25 MB or more and stdin keep the parallel engine.
+
+On one core of an i9-12900K (WSL2, tmpfs, 128 MB of real files, lz4 1.10.0):
+
+| | compress | decompress | ratio |
+|---|---|---|---|
+| `crush --plugin fast-lz`, end to end | 619 MB/s | 1,747 MB/s | 2.23 |
+| `lz4 -1` / `lz4 -d`, end to end | 610 MB/s | 1,515 MB/s | 2.30 |
+| `fast-lz` codec in memory | 721 MB/s | 2,519 MB/s | 2.23 |
+| `lz4 -b1` in memory | 784 MB/s | 4,429 MB/s | 2.30 |
+
+The codec is safe Rust; end to end it is level with or ahead of the lz4 CLI
+because crush memory-maps large inputs and streams blocks to and from the
+files. Details: `specs/023-lz4-fast-plugin/perf-log.md` and
+[`crush-lz/README.md`](crush-lz/README.md).
+
 ## Installation
 
 ### From Source
@@ -352,6 +384,7 @@ crush inspect *.crush --csv
 crush plugins list
 # Available plugins:
 #   deflate - DEFLATE compression (default)
+#   fast-lz - LZ4-class single-core codec (used at --level fast when it pays off)
 
 # JSON output
 crush plugins list --json

@@ -5,8 +5,9 @@
 
 use crate::error::{PluginError, Result, ValidationError};
 use crate::plugin::registry::get_plugin_by_magic;
-use crate::plugin::{CrushHeader, FileMetadata, list_plugins};
+use crate::plugin::{CompressionAlgorithm, CrushHeader, FileMetadata, list_plugins};
 use crc32fast::Hasher;
+use std::io::Write;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
@@ -100,6 +101,65 @@ pub fn decompress_with_cancel(
     input: &[u8],
     cancel_flag: Arc<AtomicBool>,
 ) -> Result<DecompressionResult> {
+    let c = open_container(input)?;
+
+    // Decompress the payload using the caller-provided cancel flag
+    let decompressed = c.plugin.decompress(c.payload, cancel_flag)?;
+    check_size(c.expected_size, decompressed.len() as u64)?;
+
+    Ok(DecompressionResult {
+        data: decompressed,
+        metadata: c.metadata,
+    })
+}
+
+/// Result of [`decompress_to_writer`].
+#[derive(Debug, Clone)]
+pub struct StreamedDecompression {
+    /// Number of bytes written (equal to the header's original size).
+    pub bytes: u64,
+
+    /// File metadata stored with the data (mtime, permissions)
+    pub metadata: FileMetadata,
+}
+
+/// Decompress Crush-compressed data into `out` without materialising the
+/// whole result when the plugin can stream (see
+/// `CompressionAlgorithm::decompress_to`).
+///
+/// The header and the CRC32 of the compressed payload are checked before
+/// anything is written, and the number of bytes written is checked against
+/// the header's original size at the end.
+///
+/// # Errors
+///
+/// As for [`decompress_with_cancel`], plus I/O errors from `out`. On error,
+/// `out` may already have received part of the data; callers writing to a
+/// file should remove it.
+pub fn decompress_to_writer(
+    input: &[u8],
+    cancel_flag: Arc<AtomicBool>,
+    out: &mut dyn Write,
+) -> Result<StreamedDecompression> {
+    let c = open_container(input)?;
+    let bytes = c.plugin.decompress_to(c.payload, cancel_flag, out)?;
+    check_size(c.expected_size, bytes)?;
+    Ok(StreamedDecompression {
+        bytes,
+        metadata: c.metadata,
+    })
+}
+
+/// A parsed, CRC-checked Crush container.
+struct Container<'a> {
+    payload: &'a [u8],
+    metadata: FileMetadata,
+    plugin: &'static dyn CompressionAlgorithm,
+    expected_size: u64,
+}
+
+/// Parse the header, verify the CRC32, read the metadata, and find the plugin.
+fn open_container(input: &[u8]) -> Result<Container<'_>> {
     // Validate minimum size (header + CRC32 if present)
     if input.len() < CrushHeader::SIZE {
         return Err(ValidationError::InvalidHeader(format!(
@@ -175,27 +235,24 @@ pub fn decompress_with_cancel(
         ))
     })?;
 
-    // Decompress the payload using the caller-provided cancel flag
-    let decompressed = plugin.decompress(compressed_payload, cancel_flag)?;
-
-    // Validate decompressed size matches header
-    let expected_size = usize::try_from(header.original_size).map_err(|_| {
-        ValidationError::InvalidHeader("Original size exceeds platform limits".to_string())
-    })?;
-
-    if decompressed.len() != expected_size {
-        return Err(ValidationError::CorruptedData(format!(
-            "Size mismatch: header says {} bytes, got {} bytes",
-            header.original_size,
-            decompressed.len()
-        ))
-        .into());
-    }
-
-    Ok(DecompressionResult {
-        data: decompressed,
+    Ok(Container {
+        payload: compressed_payload,
         metadata,
+        plugin,
+        expected_size: header.original_size,
     })
+}
+
+/// The decoded length must match the header's original size.
+fn check_size(expected: u64, got: u64) -> Result<()> {
+    if got == expected {
+        Ok(())
+    } else {
+        Err(ValidationError::CorruptedData(format!(
+            "Size mismatch: header says {expected} bytes, got {got} bytes"
+        ))
+        .into())
+    }
 }
 
 #[cfg(test)]
@@ -248,6 +305,65 @@ mod tests {
 
         let result = decompress(&compressed);
         assert!(result.is_err());
+    }
+
+    /// Streaming output equals the buffered result, and metadata comes back.
+    #[test]
+    fn decompress_to_writer_matches_decompress() {
+        use crate::plugin::FileMetadata;
+        use crate::{CompressionOptions, compress_with_options};
+
+        init_plugins().expect("init");
+        let original: Vec<u8> = (0..300_000u32).map(|i| (i % 251) as u8).collect();
+        let meta = FileMetadata {
+            mtime: Some(1_700_000_000),
+            #[cfg(unix)]
+            permissions: Some(0o640),
+        };
+        let options = CompressionOptions::default()
+            .with_plugin("deflate")
+            .with_file_metadata(meta.clone());
+        let compressed = compress_with_options(&original, &options).expect("compress");
+
+        let mut sink = Vec::new();
+        let flag = Arc::new(AtomicBool::new(false));
+        let got = decompress_to_writer(&compressed, flag, &mut sink).expect("stream");
+        assert_eq!(sink, original);
+        assert_eq!(got.bytes, original.len() as u64);
+        assert_eq!(got.metadata, meta);
+    }
+
+    /// A CRC mismatch is reported before anything reaches the writer.
+    #[test]
+    fn decompress_to_writer_checks_crc_before_writing() {
+        init_plugins().expect("init");
+        let mut compressed = compress(&[7u8; 10_000]).expect("compress");
+        let last = compressed.len() - 1;
+        compressed[last] ^= 0xFF;
+        let mut sink = Vec::new();
+        let flag = Arc::new(AtomicBool::new(false));
+        assert!(decompress_to_writer(&compressed, flag, &mut sink).is_err());
+        assert!(
+            sink.is_empty(),
+            "{} bytes written before the CRC check",
+            sink.len()
+        );
+    }
+
+    /// A payload that decodes to a different size than the header says is
+    /// an error (the CRC is recomputed so only the size is wrong).
+    #[test]
+    fn decompress_to_writer_checks_the_size() {
+        init_plugins().expect("init");
+        let mut compressed = compress(&[7u8; 10_000]).expect("compress");
+        let mut header =
+            CrushHeader::from_bytes(&compressed[..CrushHeader::SIZE].try_into().expect("header"))
+                .expect("parse");
+        header.original_size += 1;
+        compressed[..CrushHeader::SIZE].copy_from_slice(&header.to_bytes());
+        let mut sink = Vec::new();
+        let flag = Arc::new(AtomicBool::new(false));
+        assert!(decompress_to_writer(&compressed, flag, &mut sink).is_err());
     }
 
     #[test]

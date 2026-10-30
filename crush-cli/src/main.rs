@@ -7,10 +7,12 @@ mod feedback;
 mod logging;
 mod output;
 mod signal;
+mod timings;
 
-// Force crush-parallel and crush-gpu to be linked into the binary so the linkme
+// Force crush-parallel, crush-gpu and crush-lz to be linked into the binary so the linkme
 // distributed-slice plugin registration runs at startup.
 use crush_gpu as _;
+use crush_lz as _;
 use crush_parallel as _;
 
 use clap::Parser;
