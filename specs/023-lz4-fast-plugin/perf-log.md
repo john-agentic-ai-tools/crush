@@ -305,3 +305,25 @@ End to end (compare.py, one core, ABBA, median of 10, real files):
 
 Fuzz after the decoder's block-loop refactor: fuzz_decompress 1M runs,
 fuzz_roundtrip 100k runs, clean.
+
+## US3 — streamed compression output (beyond T039), 2026-10-30
+
+`crush_core::compress_to_writer` (Write + Seek): for plugins that stream
+(`streams_compressed_output`, only `fast-lz` so far) the header goes out
+with a zero CRC, the payload is CRC-hashed as it passes through
+`compress_to` (fast-lz: one block at a time from a reused buffer), and the
+CRC field is patched by seeking back. Other plugins keep the in-memory path
+(parallel CRC) and a single write, so their output and speed are unchanged.
+The CLI writes file output through it; stdout keeps the in-memory path.
+
+In-process time is unchanged (about 214 ms; the write phase is now part of
+the codec phase), but the 60 MB output buffer is never allocated, faulted in
+or torn down at exit:
+
+| | crush fast-lz | lz4 -1 | crush / lz4 |
+|---|---|---|---|
+| compress, T039 + T041 | 608.0 MB/s | 623.9 MB/s | 0.97x |
+| compress, streamed output | 632.9 MB/s | 625.1 MB/s | 1.01x |
+| decompress (same build) | 1,779.7 MB/s | 1,554.4 MB/s | 1.14x |
+
+1% is inside run-to-run spread; T042 re-measures with more repetitions.

@@ -120,6 +120,36 @@ pub trait CompressionAlgorithm: Send + Sync {
         Ok(())
     }
 
+    /// True if [`Self::compress_to`] writes its payload piece by piece. Only
+    /// then does `crush_core::compress_to_writer` stream; for other plugins
+    /// it compresses in memory (with a parallel CRC) and writes once.
+    fn streams_compressed_output(&self) -> bool {
+        false
+    }
+
+    /// Compress `input`, writing the payload to `out`; returns the number of
+    /// bytes written. The bytes must equal what [`Self::compress`] returns.
+    ///
+    /// The provided implementation calls [`Self::compress`] and writes the
+    /// result. Plugins that compress in independent pieces override it (and
+    /// [`Self::streams_compressed_output`]) so the whole payload is never
+    /// held in memory.
+    ///
+    /// # Errors
+    ///
+    /// As for [`Self::compress`], plus I/O errors from `out`. On error, `out`
+    /// may have received part of the payload.
+    fn compress_to(
+        &self,
+        input: &[u8],
+        cancel_flag: Arc<AtomicBool>,
+        out: &mut dyn std::io::Write,
+    ) -> Result<u64> {
+        let payload = self.compress(input, cancel_flag)?;
+        out.write_all(&payload)?;
+        Ok(payload.len() as u64)
+    }
+
     /// Decompress compressed data
     ///
     /// # Parameters

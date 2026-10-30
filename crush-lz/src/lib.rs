@@ -135,6 +135,19 @@ impl CompressionAlgorithm for FastLzPlugin {
         compress::compress_frame_into(input, FrameHeader::default(), Some(&cancel_flag), out)
     }
 
+    fn streams_compressed_output(&self) -> bool {
+        true
+    }
+
+    fn compress_to(
+        &self,
+        input: &[u8],
+        cancel_flag: Arc<AtomicBool>,
+        out: &mut dyn std::io::Write,
+    ) -> Result<u64> {
+        compress::compress_frame_to(input, FrameHeader::default(), Some(&cancel_flag), out)
+    }
+
     fn decompress(&self, input: &[u8], cancel_flag: Arc<AtomicBool>) -> Result<Vec<u8>> {
         // crush-core checks the total against the outer header's original size.
         decompress::decode_frame(input, None, Some(&cancel_flag))
