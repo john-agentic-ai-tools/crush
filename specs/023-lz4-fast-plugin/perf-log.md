@@ -361,3 +361,19 @@ or torn down at exit:
 | SC-006 decoder fuzzing >= 100k, clean | fuzz_decompress 1M, fuzz_roundtrip 100k, clean | met |
 | SC-007 no regression > 5%, same output without speed preference | none > 5% (decompress_medium/1MB +4.1..5.0%); identical sizes | met |
 | SC-008 CLI faster than lz4 on one core | compress 619 vs 610 MB/s (1.015x, 20 ABBA reps); decompress 1,747 vs 1,515 MB/s (1.15x) | met (compress narrowly) |
+
+## Performance gate (after_implement, /speckit-crush-perf-gate), 2026-10-30
+
+- Changed performance crates vs develop (08e407f): crush-core
+  (compression.rs, decompression.rs, lib.rs, plugin/{contract,mod,registry,
+  selector}.rs). No change in crush-core, crush-parallel or crush-gpu since
+  dc33c90, the tree measured below.
+- `/perf check` equivalent, run at full length rather than `--quick` on the
+  identical code: goal-fastlz-final2 (crush-core, crush-parallel, crush-gpu,
+  ABBA vs 08e407f) IMPROVED, no REGRESSION; confirm-decomp-medium (crush-core)
+  IMPROVED, decompress_medium/1MB +4.1% (under the 5% gate).
+- Performance criteria: SC-001, SC-002, SC-005, SC-007 and SC-008 all have
+  verified results above (see "Success criteria"); no `/perf goal` re-run
+  needed. SC-001 and SC-002 are not met; the frontier and the user's decision
+  to keep the targets are recorded under "Outcome of T023".
+- Verdict: PASS (no regression over 5%).
