@@ -7,6 +7,7 @@
 
 use crate::format::{BlockHeader, END_MARKER, FrameHeader, corrupt};
 use crush_core::error::{PluginError, Result};
+use std::io::Write;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 /// Decode a whole `fast-lz` payload.
@@ -21,14 +22,57 @@ pub(crate) fn decode_frame(
     limit: Option<usize>,
     cancel: Option<&AtomicBool>,
 ) -> Result<Vec<u8>> {
-    let frame = FrameHeader::parse(payload)?;
-    let block_size = u32::try_from(frame.block_size()).map_err(|_| corrupt("block size"))?;
-    let mut pos = crate::format::FRAME_HEADER_SIZE;
     // Reserve the expected size up front (no regrowth copies), but never
     // more than the payload could expand to: a sequence of at most 3 bytes
     // per 255 output bytes, so 256 bytes out per byte in is a safe ceiling.
     let mut out =
         Vec::with_capacity(limit.map_or(0, |n| n.min(payload.len().saturating_mul(256)) + WILD));
+    for_each_block(payload, limit, cancel, |block, stored, ulen| {
+        if stored {
+            out.extend_from_slice(block);
+            Ok(())
+        } else {
+            decode_block(block, ulen, &mut out)
+        }
+    })?;
+    Ok(out)
+}
+
+/// Decode a whole `fast-lz` payload into `w`, one block at a time (at most
+/// one block of memory). Returns the number of bytes written; the caller
+/// checks it against the expected total. On error, `w` may hold a prefix.
+pub(crate) fn decode_frame_to(
+    payload: &[u8],
+    cancel: Option<&AtomicBool>,
+    w: &mut dyn Write,
+) -> Result<u64> {
+    let mut scratch = Vec::new();
+    let total = for_each_block(payload, None, cancel, |block, stored, ulen| {
+        if stored {
+            w.write_all(block)?;
+        } else {
+            scratch.clear();
+            decode_block(block, ulen, &mut scratch)?;
+            w.write_all(&scratch)?;
+        }
+        Ok(())
+    })?;
+    Ok(total as u64)
+}
+
+/// Walk the frame's blocks, validating headers, lengths, `limit` and the
+/// end of the payload, and hand each block to `f` as `(bytes, stored,
+/// uncompressed_len)`. Returns the total uncompressed length.
+fn for_each_block(
+    payload: &[u8],
+    limit: Option<usize>,
+    cancel: Option<&AtomicBool>,
+    mut f: impl FnMut(&[u8], bool, usize) -> Result<()>,
+) -> Result<usize> {
+    let frame = FrameHeader::parse(payload)?;
+    let block_size = u32::try_from(frame.block_size()).map_err(|_| corrupt("block size"))?;
+    let mut pos = crate::format::FRAME_HEADER_SIZE;
+    let mut total = 0usize;
 
     loop {
         let rest = payload.get(pos..).unwrap_or_default();
@@ -44,15 +88,12 @@ pub(crate) fn decode_frame(
             .ok_or_else(|| corrupt("block payload truncated"))?;
         pos += clen;
         if let Some(n) = limit
-            && out.len() + ulen > n
+            && total + ulen > n
         {
             return Err(corrupt("decoded size exceeds the expected length"));
         }
-        if h.stored {
-            out.extend_from_slice(block);
-        } else {
-            decode_block(block, ulen, &mut out)?;
-        }
+        f(block, h.stored, ulen)?;
+        total += ulen;
         if cancel.is_some_and(|c| c.load(Ordering::Acquire)) {
             return Err(PluginError::Cancelled.into());
         }
@@ -62,14 +103,11 @@ pub(crate) fn decode_frame(
         return Err(corrupt("trailing bytes after the end marker"));
     }
     if let Some(n) = limit
-        && out.len() != n
+        && total != n
     {
-        return Err(corrupt(format!(
-            "decoded {} bytes, expected {n}",
-            out.len()
-        )));
+        return Err(corrupt(format!("decoded {total} bytes, expected {n}")));
     }
-    Ok(out)
+    Ok(total)
 }
 
 /// Bytes a fast copy may write past the end of a literal run or match. Each

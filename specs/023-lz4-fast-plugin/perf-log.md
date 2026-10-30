@@ -279,3 +279,29 @@ Process start is not the gap (1-byte compress 1.73 ms vs lz4 1.31 ms, `true`
 1.19 ms). About 12 ms of crush's wall time falls outside the timed phases,
 most likely tearing down the 128 MB mapping and the output allocation at
 exit, which lz4's small streaming buffers avoid.
+
+## US3 — streamed decompression (T040) and mapped compressed input, 2026-10-30
+
+T040: `crush_core::decompress_to_writer` checks the header and the payload
+CRC, then streams through `CompressionAlgorithm::decompress_to` (provided:
+decompress, then write); `fast-lz` decodes block by block into one reused
+1 MiB buffer and writes stored blocks straight from the input. The CLI
+streams full decompressions into the output file and removes it on any
+error. The memory-map helper moved to `commands/utils.rs` and now also maps
+the compressed input (same single `unsafe` call).
+
+Decompress phases (ms, CRUSH_TIMINGS): before 13.5 read + 59 decode + 29.2
+write = 102; streamed 11.5 read + 65.5 decode-and-write = 77; streamed +
+mapped input 1.2-2.1 read + 67-73 = 69-74.
+
+End to end (compare.py, one core, ABBA, median of 10, real files):
+
+| | crush fast-lz | lz4 | crush / lz4 |
+|---|---|---|---|
+| decompress, before | 1,275.1 MB/s | 1,565.7 MB/s | 0.81x |
+| decompress, streamed | 1,642.0 MB/s | 1,588.8 MB/s | 1.03x |
+| decompress, streamed + mapped input | 1,784.0 MB/s | 1,576.8 MB/s | 1.13x |
+| compress (T039 + T041, unchanged here) | 608.0 MB/s | 623.9 MB/s | 0.97x |
+
+Fuzz after the decoder's block-loop refactor: fuzz_decompress 1M runs,
+fuzz_roundtrip 100k runs, clean.

@@ -138,6 +138,30 @@ pub trait CompressionAlgorithm: Send + Sync {
     /// - `ValidationError::CorruptedData` if compressed data is invalid
     fn decompress(&self, input: &[u8], cancel_flag: Arc<AtomicBool>) -> Result<Vec<u8>>;
 
+    /// Decompress `input`, writing the result to `out`; returns the number
+    /// of bytes written.
+    ///
+    /// The provided implementation calls [`Self::decompress`] and writes its
+    /// result. Plugins that decode in independent pieces override it to
+    /// write each piece as it is decoded, so the whole result never has to
+    /// be held in memory. The bytes written must equal what `decompress`
+    /// returns.
+    ///
+    /// # Errors
+    ///
+    /// As for [`Self::decompress`], plus I/O errors from `out`. On error,
+    /// `out` may have received part of the result.
+    fn decompress_to(
+        &self,
+        input: &[u8],
+        cancel_flag: Arc<AtomicBool>,
+        out: &mut dyn std::io::Write,
+    ) -> Result<u64> {
+        let data = self.decompress(input, cancel_flag)?;
+        out.write_all(&data)?;
+        Ok(data.len() as u64)
+    }
+
     /// Detect if this plugin can handle the given file header
     ///
     /// This method determines if the plugin supports compressing a particular file type.

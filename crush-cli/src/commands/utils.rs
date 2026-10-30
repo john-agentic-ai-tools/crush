@@ -158,12 +158,77 @@ pub fn write_with_cleanup(path: &Path, data: &[u8]) -> Result<()> {
     }
 }
 
+/// Input files (to compress or to decompress) at least this large are
+/// memory-mapped instead of read into a buffer (feature 023, US3): no copy
+/// of the whole file, and no page-zeroing of a fresh buffer of that size.
+pub const MMAP_MIN_BYTES: u64 = 1024 * 1024;
+
+/// Input file contents, mapped or read.
+pub enum InputData {
+    /// Memory-mapped file
+    Mapped(memmap2::Mmap),
+    /// File read into memory
+    Read(Vec<u8>),
+}
+
+impl std::ops::Deref for InputData {
+    type Target = [u8];
+
+    fn deref(&self) -> &[u8] {
+        match self {
+            Self::Mapped(m) => m,
+            Self::Read(v) => v,
+        }
+    }
+}
+
+/// Memory-map regular files of at least [`MMAP_MIN_BYTES`] (`size` from the
+/// earlier `stat`); read everything else.
+pub fn read_input_file(path: &Path, size: u64) -> io::Result<InputData> {
+    if size >= MMAP_MIN_BYTES {
+        let file = fs::File::open(path)?;
+        if file.metadata()?.is_file() {
+            // SAFETY: the mapping is only read, while this process holds the
+            // file open. Another process truncating the file during
+            // compression or decompression would make reads past the new
+            // end fault; this is
+            // the same trade-off `crush_parallel::compress_file` makes
+            // for large inputs, accepted for the copy it saves.
+            let map = unsafe { memmap2::MmapOptions::new().populate().map(&file)? };
+            return Ok(InputData::Mapped(map));
+        }
+    }
+    fs::read(path).map(InputData::Read)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crush_core::cancel::AtomicCancellationToken;
     use std::time::Duration;
     use tempfile::NamedTempFile;
+
+    /// Mapped (large) and read (small) inputs give the file's exact bytes.
+    #[test]
+    fn read_input_file_returns_the_file_contents() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        for len in [
+            1usize,
+            1000,
+            MMAP_MIN_BYTES as usize - 1,
+            MMAP_MIN_BYTES as usize,
+            3 << 20,
+        ] {
+            let data: Vec<u8> = (0..len).map(|i| (i * 31 % 251) as u8).collect();
+            let path = dir.path().join(format!("in-{len}"));
+            fs::write(&path, &data).expect("write");
+            let input = read_input_file(&path, len as u64).expect("read");
+            assert_eq!(input.len(), len);
+            assert!(*input == *data, "contents differ at {len} bytes");
+            let mapped = matches!(input, InputData::Mapped(_));
+            assert_eq!(mapped, len as u64 >= MMAP_MIN_BYTES, "{len} bytes");
+        }
+    }
 
     #[test]
     fn test_check_cancelled_not_cancelled() {

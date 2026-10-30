@@ -87,13 +87,44 @@ fn corrupted_fast_lz_file_fails_cleanly() {
     bytes[mid] ^= 0xFF;
     std::fs::write(&packed, &bytes).expect("write corrupted");
 
+    let out = dir.path().join("out.txt");
     crush_cmd()
         .arg("decompress")
         .arg(&packed)
         .arg("-o")
-        .arg(dir.path().join("out.txt"))
+        .arg(&out)
         .assert()
         .failure();
+    // decompression streams into the file; a failure must not leave it behind
+    assert!(!out.exists(), "partial output left at {}", out.display());
+}
+
+/// A payload whose blocks decode fine but whose total disagrees with the
+/// header fails after streaming started: the output file is removed.
+#[test]
+fn size_mismatch_after_streaming_leaves_no_file() {
+    let dir = test_dir();
+    let input = create_test_file(dir.path(), "log.txt", &text(3 << 20));
+    let packed = dir.path().join("log.txt.crush");
+    crush_cmd()
+        .args(["compress", "--plugin", "fast-lz"])
+        .arg(&input)
+        .assert()
+        .success();
+    // original_size lives at bytes 4..12 of the header (little endian); the
+    // CRC covers only what follows the header, so it still matches.
+    let mut bytes = std::fs::read(&packed).expect("read packed");
+    bytes[4] ^= 0x01;
+    std::fs::write(&packed, &bytes).expect("write");
+    let out = dir.path().join("out.txt");
+    crush_cmd()
+        .arg("decompress")
+        .arg(&packed)
+        .arg("-o")
+        .arg(&out)
+        .assert()
+        .failure();
+    assert!(!out.exists(), "partial output left at {}", out.display());
 }
 
 fn xorshift(len: usize, mut s: u64) -> Vec<u8> {

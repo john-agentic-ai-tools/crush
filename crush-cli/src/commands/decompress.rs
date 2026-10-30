@@ -3,8 +3,8 @@ use crate::commands::utils;
 use crate::error::{CliError, Result};
 use crate::output::{self, DecompressionResult};
 use crush_core::cancel::CancellationToken;
-use crush_core::decompress_with_cancel;
 use crush_core::plugin::FileMetadata;
+use crush_core::{StreamedDecompression, decompress_to_writer, decompress_with_cancel};
 use filetime::{FileTime, set_file_mtime};
 use indicatif::{ProgressBar, ProgressStyle};
 use is_terminal::IsTerminal;
@@ -224,7 +224,7 @@ fn decompress_file(
     // Read compressed file
     trace!("Reading compressed file: {}", input_path.display());
     phases.mark("setup");
-    let compressed_data = fs::read(input_path)?;
+    let compressed_data = utils::read_input_file(input_path, input_size)?;
     phases.mark("read");
     debug!("Read {} bytes from compressed file", compressed_data.len());
 
@@ -263,16 +263,26 @@ fn decompress_file(
         info!("--force-cpu active: using CPU fallback for GPU-compressed file");
     }
 
-    // Decompress (either full file or single block)
-    let (decompressed_data, metadata) = if let Some(block_n) = args.block {
+    // Decompress (either full file or single block). A full decompression
+    // to a file streams into it, so the whole result is never held in
+    // memory (feature 023, T040).
+    let streamed = args.block.is_none() && !args.stdout;
+    let (decompressed_data, metadata, output_size) = if let Some(block_n) = args.block {
         // Random access: decompress only the specified block
         trace!("Starting random access decompression for block {}", block_n);
-        decompress_single_block(&compressed_data, block_n)?
+        let (data, metadata) = decompress_single_block(&compressed_data, block_n)?;
+        let size = data.len() as u64;
+        (data, metadata, size)
+    } else if streamed {
+        trace!("Streaming decompression into {}", output_path.display());
+        let result = stream_to_file(&compressed_data, cancel_flag, &output_path)?;
+        (Vec::new(), result.metadata, result.bytes)
     } else {
         // Full decompression (with cancel flag connected to Ctrl+C)
         trace!("Starting full decompression operation");
         let result = decompress_with_cancel(&compressed_data, cancel_flag)?;
-        (result.data, result.metadata)
+        let size = result.data.len() as u64;
+        (result.data, result.metadata, size)
     };
     phases.mark("decompress");
 
@@ -281,7 +291,7 @@ fn decompress_file(
     debug!(
         "Decompression completed in {:.3}s, output size: {} bytes",
         duration.as_secs_f64(),
-        decompressed_data.len()
+        output_size
     );
 
     // Clear spinner
@@ -297,8 +307,11 @@ fn decompress_file(
         // Write to stdout
         utils::write_to_stdout(&decompressed_data)?;
     } else {
-        // Write to file (with cleanup on failure/interrupt)
-        utils::write_with_cleanup(&output_path, &decompressed_data)?;
+        // Write to file (with cleanup on failure/interrupt), unless the
+        // data was already streamed into it
+        if !streamed {
+            utils::write_with_cleanup(&output_path, &decompressed_data)?;
+        }
         phases.mark("write");
 
         // Check for interrupt after writing (cleanup partial file if interrupted)
@@ -350,7 +363,6 @@ fn decompress_file(
         }
 
         // Calculate statistics
-        let output_size = decompressed_data.len() as u64;
         let throughput_mbps = utils::calculate_throughput_mbps(output_size, duration);
 
         // Log performance metrics with structured fields
@@ -397,11 +409,29 @@ fn decompress_file(
     }
 
     phases.mark("finish");
-    phases.report("decompress", decompressed_data.len() as u64);
+    phases.report("decompress", output_size);
     Ok(())
 }
 
 /// Determine the output file path
+/// Decompress `data` straight into a new file at `path`; the file is
+/// removed if anything fails part-way.
+fn stream_to_file(
+    data: &[u8],
+    cancel_flag: Arc<std::sync::atomic::AtomicBool>,
+    path: &Path,
+) -> Result<StreamedDecompression> {
+    let mut file = fs::File::create(path)?;
+    match decompress_to_writer(data, cancel_flag, &mut file) {
+        Ok(result) => Ok(result),
+        Err(e) => {
+            drop(file);
+            let _ = fs::remove_file(path);
+            Err(e.into())
+        }
+    }
+}
+
 fn determine_output_path(input: &Path, output_arg: &Option<PathBuf>) -> Result<PathBuf> {
     if let Some(output) = output_arg {
         // User specified output path

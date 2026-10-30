@@ -140,6 +140,15 @@ impl CompressionAlgorithm for FastLzPlugin {
         decompress::decode_frame(input, None, Some(&cancel_flag))
     }
 
+    fn decompress_to(
+        &self,
+        input: &[u8],
+        cancel_flag: Arc<AtomicBool>,
+        out: &mut dyn std::io::Write,
+    ) -> Result<u64> {
+        decompress::decode_frame_to(input, Some(&cancel_flag), out)
+    }
+
     fn detect(&self, file_header: &[u8]) -> bool {
         file_header.get(..4) == Some(&PLUGIN_MAGIC[..])
     }
@@ -189,6 +198,45 @@ mod plugin_tests {
             assert_eq!(&out[..prefix_len], &vec![0xA5; prefix_len][..]);
             assert_eq!(&out[prefix_len..], &alone[..], "prefix {prefix_len}");
         }
+    }
+
+    /// `decompress_to` writes exactly what `decompress` returns, across
+    /// compressed and stored blocks (feature 023, T040).
+    #[test]
+    fn decompress_to_writes_the_decompress_output() {
+        let mut data: Vec<u8> = b"stream me block by block "
+            .iter()
+            .copied()
+            .cycle()
+            .take(3 << 20)
+            .collect();
+        // an incompressible megabyte in the middle becomes a stored block
+        let mut s = 0x2545_F491_4F6C_DD1Du64;
+        for b in &mut data[(1 << 20)..(2 << 20)] {
+            s ^= s << 13;
+            s ^= s >> 7;
+            s ^= s << 17;
+            *b = s.to_le_bytes()[0];
+        }
+        let packed = FastLzPlugin.compress(&data, live()).expect("compress");
+        let whole = FastLzPlugin
+            .decompress(&packed, live())
+            .expect("decompress");
+        let mut sink = Vec::new();
+        let n = FastLzPlugin
+            .decompress_to(&packed, live(), &mut sink)
+            .expect("decompress_to");
+        assert_eq!(n, data.len() as u64);
+        assert_eq!(sink, whole);
+        assert_eq!(sink, data);
+
+        // First block header (after the 8-byte frame header): a compressed
+        // length past the end of the payload. (Stored-block contents can't
+        // be checked by the codec; crush-core's CRC covers those.)
+        let mut bad = packed.clone();
+        bad[8..12].copy_from_slice(&0x7FFF_FFF0u32.to_le_bytes());
+        let mut sink = Vec::new();
+        assert!(FastLzPlugin.decompress_to(&bad, live(), &mut sink).is_err());
     }
 
     #[test]
