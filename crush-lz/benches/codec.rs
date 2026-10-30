@@ -3,7 +3,8 @@
 //! Corpora: the synthetic text corpus and random data shared with
 //! crush-parallel's benches (64 MB each), plus a real file from
 //! `CRUSH_BENCH_CORPUS` when that variable is set (e.g. the 128 MB tar of
-//! `/usr/lib` and `/usr/share` used for the lz4 comparison).
+//! `/usr/lib` and `/usr/share` used for the lz4 comparison). The
+//! `fast_lz_select` group times the selection estimate.
 #![allow(
     clippy::expect_used,
     clippy::unwrap_used,
@@ -12,7 +13,9 @@
 )]
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use crush_lz::{FastLzConfig, compress, decompress};
+use crush_core::plugin::CompressionAlgorithm;
+use crush_core::{PluginSelector, ScoringWeights, init_plugins};
+use crush_lz::{FastLzConfig, FastLzPlugin, compress, decompress};
 use std::hint::black_box;
 
 #[path = "../../crush-parallel/benches/common/variants.rs"]
@@ -58,5 +61,28 @@ fn bench_codec(c: &mut Criterion) {
     }
 }
 
-criterion_group!(benches, bench_codec);
+/// Content-aware selection at `--level fast` weights: the sampled estimate
+/// plus the selector, on text (feature 023, SC-005).
+fn bench_select(c: &mut Criterion) {
+    init_plugins().expect("plugins");
+    let selector = PluginSelector::new(ScoringWeights::new(0.9, 0.1).expect("weights"));
+    let mut group = c.benchmark_group("fast_lz_select");
+    for size in [1usize << 20, 16 << 20, 128 << 20] {
+        let data = variants::generate_corpus(size, 0xDEAD_BEEF_CAFE_1234);
+        group.throughput(Throughput::Bytes(size as u64));
+        group.bench_with_input(
+            BenchmarkId::new("estimate", format!("{}MB", size >> 20)),
+            &data,
+            |b, d| b.iter(|| FastLzPlugin.estimate_ratio(black_box(d))),
+        );
+        group.bench_with_input(
+            BenchmarkId::new("select_for_input", format!("{}MB", size >> 20)),
+            &data,
+            |b, d| b.iter(|| selector.select_for_input(black_box(d)).expect("select")),
+        );
+    }
+    group.finish();
+}
+
+criterion_group!(benches, bench_codec, bench_select);
 criterion_main!(benches);

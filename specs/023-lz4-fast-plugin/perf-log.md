@@ -188,3 +188,30 @@ buffer), which alone caps decompression near 0.7x of lz4 even with an
 lz4-speed decode loop. Going further would need unchecked copies/loads
 (`unsafe`) or a different algorithm. Decision (user, 2026-10-29): record the
 frontier, keep the best variant, continue with US2; targets unchanged.
+
+## US2 — selection estimate (T033, T034), 2026-10-29
+
+Sampled estimate: evenly spaced samples, about 1/128 of the input, between
+4 x 4 KiB and 16 x 16 KiB, compressed with the block compressor and a
+per-thread table. First planned at 1/64 (research R6): that measured 2.02%
+of compression time on 16 MB of source text (samples cost more per byte
+than whole blocks), so the budget was halved. Samples lack the history of a
+1 MiB block, so the estimate runs low (text corpus: 20% low with 4 KiB
+samples at 1 MB, 9% low with 16 KiB samples): conservative for selection.
+
+Selection report (`cargo test --release -p crush-lz --test selection_report
+-- --ignored --nocapture`, Windows, CRUSH_BENCH_CORPUS = the 128 MB tar),
+`--level fast` weights:
+
+| input | 1 MB est / chosen / cost | 16 MB | 128 MB |
+|---|---|---|---|
+| source text | 1.518 / fast-lz / 1.48% | 1.717 / fast-lz / 0.95% | 1.725 / fast-lz / 0.24% |
+| log text | 3.143 / fast-lz / 0.80% | 3.315 / fast-lz / 0.88% | 3.307 / fast-lz / 0.22% |
+| real file | 1.930 / fast-lz / 0.75% | 2.050 / fast-lz / 0.91% | 2.084 / fast-lz / 0.24% |
+| base64 text | 1.000 / deflate / 1.07% | 1.000 / deflate / 0.34% | 1.000 / deflate / 0.11% |
+| random | 1.000 / deflate / 1.13% | 1.000 / deflate / 0.35% | 1.000 / deflate / 0.11% |
+| deflate output | 1.000 / deflate / 1.06% | 1.000 / deflate / 0.33% | 1.000 / deflate / 0.10% |
+
+SC-004: 18/18 routed as required. SC-005: highest cost 1.48% (limit 2%).
+Criterion benches for the estimate and `select_for_input` (1/16/128 MB):
+`fast_lz_select` group in `crush-lz/benches/codec.rs`.

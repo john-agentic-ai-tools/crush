@@ -154,7 +154,9 @@ pub fn compress(input: &[u8]) -> Result<Vec<u8>> {
 ///
 /// Provides fine-grained control over plugin selection through either:
 /// - Manual plugin override by name
-/// - Automatic selection with custom scoring weights
+/// - Automatic selection with custom scoring weights; when speed is
+///   preferred, a content-aware plugin is used if it estimates that `input`
+///   compresses well with it (see [`PluginSelector::select_for_input`])
 ///
 /// # Errors
 ///
@@ -195,8 +197,9 @@ pub fn compress_with_options(input: &[u8], options: &CompressionOptions) -> Resu
         // Manual override
         selector.select_by_name(plugin_name)?
     } else {
-        // Automatic selection
-        selector.select()?
+        // Automatic selection; content-aware plugins may take part when
+        // speed is preferred (they estimate how well `input` compresses).
+        selector.select_for_input(input)?
     };
 
     // Get the actual plugin from registry

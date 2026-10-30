@@ -14,6 +14,7 @@ pub const PLUGIN_MAGIC: [u8; 4] = [0x43, 0x52, 0x01, 0x04];
 
 mod compress;
 mod decompress;
+mod estimate;
 
 use crate::format::{DEFAULT_BLOCK_SIZE_LOG2, FrameHeader};
 use crush_core::error::Result;
@@ -136,6 +137,12 @@ impl CompressionAlgorithm for FastLzPlugin {
 
     fn content_aware(&self) -> bool {
         true
+    }
+
+    /// Compresses evenly spaced samples (about 1/64 of `input`) and returns
+    /// their combined ratio; `None` for empty input.
+    fn estimate_ratio(&self, input: &[u8]) -> Option<f64> {
+        estimate::estimate_ratio(input)
     }
 }
 

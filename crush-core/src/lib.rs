@@ -80,6 +80,7 @@ pub use decompression::{decompress, decompress_with_cancel};
 pub use error::{CrushError, PluginError, Result, TimeoutError, ValidationError};
 pub use inspection::{InspectResult, inspect};
 pub use plugin::{
-    COMPRESSION_ALGORITHMS, CompressionAlgorithm, CrushHeader, PluginMetadata, PluginSelector,
-    ScoringWeights, calculate_plugin_score, init_plugins, list_plugins,
+    COMPRESSION_ALGORITHMS, CompressionAlgorithm, CrushHeader, MIN_ESTIMATED_RATIO, PluginMetadata,
+    PluginSelector, SPEED_PREFERRED_THROUGHPUT, ScoringWeights, calculate_plugin_score,
+    init_plugins, list_plugins,
 };

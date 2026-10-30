@@ -27,7 +27,12 @@ pub const DEFAULT_PARALLEL_THRESHOLD_BYTES: u64 = 25 * 1024 * 1024;
 ///    (streaming favours parallel to avoid buffering the full input).
 /// 3. If `input_size >= threshold` and `gpu_enabled`, `"gpu-deflate"` is returned.
 /// 4. If `input_size >= threshold`, `"parallel-deflate"` is returned.
-/// 5. Otherwise `"default"` is returned.
+/// 5. Otherwise `"default"` is returned: crush-core chooses with the level's
+///    scoring weights. At `--level fast` that choice is content-aware: the
+///    `fast-lz` plugin is used when its sampled estimate says the input
+///    compresses well (ratio of at least 1.10), see
+///    `crush_core::PluginSelector::select_for_input`. Large and streamed
+///    inputs keep the parallel engines (feature 023, research R7).
 #[must_use]
 pub fn select_algorithm(
     input_size: Option<u64>,
@@ -100,6 +105,20 @@ mod tests {
             false,
         );
         assert_eq!(name_large, "default");
+    }
+
+    /// Small inputs always defer to crush-core, where `--level fast` turns on
+    /// content-aware selection (feature 023).
+    #[test]
+    fn test_small_inputs_defer_to_crush_core() {
+        for size in [1, 1 << 20, DEFAULT_PARALLEL_THRESHOLD_BYTES - 1] {
+            for gpu in [false, true] {
+                assert_eq!(
+                    select_algorithm(Some(size), None, DEFAULT_PARALLEL_THRESHOLD_BYTES, gpu),
+                    "default"
+                );
+            }
+        }
     }
 
     #[test]

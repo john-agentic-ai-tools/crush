@@ -5,7 +5,7 @@
 //! with logarithmic throughput scaling and min-max normalization.
 
 use crate::error::{PluginError, Result, ValidationError};
-use crate::plugin::registry::list_plugins_with_awareness;
+use crate::plugin::registry::{get_plugin_by_magic, list_plugins_with_awareness};
 use crate::plugin::{PluginMetadata, list_plugins};
 
 /// Scoring weights for plugin selection
@@ -168,6 +168,14 @@ pub fn calculate_plugin_score(
     weights.throughput * norm_throughput + weights.compression_ratio * norm_ratio
 }
 
+/// Throughput weight at or above which speed is preferred: only then may a
+/// content-aware plugin be chosen automatically (`--level fast` uses 0.9).
+pub const SPEED_PREFERRED_THROUGHPUT: f64 = 0.8;
+
+/// Smallest estimated ratio (`input_len / compressed_len`) for which a
+/// content-aware plugin is chosen automatically.
+pub const MIN_ESTIMATED_RATIO: f64 = 1.10;
+
 /// Plugins that take part in weight-based scoring: everything that isn't
 /// content-aware (see `CompressionAlgorithm::content_aware`).
 fn scoring_candidates(all: &[(PluginMetadata, bool)]) -> Vec<PluginMetadata> {
@@ -206,6 +214,55 @@ impl PluginSelector {
             .into());
         }
         self.best_by_score(&scoring_candidates(&candidates))
+    }
+
+    /// Select a plugin for compressing `input`.
+    ///
+    /// When speed is preferred (`throughput` weight of at least
+    /// [`SPEED_PREFERRED_THROUGHPUT`]), content-aware plugins estimate how
+    /// well `input` compresses with them, and the one with the highest
+    /// estimate of at least [`MIN_ESTIMATED_RATIO`] is chosen. Otherwise, or
+    /// when none qualifies, the choice is the same as [`Self::select`]'s.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if no plugins are available.
+    pub fn select_for_input(&self, input: &[u8]) -> Result<PluginMetadata> {
+        let candidates = list_plugins_with_awareness();
+        if candidates.is_empty() {
+            return Err(PluginError::NotFound(
+                "No plugins available. Call init_plugins() first.".to_string(),
+            )
+            .into());
+        }
+        self.choose_for_input(&candidates, |m| {
+            get_plugin_by_magic(m.magic_number).and_then(|p| p.estimate_ratio(input))
+        })
+    }
+
+    /// The decision behind [`Self::select_for_input`], with the estimate
+    /// supplied by the caller. `estimate` is only called for content-aware
+    /// plugins, and only when speed is preferred.
+    fn choose_for_input(
+        &self,
+        all: &[(PluginMetadata, bool)],
+        estimate: impl Fn(&PluginMetadata) -> Option<f64>,
+    ) -> Result<PluginMetadata> {
+        if self.weights.throughput >= SPEED_PREFERRED_THROUGHPUT {
+            let best = all
+                .iter()
+                .filter(|(_, aware)| *aware)
+                .filter_map(|(m, _)| {
+                    estimate(m)
+                        .filter(|r| r.is_finite() && *r >= MIN_ESTIMATED_RATIO)
+                        .map(|r| (r, m))
+                })
+                .max_by(|a, b| a.0.total_cmp(&b.0).then_with(|| b.1.name.cmp(a.1.name)));
+            if let Some((_, m)) = best {
+                return Ok(*m);
+            }
+        }
+        self.best_by_score(&scoring_candidates(all))
     }
 
     /// Highest-scoring plugin among `plugins` (ties broken by name).
@@ -299,6 +356,108 @@ mod tests {
             .best_by_score(&[deflate, gpu])
             .expect("pick");
         assert_eq!(pick.name, without.name);
+    }
+
+    /// Candidates for the content-aware tests: two scored plugins plus a
+    /// content-aware one that would win balanced scoring if it were scored.
+    fn aware_candidates() -> [(PluginMetadata, bool); 3] {
+        [
+            (meta("deflate", 0x00, 200.0, 0.35), false),
+            (meta("gpu", 0x03, 2000.0, 0.65), false),
+            (meta("fast", 0x04, 900.0, 0.44), true),
+        ]
+    }
+
+    #[allow(clippy::expect_used)]
+    fn pick(throughput: f64, estimate: Option<f64>) -> &'static str {
+        let weights = ScoringWeights::new(throughput, 1.0 - throughput).expect("weights");
+        let all = aware_candidates();
+        PluginSelector::new(weights)
+            .choose_for_input(&all, |m| if m.name == "fast" { estimate } else { None })
+            .expect("pick")
+            .name
+    }
+
+    #[allow(clippy::expect_used)]
+    fn pick_without_aware(throughput: f64) -> &'static str {
+        let weights = ScoringWeights::new(throughput, 1.0 - throughput).expect("weights");
+        let all = aware_candidates();
+        PluginSelector::new(weights)
+            .best_by_score(&scoring_candidates(&all))
+            .expect("pick")
+            .name
+    }
+
+    /// Below the speed preference, content-aware plugins are never chosen
+    /// and the choice is exactly the one without them (FR-010).
+    #[test]
+    #[allow(clippy::expect_used)]
+    fn input_selection_without_speed_preference_ignores_estimates() {
+        for throughput in [0.0, 0.3, 0.5, 0.7, 0.79] {
+            for estimate in [None, Some(0.9), Some(1.5), Some(10.0)] {
+                assert_eq!(
+                    pick(throughput, estimate),
+                    pick_without_aware(throughput),
+                    "throughput {throughput}, estimate {estimate:?}"
+                );
+            }
+        }
+    }
+
+    /// With speed preferred, a content-aware plugin is chosen when its
+    /// estimate is at least `MIN_ESTIMATED_RATIO`, otherwise normal scoring.
+    #[test]
+    #[allow(clippy::expect_used)]
+    fn input_selection_with_speed_preference_uses_the_estimate() {
+        for throughput in [0.8, 0.9, 1.0] {
+            assert_eq!(pick(throughput, Some(MIN_ESTIMATED_RATIO)), "fast");
+            assert_eq!(pick(throughput, Some(2.3)), "fast");
+            for estimate in [None, Some(1.09), Some(1.0), Some(0.5), Some(f64::NAN)] {
+                assert_eq!(
+                    pick(throughput, estimate),
+                    pick_without_aware(throughput),
+                    "throughput {throughput}, estimate {estimate:?}"
+                );
+            }
+        }
+    }
+
+    /// Estimates are only computed when they can change the choice.
+    #[test]
+    #[allow(clippy::expect_used)]
+    fn estimates_only_computed_when_speed_preferred() {
+        let all = aware_candidates();
+        let calls = std::cell::Cell::new(0);
+        let estimate = |_: &PluginMetadata| {
+            calls.set(calls.get() + 1);
+            Some(2.0)
+        };
+        let balanced = ScoringWeights::new(0.5, 0.5).expect("weights");
+        PluginSelector::new(balanced)
+            .choose_for_input(&all, estimate)
+            .expect("pick");
+        assert_eq!(calls.get(), 0);
+        let fast = ScoringWeights::new(0.9, 0.1).expect("weights");
+        PluginSelector::new(fast)
+            .choose_for_input(&all, estimate)
+            .expect("pick");
+        assert_eq!(calls.get(), 1, "only the content-aware plugin is estimated");
+    }
+
+    /// Several eligible content-aware plugins: the highest estimate wins.
+    #[test]
+    #[allow(clippy::expect_used)]
+    fn highest_estimate_wins() {
+        let all = [
+            (meta("deflate", 0x00, 200.0, 0.35), false),
+            (meta("lz-a", 0x05, 900.0, 0.44), true),
+            (meta("lz-b", 0x06, 800.0, 0.40), true),
+        ];
+        let fast = ScoringWeights::new(1.0, 0.0).expect("weights");
+        let chosen = PluginSelector::new(fast)
+            .choose_for_input(&all, |m| Some(if m.name == "lz-a" { 1.5 } else { 2.5 }))
+            .expect("pick");
+        assert_eq!(chosen.name, "lz-b");
     }
 
     #[test]
