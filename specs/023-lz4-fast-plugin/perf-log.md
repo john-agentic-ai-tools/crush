@@ -215,3 +215,34 @@ Selection report (`cargo test --release -p crush-lz --test selection_report
 SC-004: 18/18 routed as required. SC-005: highest cost 1.48% (limit 2%).
 Criterion benches for the estimate and `select_for_input` (1/16/128 MB):
 `fast_lz_select` group in `crush-lz/benches/codec.rs`.
+
+## US3 — end-to-end baseline and pipeline breakdown (T036, T038), 2026-10-29
+
+`perf/compare.py --cores 1 --tools crush-fast-lz,lz4-1 --data real --abba
+--reps 10` (WSL, tmpfs, taskset to CPU 0, median of 10, ABBA order):
+
+| tool | compress MB/s | decompress MB/s | ratio |
+|---|---|---|---|
+| crush --plugin fast-lz | 546.0 | 1,278.9 | 2.23 |
+| lz4 -1 | 606.7 | 1,536.3 | 2.295 |
+| crush / lz4 | 0.90x | 0.83x | |
+
+Phase breakdown (`CRUSH_TIMINGS=1`, same file, tmpfs, CPU 0, 5 runs,
+milliseconds; lz4 whole-process wall time for reference):
+
+| phase | crush compress | crush decompress |
+|---|---|---|
+| setup | 0.01 | 0.01 |
+| read input file | 21.5-30.3 (median 21.7) | 12.9-14.8 (median 13.5) |
+| codec + crush-core (CRC, header, assembly) | 197-203 (codec alone about 186) | 58-61 (codec alone about 53) |
+| write output file | 13.5-16.3 (median 15.7) | 25.9-30.6 (median 29.2) |
+| total (in process) | about 240 | about 102 |
+| lz4 -1 / lz4 -d, whole process | 240 | 70 |
+
+Reading: compression is level with lz4 end to end; the read copy (about
+22 ms) and crush-core's copy/CRC (about 16 ms) are the removable costs.
+Decompression is 46% slower than lz4, mostly in the codec (59 ms in crush
+vs 70 ms for all of lz4); writing the materialised 128 MB result costs
+29 ms, which streaming blocks to the file (T040) would shrink.
+Byte-identity tests (`crush-cli/tests/pipeline_identity.rs`) pass on
+Windows and Linux.

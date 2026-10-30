@@ -14,6 +14,13 @@ precedence when it is first on PATH.
 
     cargo build --release -p crush-cli
     python3 perf/compare.py [--reps 5] [--size-mb 128] [--crush PATH]
+
+Subsets (feature 023): --cores 1, --tools crush-fast-lz,lz4-1, --data real,
+and --abba to interleave the tools' runs (A B B A ...) so drift hits all
+tools alike. A subset run prints its table and writes JSON only with --out,
+so it never overwrites the full comparison.
+
+    python3 perf/compare.py --cores 1 --tools crush-fast-lz,lz4-1 --data real --abba --reps 10
 """
 import argparse
 import datetime
@@ -67,7 +74,7 @@ def core_sets():
 
 
 # Single-threaded tools: measured at 1 core only.
-SINGLE_THREADED = ("gzip-6", "gzip-1")
+SINGLE_THREADED = ("gzip-6", "gzip-1", "crush-fast-lz")
 # Optional tools: (binary, version command).
 OPTIONAL = {"zstd": "zstd --version", "lz4": "lz4 --version"}
 
@@ -77,6 +84,8 @@ def tools(crush, threads):
     all_tools = {
         "crush": (f"{crush} compress {{i}} -o {{o}} -f >/dev/null 2>&1",
                   f"{crush} decompress {{o}} -o {{d}} -f >/dev/null 2>&1"),
+        "crush-fast-lz": (f"{crush} compress --plugin fast-lz {{i}} -o {{o}} -f >/dev/null 2>&1",
+                          f"{crush} decompress {{o}} -o {{d}} -f >/dev/null 2>&1"),
         "gzip-6": ("gzip -6 -c {i} > {o}", "gzip -dc {o} > {d}"),
         "gzip-1": ("gzip -1 -c {i} > {o}", "gzip -dc {o} > {d}"),
         "pigz-6": (f"pigz -6 -p {threads} -c {{i}} > {{o}}",
@@ -128,7 +137,15 @@ def main():
                     if os.path.isdir("/dev/shm") else
                     os.path.join(tempfile.gettempdir(), "crush-compare"))
     ap.add_argument("--out", help="default: perf/comparisons/<machine>.json")
+    ap.add_argument("--cores", help="subset of core sets: 1,4,all")
+    ap.add_argument("--tools", help="subset of tools, e.g. crush-fast-lz,lz4-1")
+    ap.add_argument("--data", help="subset of datasets: " + ",".join(DATASETS))
+    ap.add_argument("--abba", action="store_true",
+                    help="interleave the tools' runs, alternating their order")
     a = ap.parse_args()
+    pick = lambda arg: set(arg.split(",")) if arg else None
+    want_cores, want_tools, want_data = pick(a.cores), pick(a.tools), pick(a.data)
+    subset = any(x is not None for x in (want_cores, want_tools, want_data))
 
     if not sys.platform.startswith("linux"):
         sys.exit("compare.py needs Linux (taskset, tmpfs); on Windows use WSL")
@@ -148,26 +165,47 @@ def main():
     results = []
     try:
         for cores, (cpus, threads) in core_sets().items():
+            if want_cores and cores not in want_cores:
+                continue
             for ds in DATASETS:
+                if want_data and ds not in want_data:
+                    continue
                 i = os.path.join(a.data_dir, f"{ds}.bin")
-                for tool, (c, x) in tools(a.crush, threads).items():
-                    if cores != "1" and tool in SINGLE_THREADED:
-                        continue
-                    pin = f"taskset -c {cpus} "
-                    ct, dt = [], []
-                    for _ in range(a.reps):
-                        ct.append(timed(pin + c.format(i=i, o=o, d=d)))
-                        dt.append(timed(pin + x.format(i=i, o=o, d=d)))
+                sel = {t: cmds for t, cmds in tools(a.crush, threads).items()
+                       if (not want_tools or t in want_tools)
+                       and not (cores != "1" and t in SINGLE_THREADED)}
+                pin = f"taskset -c {cpus} "
+                times = {t: ([], []) for t in sel}
+                ratio = {}
+
+                def run(tool):
+                    c, x = sel[tool]
+                    ct, dt = times[tool]
+                    ct.append(timed(pin + c.format(i=i, o=o, d=d)))
+                    dt.append(timed(pin + x.format(i=i, o=o, d=d)))
                     sh(f"cmp -s {i} {d}")
+                    ratio[tool] = round(size / os.path.getsize(o), 3)
+
+                if a.abba:
+                    order = list(sel)
+                    for rep in range(a.reps):
+                        for tool in (order if rep % 2 == 0 else order[::-1]):
+                            run(tool)
+                else:
+                    for tool in sel:
+                        for _ in range(a.reps):
+                            run(tool)
+
+                for tool, (ct, dt) in times.items():
                     mb = size / 1e6
                     r = {"cores": cores, "data": ds, "tool": tool,
                          "comp_mbs": round(mb / statistics.median(ct), 1),
                          "decomp_mbs": round(mb / statistics.median(dt), 1),
-                         "ratio": round(size / os.path.getsize(o), 3),
+                         "ratio": ratio[tool],
                          "comp_spread_pct": round(
                              (max(ct) - min(ct)) / statistics.median(ct) * 100, 1)}
                     results.append(r)
-                    print(f"{cores:>3} {ds:<10} {tool:<8} compress {r['comp_mbs']:>8} MB/s"
+                    print(f"{cores:>3} {ds:<10} {tool:<13} compress {r['comp_mbs']:>8} MB/s"
                           f"  decompress {r['decomp_mbs']:>8} MB/s  ratio {r['ratio']}",
                           flush=True)
     finally:
@@ -188,10 +226,13 @@ def main():
                if shutil.which(t)},
         },
         "method": {"size_mb": a.size_mb, "reps": a.reps, "statistic": "median",
+                   "abba": a.abba,
                    "io": "tmpfs", "pinning": "taskset",
                    "core_sets": {k: v[0] for k, v in core_sets().items()}},
         "results": results,
     }
+    if subset and not a.out:
+        return
     path = a.out or os.path.join(REPO, "perf", "comparisons", f"{slug(m)}.json")
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w") as f:

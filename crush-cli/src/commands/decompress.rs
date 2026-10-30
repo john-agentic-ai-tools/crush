@@ -180,6 +180,7 @@ fn decompress_file(
     cancel_flag: Arc<std::sync::atomic::AtomicBool>,
 ) -> Result<()> {
     info!("Starting decompression of {}", input_path.display());
+    let mut phases = crate::timings::Phases::start();
     // Check for interrupt before starting
     utils::check_cancelled(&interrupted)?;
 
@@ -222,7 +223,9 @@ fn decompress_file(
 
     // Read compressed file
     trace!("Reading compressed file: {}", input_path.display());
+    phases.mark("setup");
     let compressed_data = fs::read(input_path)?;
+    phases.mark("read");
     debug!("Read {} bytes from compressed file", compressed_data.len());
 
     // Check for interrupt after reading
@@ -271,6 +274,7 @@ fn decompress_file(
         let result = decompress_with_cancel(&compressed_data, cancel_flag)?;
         (result.data, result.metadata)
     };
+    phases.mark("decompress");
 
     // Stop timing
     let duration = start.elapsed();
@@ -295,6 +299,7 @@ fn decompress_file(
     } else {
         // Write to file (with cleanup on failure/interrupt)
         utils::write_with_cleanup(&output_path, &decompressed_data)?;
+        phases.mark("write");
 
         // Check for interrupt after writing (cleanup partial file if interrupted)
         utils::check_cancelled_with_cleanup(&interrupted, &output_path)?;
@@ -391,6 +396,8 @@ fn decompress_file(
         // TODO: Consider adding a --remove or --delete flag in the future if needed
     }
 
+    phases.mark("finish");
+    phases.report("decompress", decompressed_data.len() as u64);
     Ok(())
 }
 

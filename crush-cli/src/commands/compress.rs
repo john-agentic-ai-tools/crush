@@ -173,6 +173,8 @@ fn compress_file(
     // Check for cancellation before starting
     utils::check_cancelled(&interrupted)?;
 
+    let mut phases = crate::timings::Phases::start();
+
     // Validate input file
     utils::validate_input(input_path)?;
 
@@ -259,7 +261,9 @@ fn compress_file(
 
     // Read input file
     trace!("Reading input file: {}", input_path.display());
+    phases.mark("setup");
     let input_data = fs::read(input_path)?;
+    phases.mark("read");
     debug!("Read {} bytes from input file", input_data.len());
 
     // Check for cancellation after reading
@@ -271,6 +275,7 @@ fn compress_file(
     // Compress
     trace!("Starting compression operation");
     let compressed_data = compress_with_options(&input_data, &options)?;
+    phases.mark("compress");
 
     // Stop timing
     let duration = start.elapsed();
@@ -310,6 +315,8 @@ fn compress_file(
             return Err(CliError::Interrupted);
         }
     }
+    phases.mark("write");
+    phases.report("compress", input_size);
 
     // Calculate statistics
     let output_size = compressed_data.len() as u64;

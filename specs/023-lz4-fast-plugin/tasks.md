@@ -117,8 +117,8 @@ description: "Task list for the fast-lz plugin (LZ4-class codec + content-aware 
 
 ### Tests for User Story 3 ⚠️ write first
 
-- [ ] T036 [P] [US3] Extend `perf/compare.py` with `--cores LIST` and `--tools LIST` filters and a `crush-fast-lz` tool (`crush compress --plugin fast-lz`), plus ABBA ordering per tool pair when `--abba` is given; keep default behaviour unchanged
-- [ ] T037 [P] [US3] CLI byte-identity tests in `crush-cli/tests/fast_lz.rs`: output of `crush compress` for empty, 1-byte, threshold−1, and 30 MB inputs is identical before and after pipeline changes (golden CRC32 + length captured before T039), for `fast-lz`, `deflate`, and `parallel-deflate`
+- [X] T036 [P] [US3] Extend `perf/compare.py` with `--cores LIST` and `--tools LIST` filters and a `crush-fast-lz` tool (`crush compress --plugin fast-lz`), plus ABBA ordering per tool pair when `--abba` is given; keep default behaviour unchanged
+- [X] T037 [P] [US3] CLI byte-identity tests in `crush-cli/tests/fast_lz.rs`: output of `crush compress` for empty, 1-byte, threshold−1, and 30 MB inputs is identical before and after pipeline changes (golden CRC32 + length captured before T039), for `fast-lz`, `deflate`, and `parallel-deflate` (done as `crush-cli/tests/pipeline_identity.rs`: library goldens without file metadata, which differs by platform, plus CLI output == library output for the same metadata; empty input is rejected by the CLI for every plugin)
 
 ### Implementation for User Story 3
 
