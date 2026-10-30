@@ -6,10 +6,16 @@
 //! ```text
 //! cargo run --release -p crush-lz --example codec_bench -- FILE [RUNS]
 //! ```
+//!
+//! `FILE` = `text` uses the 64 MB synthetic text corpus of the criterion
+//! benches instead of a file.
 #![allow(clippy::expect_used, clippy::cast_precision_loss)]
 
 use crush_lz::{FastLzConfig, compress, decompress};
 use std::time::Instant;
+
+#[path = "../../crush-parallel/benches/common/variants.rs"]
+mod variants;
 
 fn mbs(bytes: usize, secs: f64) -> f64 {
     bytes as f64 / 1e6 / secs
@@ -24,7 +30,11 @@ fn main() {
     let mut args = std::env::args().skip(1);
     let path = args.next().expect("usage: codec_bench FILE [RUNS]");
     let runs: usize = args.next().map_or(5, |r| r.parse().expect("RUNS"));
-    let data = std::fs::read(&path).expect("read input");
+    let data = if path == "text" {
+        variants::generate_corpus(64 * 1024 * 1024, 0xDEAD_BEEF_CAFE_1234)
+    } else {
+        std::fs::read(&path).expect("read input")
+    };
     let config = FastLzConfig::default();
 
     let mut packed = Vec::new();

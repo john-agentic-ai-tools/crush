@@ -127,3 +127,64 @@ Watch: the text corpus compresses slightly slower with the smaller table
 (CI entirely above zero, under its noise floor), and most of the ratio
 margin is used (2.256 vs the 2.18 floor). The ratio alone cannot buy the
 remaining compress gap (0.75x of 1.15x).
+
+## Experiment 4 — lz4-style search loop + 6-byte hash (T023), not kept
+
+Change: lz4's search structure (the next position's hash computed before
+the current candidate is checked; the position right after a match tried
+at once) plus a table hash over 6 bytes instead of 4 (candidates still
+confirmed on 4 bytes). Hash width screened on the 2^12 table, WSL same
+session as lz4:
+
+| hash | compress MB/s | vs lz4 | decompress MB/s | ratio |
+|---|---|---|---|---|
+| 4 bytes | 607 | 0.77x | 2,173 | 2.256 |
+| 5 bytes | 626 | 0.79x | 2,360 | 2.291 |
+| 6 bytes | 694 | 0.87x | 2,550 | 2.231 |
+| 7 bytes | 697 | 0.86x | 2,569 | 2.147 (below 2.18) |
+| 8 bytes | 740 | 0.94x | 2,535 | 2.027 (below 2.18) |
+| 6 bytes, 2^13 table | 613 | 0.77x | 2,574 | 2.318 |
+
+`bench.py ab --ref HEAD --suite fast-lz` (goal-fastlz-exp4): REGRESSION.
+compress/file -5.5%, decompress/file -11.0%, decompress/text-64MB -26.0%,
+but compress/text-64MB +7.1% (CI +6.1..+8.1%, over the 5% gate).
+
+Split (WSL, codec_bench on the file and on the synthetic text corpus,
+compress MB/s): HEAD 607 / 484; search loop only 587 / 492; loop + 6-byte
+hash 671 / 473. The loop restructuring does not help in safe Rust; the
+gain is the hash. Decision (user): find the cause with the last experiment.
+
+## Experiment 5 — 6-byte hash on the original loop (T023), kept
+
+| codec (WSL, best of 7) | compress MB/s | decompress MB/s | ratio |
+|---|---|---|---|
+| lz4 -1 | 784 | 4,429 | 2.296 |
+| fast-lz exp5 | 721 | 2,519 | 2.230 |
+| fast-lz / lz4 | 0.92x | 0.57x | 0.971 |
+
+`bench.py ab --ref HEAD --suite fast-lz` (goal-fastlz-exp5): IMPROVED.
+
+| benchmark | HEAD | exp5 | time | ratio |
+|---|---|---|---|---|
+| compress/file | 590 MB/s | 670 MB/s | -12.0% | 2.256 -> 2.230 |
+| compress/text-64MB | 475 MB/s | 490 MB/s | -3.1% (noise) | 1.792 -> 1.897 |
+| decompress/file | 1,701 MB/s | 1,962 MB/s | -13.3% | |
+| decompress/text-64MB | 1,631 MB/s | 2,198 MB/s | -25.8% | |
+| decompress/random-64MB | 4,577 MB/s | 4,455 MB/s | +2.7% (under gate; stored blocks) | 1.000 |
+| compress/random-64MB | | | noise | 1.000 |
+
+## Outcome of T023 (5 experiments, cap reached)
+
+| | v0 | final (exp5) | target | status |
+|---|---|---|---|---|
+| compress vs lz4 | 0.59x (467 MB/s) | 0.92x (721 MB/s) | >= 1.15x | SC-001 MISS |
+| decompress vs lz4 | 0.23x (1,016 MB/s) | 0.57x (2,519 MB/s) | >= 0.60x | SC-002 MISS (close) |
+| ratio | 2.335 | 2.230 | >= 2.18 | SC-003 PASS |
+
+Frontier: within the ratio floor the best measured compress speed is 0.92x
+lz4 (6-byte hash, 2^12 table); hashing 8 bytes reaches 0.94x at ratio 2.03.
+A fresh 128 MB output buffer costs about 12 ms (lz4's benchmark reuses its
+buffer), which alone caps decompression near 0.7x of lz4 even with an
+lz4-speed decode loop. Going further would need unchecked copies/loads
+(`unsafe`) or a different algorithm. Decision (user, 2026-10-29): record the
+frontier, keep the best variant, continue with US2; targets unchanged.

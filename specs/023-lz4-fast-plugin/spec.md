@@ -103,6 +103,7 @@ A user runs `crush compress` / `crush decompress` with the fast plugin on one co
 - **SC-001**: On one core, in memory, the fast plugin compresses the reference corpus at 906 MB/s or more — at least 15% faster than the reference fast compressor (788 MB/s on the reference machine), re-measured in the same session when verifying.
 - **SC-002**: On one core, in memory, the fast plugin decompresses the reference corpus at 2,650 MB/s or more (at least 60% of the reference compressor's 4,417 MB/s).
 - **SC-003**: The fast plugin's compression ratio on the reference corpus is 2.18 or higher (within 5% of the reference compressor's 2.296).
+- **Measured outcome (2026-10-29, after tuning)**: compress 0.92x of the reference compressor (SC-001 not met), decompress 0.57x (SC-002 not met, close), ratio 2.230 (SC-003 met). The targets stand unchanged; the user chose to record the measured speed/ratio frontier and continue with the remaining stories. Details: `perf-log.md`, "Outcome of T023".
 - **SC-004**: With speed preferred and no plugin named, 100% of base64-text, random, and already-compressed test inputs are routed away from the fast plugin, and 100% of the real-file, source-code and log test inputs are routed to it.
 - **SC-005**: The selection estimate adds no more than 2% to compression time for inputs of 1 MB or more.
 - **SC-006**: The fast plugin's decoder survives at least 100,000 fuzzing iterations with zero crashes, hangs or round-trip mismatches.

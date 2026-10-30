@@ -42,7 +42,7 @@ Targets: compress ≥ 906 MB/s, decompress ≥ 2,650 MB/s, ratio ≥ 2.18.
 ## R4. Compressor design for ≥ 1.15× lz4 speed in safe code
 
 **Decision** (starting design; tuned with `/perf goal` experiments after the first working version):
-- Single-probe hash table of 2^12 `u32` entries (16 KiB, fits L1; 2^14 was the first choice and measured 16% slower for 2% more ratio, see perf-log experiment 3), indexed by a multiplicative hash of 4 bytes read as a little-endian `u32` from an 8-byte `u64` load (`u64::from_le_bytes` on a fixed-size slice; one bounds check per load).
+- Single-probe hash table of 2^12 `u32` entries (16 KiB, fits L1; 2^14 was the first choice and measured 16% slower for 2% more ratio, see perf-log experiment 3), indexed by a multiplicative hash of 6 bytes from an 8-byte `u64` load (4 bytes was the first choice; 6 measured faster, perf-log experiments 4 and 5); candidates are confirmed on 4 bytes (`u64::from_le_bytes` on a fixed-size slice; one bounds check per load).
 - Table reused across blocks without clearing: positions stored relative to a running base so stale entries fail the offset/verify check instead of needing a 64 KiB memset per block.
 - Match verification with a 4-byte compare, then extension 8 bytes at a time (`(a ^ b).trailing_zeros() / 8`).
 - LZ4-style acceleration: the step between probes grows with consecutive misses (`1 + misses >> 6`), so incompressible regions are skipped quickly.

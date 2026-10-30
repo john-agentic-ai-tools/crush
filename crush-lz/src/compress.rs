@@ -3,7 +3,8 @@
 //! Design (research R4): a 2^12-entry table of positions (16 KB, stays in
 //! L1; 2^14 compressed 2% better but 16% slower), reused across
 //! blocks without clearing (entries older than the current block fail the
-//! range check); 4-byte matches found by a multiplicative hash; matches
+//! range check); matches of 4 or more bytes found through a multiplicative
+//! hash of the next 6 bytes; matches
 //! extended 8 bytes at a time; the probe step grows while no match is found,
 //! so incompressible regions are skipped quickly.
 
@@ -84,7 +85,7 @@ impl Compressor {
             let mut misses = 0u32;
             while i < limit {
                 let word = read_u32(src, i);
-                let h = hash(word);
+                let h = hash6(read_u64(src, i));
                 let cand = self.table[h];
                 let here = base + pos32(i);
                 self.table[h] = here;
@@ -104,7 +105,7 @@ impl Compressor {
                     misses = 0;
                     // Index a position inside the match for the next search.
                     if i < limit && i >= 2 {
-                        self.table[hash(read_u32(src, i - 2))] = base + pos32(i - 2);
+                        self.table[hash6(read_u64(src, i - 2))] = base + pos32(i - 2);
                     }
                 } else {
                     misses += 1;
@@ -122,9 +123,13 @@ fn pos32(i: usize) -> u32 {
     u32::try_from(i).unwrap_or(u32::MAX)
 }
 
+/// Hash of the 6 bytes at the low end of `x`. Hashing more than the 4
+/// bytes a match needs skips most 4- and 5-byte coincidences, which make
+/// short, costly sequences: faster in both directions for a small ratio
+/// cost (measured 4 to 8 bytes, perf-log experiments 4 and 5).
 #[inline]
-fn hash(word: u32) -> usize {
-    (word.wrapping_mul(2_654_435_761) >> (32 - HASH_LOG)) as usize & (HASH_SIZE - 1)
+fn hash6(x: u64) -> usize {
+    ((x << 16).wrapping_mul(227_718_039_650_203) >> (64 - HASH_LOG)) as usize & (HASH_SIZE - 1)
 }
 
 #[inline]
