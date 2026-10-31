@@ -27,6 +27,8 @@ Crush uses a pinned Rust toolchain to ensure consistency across all development 
 
 **Note**: On Windows, you must have a Unix shell environments such  Git Bash or Windows Subsystem for Linux. This is required for the quality gate hooks (`.claude/hooks/*.sh`).
 
+Performance work needs a few more tools; see [Performance Tooling](#performance-tooling).
+
 ### Installation Steps
 
 1. **Install Rust** (if not already installed):
@@ -203,6 +205,67 @@ cargo tarpaulin --out Html
 - **Integration tests**: Test component interactions
 - **Benchmark tests**: Verify performance characteristics
 - **Fuzz tests**: Discover edge cases and vulnerabilities
+
+## Performance Tooling
+
+Only needed to profile or tune Crush, not to build it or run the tests. Check your setup at any time:
+
+```bash
+python .claude/skills/perf/bench.py doctor
+```
+
+| Tool | Where | Answers | Install |
+|------|-------|---------|---------|
+| samply | Windows, WSL/Linux | Where does the time go? | `cargo install --locked samply` |
+| valgrind (callgrind) | WSL/Linux | Did the instruction count change, and in which function? No timing noise | `sudo apt install valgrind` |
+| lz4, zstd, pigz | WSL/Linux | How do we compare with other tools? | `sudo apt install lz4 zstd pigz` |
+
+**Windows:** profiling runs in WSL by default, with no prompts. Profiling the Windows build (`--env here`, or a `/perf diagnose` step that WSL couldn't settle) is occasional and needs your approval.
+
+**UAC prompts are expected.** samply records through Event Tracing for Windows, which needs administrator rights, so each Windows profile raises one UAC prompt, and comparing two commits raises two.
+
+- The prompt names `samply.exe` with an unknown publisher, because `cargo install` builds an unsigned binary. Signing it wouldn't remove the prompt.
+- The profile waits until you respond, so a long `/perf` job can pause here. It warns you first and leaves this step until last.
+- Declining stops that profile. Unattended WSL results are unaffected.
+
+We recommend keeping this prompt, but that's your choice.
+
+**Optional: trace permissions for a perf session.** Windows lets a non-elevated account trace if it's in the `Performance Log Users` group and has the "Profile system performance" right. Run from an elevated terminal, then sign out and back in:
+
+```powershell
+net localgroup "Performance Log Users" "$env:USERNAME" /add
+# Then add your account to "Profile system performance" in secpol.msc:
+# Local Policies > User Rights Assignment
+```
+
+- **Risk:** while these are in place, any process running as you can trace system activity without a prompt, including what other programs are doing. That includes build scripts and dependencies you run.
+- **Remove them when you finish the session.** Don't leave them on permanently:
+
+  ```powershell
+  net localgroup "Performance Log Users" "$env:USERNAME" /delete
+  # Then remove your account from "Profile system performance" in secpol.msc, and sign out.
+  ```
+
+- **Limit:** this does not stop the prompt for `bench.py` today, because samply always requests elevation. It only helps if you run `xperf` yourself and load the trace with `samply import`. We haven't tested that these permissions are enough for CPU sampling.
+
+Avoid elevated scheduled tasks that accept a command or path: they let any process in your account gain administrator rights silently.
+
+**WSL/Linux:** samply needs `perf_event_paranoid` at 1 or lower. Many distributions default to 2, and samply then refuses to record. Set it for the current session:
+
+```bash
+echo 1 | sudo tee /proc/sys/kernel/perf_event_paranoid
+```
+
+The setting resets when WSL restarts. To apply it at every start, add this to `/etc/wsl.conf`:
+
+```ini
+[boot]
+command = "sysctl -w kernel.perf_event_paranoid=1"
+```
+
+**Limits under WSL:** WSL2 may expose no hardware performance counters (no `cpu` entry in `/sys/bus/event_source/devices`), so cycle, cache-miss and branch-miss counts are unavailable there; samply falls back to software sampling.
+
+Windows and WSL builds differ, so a slowdown measured on one may not appear on the other. Profile on the platform where it was measured.
 
 ## Pull Request Process
 

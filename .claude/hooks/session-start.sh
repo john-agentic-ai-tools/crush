@@ -7,7 +7,8 @@
 #
 #  1. Resume check: an interrupted sweep on the current branch (same rule as
 #     step 0 of .claude/skills/security-patch/SKILL.md).
-#  2. Daily advisory check: at most once per 24h, cargo audit against the
+#  2. Open /perf goal session on this branch (it silences the perf Stop hook).
+#  3. Daily advisory check: at most once per 24h, cargo audit against the
 #     workspace lockfile.
 
 set -u
@@ -35,7 +36,17 @@ if [[ "$BRANCH" =~ ^[0-9]{3}-.*(security|dependency|dependencies|deps|toolchain)
     fi
 fi
 
-# --- 2. Daily advisory check -----------------------------------------------
+# --- 2. Open /perf goal session --------------------------------------------
+# A session marker silences the perf-trigger Stop hook for this branch. If a
+# goal run crashed or was abandoned without `session end`, say so.
+SESSION="$STATE_DIR/perf-session.json"
+if [ -f "$SESSION" ] && grep -q "\"branch\": \"$BRANCH\"" "$SESSION" 2>/dev/null; then
+    EXPIRES="$(sed -n 's/.*"expires": "\([^"]*\)".*/\1/p' "$SESSION" | head -1)"
+    echo "A /perf goal session is open on '$BRANCH' (expires $EXPIRES); the perf-trigger Stop hook stays silent until then."
+    echo "If no /perf goal is in progress, end it: python .claude/skills/perf/bench.py session end"
+fi
+
+# --- 3. Daily advisory check -----------------------------------------------
 STAMP="$STATE_DIR/last-audit"
 if [ -n "$(find "$STAMP" -mmin -1440 2>/dev/null)" ]; then
     exit 0
@@ -46,8 +57,9 @@ command -v cargo >/dev/null 2>&1 || exit 0
 cargo audit --version >/dev/null 2>&1 || exit 0
 [ -f Cargo.lock ] || exit 0
 
-PY="$(command -v python3 || command -v python)"
-[ -n "$PY" ] || exit 0
+# shellcheck source=lib/find-python.sh
+. .claude/hooks/lib/find-python.sh 2>/dev/null || exit 0
+find_python || exit 0
 
 FINDINGS="$(timeout 60 cargo audit --json 2>/dev/null | "$PY" -c '
 import json, sys

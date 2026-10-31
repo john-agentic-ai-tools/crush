@@ -1,6 +1,6 @@
 ---
 name: perf
-description: Benchmark-driven performance work for Crush. `check` runs a quick A/B against the develop merge base and flags >5% regressions (auto-suggested by a Stop hook after significant hot-path edits). `goal "<text>"` takes an optimization goal such as "improve CPU compression by 10%", pushes back if it's vague or unrealistic, measures, profiles, plans with an Opus planner in plan mode, runs TDD experiments, and ships a PR with before/after numbers. `baseline` refreshes the committed per-machine baseline. Use for "perf check", "benchmark", "is this slower", "make X faster", "optimize", "performance goal", "regression".
+description: Benchmark-driven performance work for Crush. `diagnose` explains a slowdown from profiles, without changing code. `check` runs a quick A/B against the develop merge base and flags >5% regressions (auto-suggested by a Stop hook after significant hot-path edits). `goal "<text>"` takes an optimization goal such as "improve CPU compression by 10%", pushes back if it's vague or unrealistic, measures, profiles, plans with an Opus planner in plan mode, runs TDD experiments, and ships a PR with before/after numbers. `baseline` refreshes the committed per-machine baseline. Use for "perf check", "benchmark", "is this slower", "make X faster", "optimize", "performance goal", "regression".
 argument-hint: "check | goal \"<goal>\" | baseline"
 ---
 
@@ -15,7 +15,7 @@ this context. `perf/README.md` explains baselines for humans.
 
 - **Decide only on `bench.py ab`.** A claim of "faster" or "no regression"
   needs both sides measured now, on this machine, interleaved: `ab --ref <base>`
-  builds the base commit in a temporary worktree (own `target/perf/target-base`, reuses our
+  builds the base commit in a worktree (own `target/perf/target-base-<sha>`, reuses our
   `Cargo.lock`) and runs base, new, new, base. Running one side after the
   other lets thermal/turbo drift show up as a fake regression of whichever ran
   second (seen in testing: identical code, +4–6% "slower"). The committed
@@ -34,6 +34,17 @@ this context. `perf/README.md` explains baselines for humans.
 - **Constitution gates still apply**: TDD, no `.unwrap()`/`.expect()` in
   production, < 5% regression anywhere, no ratio loss unless agreed, allowed
   dependencies only, fuzz when decode/format code changes.
+- **Don't re-enter `/perf` from its own Stop hook.** `perf-trigger.sh` asks
+  for `/perf check` after hot-path edits. It stays silent when `bench.py
+  session` marks a `/perf goal` as owning the branch, or when the ledger shows
+  the current change set was measured or is being measured by `run`/`noise`/`ab`
+  (`bench.py changeset --hook` prints the decision). If it fires during `/perf`
+  anyway, say so and don't start a second benchmark job; an in-flight or
+  finished `ab` on that tree is the check.
+- **Find the cause before changing code.** Name a root cause only from
+  profile evidence (`/perf diagnose`). If the tools aren't available, say so
+  and report the cause as unknown; never present a guess as a cause. Setup is
+  in `CONTRIBUTING.md`, "Performance Tooling"; `bench.py doctor` checks it.
 - Commits follow security-patch step 6 (signed, never `--no-verify`,
   signing handoff to the user). Auto mode can't commit `.claude/` files; hand
   those to the user too.
@@ -48,6 +59,30 @@ this context. `perf/README.md` explains baselines for humans.
 | `full` | every bench in core, parallel, gpu |
 
 Add `--quick` (1 s warm-up, 3 s measurement) for `check`; never for gating.
+
+## Measurement tiers
+
+An `ab` on one benchmark takes about a minute once its base commit is built
+(the first run for a commit takes a few minutes; `bench.py clean` frees the
+kept checkouts and target dirs), so measure only what changed while iterating
+and widen as a change earns it:
+
+| tier | command | use | can decide |
+|---|---|---|---|
+| Screen | `ab --ref <base> --changed --quick` | each iteration | drop an idea early, nothing else |
+| Keep | `ab --ref <base> --changed` | before keeping an experiment | keep or revert |
+| Gate | `ab --ref <merge base> --suite full` | final, before a PR | ship |
+
+`--filter '<regex>'` narrows further, and `bench.py targets --ref <base>` shows
+what `--changed` would pick. `--changed` follows a table of files to
+benchmarks, so it can miss an indirect effect; that's why the Gate tier stays
+mandatory. If `crush-cli` changed, it also prints the `perf/compare.py` command
+to run, because criterion doesn't cover the CLI.
+
+Identical source built twice measured +1.1%, +1.8% and +3.2% on
+`decompress_medium/1MB`: separate builds lay code out differently. Run
+`noise --filter '<regex>'` before trusting a small targeted result, or use
+`callgrind`, which reads exactly 0 on identical code.
 
 ---
 
@@ -71,6 +106,42 @@ Fast regression check. No plan mode, no code changes.
      running `/perf goal`. Don't fix it automatically. If the confirmation
      run clears it, run `noise` for that crate so its floor reflects what you
      just saw.
+   - `slower (<gate)` on a ms-scale benchmark in both a quick and a full run:
+     mention it and suggest `/perf diagnose`, even though it doesn't block.
+
+## Mode `diagnose "<benchmark or symptom>"`
+
+Explain a slowdown or a shortfall with evidence. No code changes, no plan mode.
+
+1. Name one criterion id and the base ref. If the symptom doesn't identify one,
+   ask. Note the platform the problem was measured on: Windows and WSL builds
+   differ, and criterion A/Bs normally run on Windows.
+2. Start in WSL so the job runs unattended: dispatch `perf-profiler` for
+   `callgrind` and `profile-diff --ref <base>` (`--env wsl`, the default).
+3. Classify from what came back. If that settles it, stop here. Add a Windows
+   `profile-diff --env here` only if the WSL evidence can't explain a slowdown
+   measured on Windows. Do it as the last step, after everything unattended has
+   finished and been reported, and tell the user first: it stalls on one UAC
+   prompt per side until someone approves. The prompt is expected, and shows
+   `samply.exe` from an unknown publisher. Don't change group membership,
+   user rights or scheduled tasks to avoid it; those are the developer's
+   choice (`CONTRIBUTING.md`, "Performance Tooling").
+4. Use this table:
+
+   | evidence | conclusion |
+   |---|---|
+   | instructions up, in a named function | code change: name the function and the diff that caused it |
+   | instructions flat, time up, same functions and shares | layout, alignment or inlining in the hot code |
+   | instructions flat, a function's share moved | look at that function: memory, cache or a dependency, not instruction count |
+   | flat on WSL, slower on Windows | platform-specific: the Windows `profile-diff` decides |
+   | a repeated A/A shows the same delta | noise: run `noise --filter` and stop |
+
+5. Report the class, the numbers behind it, what would confirm it, and what it
+   doesn't settle. Sampling shows shares of time, not absolute cost. Callgrind
+   counts instructions, not cycles, so it can rule a code change in or out but
+   says nothing about cache or branch behaviour, and WSL here has no hardware
+   counters. Log it in `perf/log/<YYYY-MM-DD>-<slug>.md`, or in the feature's
+   `perf-log.md`.
 
 ## Mode `goal "<text>"`
 
@@ -100,6 +171,12 @@ Examples:
 - "use less memory": peak RSS during compress, or per-thread buffers?
 
 ### 3. Measure
+
+Once the goal is confirmed, start the session that keeps the perf Stop hook
+quiet while this goal owns the branch (expires after 12 h):
+`python .claude/skills/perf/bench.py session begin --mode goal --name <slug>`.
+Run it again after creating the experiment branch in step 7: the session is
+tied to the branch it was started on.
 
 Dispatch `perf-bench` for, in order:
 1. `fingerprint`, and `noise` on the target suite (name `goal-<slug>-noise`).
@@ -133,8 +210,10 @@ counter-offer; continue only on a goal the user confirms.
 ### 5. Profile
 
 Dispatch `perf-profiler` on the most representative benchmark of the goal
-(e.g. `compress_throughput/threads=default/block=1024KB`), output dir in the
-scratchpad. For thread-scaling goals, also profile the `threads=1` variant.
+(e.g. `compress_throughput/threads=default/block=1024KB`). For thread-scaling
+goals, also profile the `threads=1` variant. If it returns `PROFILER: none`,
+stop and give the user the `bench.py doctor` output: don't plan without a
+profile.
 
 ### 6. Plan (plan mode, Opus planner)
 
@@ -142,8 +221,9 @@ scratchpad. For thread-scaling goals, also profile the `threads=1` variant.
 2. Dispatch `perf-planner` (runs on Opus) with: the goal record, the baseline
    table, noise floor, ceiling lines, the profile summary, and the engine's
    source paths.
-3. Write the plan file from its answer: ranked hypotheses, each with expected
-   gain, risk, files, tests-first, experiment, and keep criterion. Surface its
+3. Write the plan file from its answer: ranked hypotheses, each with its
+   profile evidence, a prediction a profile can prove wrong, expected gain,
+   risk, files, tests-first, experiment, and keep criterion. Surface its
    `NEEDS USER DECISION` items as explicit questions.
 4. `ExitPlanMode` for approval. Don't change code before approval.
 
@@ -159,15 +239,23 @@ For each approved hypothesis, in rank order:
    performance is the thing that changes).
 2. Implement the change.
 3. `bash .claude/hooks/rust-quality-gate.sh` (fmt, clippy, tests).
-4. `perf-bench`: `ab --ref HEAD --suite <target suite> --name goal-<slug>-exp<N>`
-   (HEAD = last kept state; the experiment is the uncommitted working tree).
+4. `perf-bench`: `ab --ref HEAD --changed --name goal-<slug>-exp<N>` (HEAD =
+   last kept state; the experiment is the uncommitted working tree). Use the
+   Screen tier first when an idea is doubtful. Add `--filter` if the goal's
+   target benchmark isn't in the `--changed` selection.
 5. **Keep** only if the target benchmark improved significantly, nothing
    regressed > 5%, and the ratio didn't drop; then commit it locally
    (signed, security-patch step 6) so the next experiment's base is HEAD.
    Otherwise **revert** the change (keep the tests if they're useful).
-6. Append to the log: hypothesis, change summary, table, verdict, kept/reverted.
+6. Re-profile the target benchmark (`callgrind`, or `profile-diff --ref HEAD`)
+   and compare it with the hypothesis's prediction. A kept change whose
+   prediction failed means the theory was wrong: say so, and revise the
+   remaining hypotheses before the next experiment.
+7. Append to the log: hypothesis, prediction, what the profile showed, change
+   summary, table, verdict, kept/reverted.
 
-Stop when the goal is met, hypotheses run out, or after 5 experiments. Measure
+Agree a time budget at intake (the default is one working session). Stop when
+the goal is met, hypotheses run out, or the budget is spent. Measure
 cumulative progress with `ab --ref $GOAL_BASE --suite <target suite>` and
 report it against the target either way.
 
@@ -187,6 +275,10 @@ report it against the target either way.
 6. PR and CI: follow security-patch steps 7–9 (PR fallback, CI monitor,
    auto-fix rounds, report). Put the goal record, the tables, and the
    experiment log summary in the PR body.
+7. `python .claude/skills/perf/bench.py session end`. Also end the session
+   whenever the goal stops early (rejected as unrealistic, abandoned, stopped
+   by the user, or the experiment cap reached without shipping), so later
+   edits on the branch get the normal `/perf check` reminder.
 
 ## Mode `baseline`
 

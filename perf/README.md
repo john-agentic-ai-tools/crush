@@ -89,6 +89,8 @@ python3 perf/compare.py --cores 1 --tools crush-fast-lz,lz4-1 --data real --abba
 tools' runs (A B B A ...) so drift hits all of them alike. Subset runs print
 their table and write JSON only with `--out`.
 
+Profiler setup is in [`CONTRIBUTING.md`](../CONTRIBUTING.md#performance-tooling).
+
 ## fast-lz vs lz4, in memory
 
 `perf/lz-vs-lz4.sh [RUNS]` (WSL/Linux) times the `fast-lz` codec and

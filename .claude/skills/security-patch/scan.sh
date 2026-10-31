@@ -8,14 +8,15 @@
 
 set -uo pipefail
 
-PY="$(command -v python3 || command -v python)"
-if [ -z "$PY" ]; then
-    echo "ERROR: python is required to parse cargo audit JSON" >&2
-    exit 0
-fi
-
 ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 cd "$ROOT" || exit 0
+
+# shellcheck source=../../hooks/lib/find-python.sh
+. .claude/hooks/lib/find-python.sh 2>/dev/null
+if ! declare -F find_python >/dev/null || ! find_python; then
+    echo "ERROR: python >= 3.8 is required to parse cargo audit JSON" >&2
+    exit 0
+fi
 
 # Mirror .github/workflows/security-audit.yml: the workspace lockfile plus each
 # fuzz crate's own lockfile (fuzz crates are excluded from the workspace).

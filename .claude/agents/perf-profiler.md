@@ -8,37 +8,36 @@ You profile Crush benchmarks and summarise where the time goes. You never edit,
 stage, or commit files in the repo. Profiles and intermediate files go in the
 directory the caller names (the session scratchpad), never in the repo.
 
-Input from the caller: package, bench target, criterion filter (a single
-benchmark id), and an output directory.
+Input from the caller: a criterion benchmark id, the job (profile, diff or
+callgrind), and for the last two a base ref.
 
-## 1. Build with symbols
+## 1. Check the tools
 
-```
-CARGO_PROFILE_RELEASE_DEBUG=true CARGO_PROFILE_RELEASE_STRIP=false \
-  cargo bench -p <pkg> --bench <bench> --no-run --message-format=json
-```
+Run `python .claude/skills/perf/bench.py doctor`. If a tool you need is missing,
+report `PROFILER: none` with its output. Don't install anything yourself.
 
-Take the bench executable path from the `compiler-artifact` line whose
-`target.name` is `<bench>` and `executable` is non-null.
+## 2. Run the job
 
-## 2. Record
+Run these with `bench.py`; they build with symbols in their own target dirs and
+write profiles under `target/perf/profiles` (`~/.cache/crush-perf/perf/profiles`
+in WSL):
 
-Run the executable directly in profile mode so only the target benchmark runs
-and setup isn't counted: `<exe> --bench --profile-time 15 '<filter>'`.
+- **Profile**: `profile --bench-id <id> [--side base --ref <r>]`
+- **Diff**: `profile-diff --bench-id <id> --ref <r>`: per-function
+  and per-line changes between `<r>` and the working tree.
+- **Re-read**: add `--reuse` to `profile` or `profile-diff` to re-parse the saved
+  profiles without recording, which needs no UAC prompt.
+- **Callgrind**: `callgrind --bench-id <id> --ref <r>`: instruction counts per
+  function on both sides. Always a Linux build. A benchmark with no case fails;
+  say so rather than editing `CALLGRIND_CASES`.
 
-Use the first profiler that is available:
-
-1. **samply** (`samply --version`): `samply record --save-only -o <out>/profile.json.gz -- <exe> --bench --profile-time 15 '<filter>'`.
-   Then summarise with `samply` symbol output or by loading the JSON in Python:
-   aggregate self samples per function and inclusive samples per frame on the stack.
-2. **Windows Performance Recorder** (`wpr -help` succeeds, Windows only; needs
-   an elevated shell): `wpr -start CPU -filemode`, run the bench, `wpr -stop <out>\trace.etl`,
-   then `wpaexporter` or `xperf -i <out>\trace.etl -symbols -a stack -butterfly` if
-   present. If elevation fails, say so and fall through.
-3. **perf** (Linux): `perf record -g -o <out>/perf.data -- ...` then
-   `perf report -i <out>/perf.data --no-children --stdio | head -60` and with `--children`.
-4. None available: report `PROFILER: none` and suggest `cargo install samply`.
-   Don't install anything yourself.
+These run in WSL by default, without prompting. Use `--env here` on Windows only
+if the caller asks for it: samply needs admin rights there and raises one UAC
+prompt per side, so it stalls until someone approves. Re-reading a Windows
+profile with `--reuse` needs `--env here` too, but raises no prompt.
+If a job fails or times out, report that; never substitute the other platform
+without saying so. If samply can't be used on either, fall back to `wpr` on
+Windows or `perf record -g` on Linux, and name which one you used.
 
 Also note thread utilisation: how many threads had samples and the share of
 samples spent in rayon idle/steal/park functions versus work.

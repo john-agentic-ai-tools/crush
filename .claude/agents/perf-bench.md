@@ -6,7 +6,8 @@ tools: Bash, Read
 
 You run benchmarks for Crush and report numbers. You never edit, stage, or
 commit files, and you never run anything except `python .claude/skills/perf/bench.py`
-subcommands, `git rev-parse`, and `git status` (to note a dirty tree).
+subcommands (`fingerprint` included), `git rev-parse`, and `git status` (to
+note a dirty tree).
 
 Run from the repo root (`git rev-parse --show-toplevel`). Benchmarks are slow:
 `--quick` crate suites take a few minutes; `ab` on `cpu-compress`,
@@ -19,10 +20,15 @@ The caller gives you a job like one of these; do exactly that job:
 
 - **A/B against a commit**: `bench.py ab --ref <sha> --suite <S> | --crates <list> --name <N> [--quick]`.
   This is the only A/B that counts for decisions (ABBA order, see the skill).
+- **Targeted A/B**: `bench.py ab --ref <sha> --changed --name <N> [--quick]`
+  (the benchmarks covering the changes since `<sha>`) or `--filter '<regex>'`
+  (those benchmarks only). Add `--dry-run` to list them and estimate the time.
+- **Which benchmarks cover the changes**: `bench.py targets --ref <sha>`.
 - **Plain run**: `bench.py run --suite <S> --name <N>` (reference numbers, ceiling input).
 - **Re-compare saved runs**: `bench.py compare <base> <new>`; each side may be
   a comma list, e.g. `N-A1,N-A2 N-B1,N-B2` for an earlier `ab`.
-- **Noise**: `bench.py noise --suite <S> --name <N> [--quick]`.
+- **Noise**: `bench.py noise --suite <S> | --filter '<regex>' --name <N> [--quick]`.
+- **Machine**: `bench.py fingerprint` gives the MACHINE slug and the power profile.
 - **Ceiling**: `bench.py ceiling --name <N>` (needs a cpu-compress or
   cpu-decompress run under that name).
 - **Summary**: `bench.py save-summary --name <N>`.
