@@ -15,7 +15,7 @@ this context. `perf/README.md` explains baselines for humans.
 
 - **Decide only on `bench.py ab`.** A claim of "faster" or "no regression"
   needs both sides measured now, on this machine, interleaved: `ab --ref <base>`
-  builds the base commit in a temporary worktree (own `target/perf/target-base`, reuses our
+  builds the base commit in a worktree (own `target/perf/target-base-<sha>`, reuses our
   `Cargo.lock`) and runs base, new, new, base. Running one side after the
   other lets thermal/turbo drift show up as a fake regression of whichever ran
   second (seen in testing: identical code, +4–6% "slower"). The committed

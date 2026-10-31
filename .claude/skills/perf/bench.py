@@ -171,6 +171,8 @@ CALLGRIND_CASES = [
     (r"^fast_lz/decompress/", "crush-lz", "decompress", 4 * 1024 * 1024),
 ]
 PROFILE_ROWS = 15
+# Criterion's measured loop; anything outside it is the benchmark's setup.
+BENCH_LOOP_RE = re.compile(r"Bencher.*::iter")
 # Blocked threads, not work: a sample ending here says nothing about where the
 # benchmark's time goes, and thread-pool idlers would skew every share.
 IDLE_RE = re.compile(r"^(Nt|Zw)(Wait|Delay|Remove)|^futex|^__?(lll_lock_wait|pthread_cond_wait)|^epoll_wait")
@@ -307,6 +309,16 @@ def build_exes(cwd: Path, entries, env: dict) -> dict[tuple[str, str], list[str]
             die(f"no bench executable built for {pkg} {bench or '*'}", 2)
         exes[(pkg, bench)] = found
     return exes
+
+
+def matching_exes(cwd: Path, entries, env: dict, exes: dict) -> dict:
+    """Drop executables with nothing to run: each one that starts repeats its
+    setup, in all four ABBA passes."""
+    out = dict(exes)
+    for pkg, bench, flt in entries:
+        if flt:
+            out[(pkg, bench)] = [e for e in exes[(pkg, bench)] if list_ids(e, cwd / pkg, env, flt)]
+    return out
 
 
 def run_benches(cwd: Path, entries, name: str, quick: bool, env: dict, exes=None) -> list[str]:
@@ -465,8 +477,8 @@ def ab_run(ref: str, entries, name: str, quick: bool) -> tuple[str, str]:
         a_entries = present_at(wt, entries)
         if not a_entries:
             die("none of the selected crates exist at the base ref")
-        a_exes = build_exes(wt, a_entries, wt_env)
-        b_exes = build_exes(ROOT, entries, env)
+        a_exes = matching_exes(wt, a_entries, wt_env, build_exes(wt, a_entries, wt_env))
+        b_exes = matching_exes(ROOT, entries, env, build_exes(ROOT, entries, env))
         if not run_benches(wt, a_entries, a1, quick, wt_env, a_exes):
             die("no benchmark matched the selection")
         run_benches(ROOT, entries, b1, quick, env, b_exes)
@@ -690,9 +702,14 @@ class PdbSymbols:
 
 def parse_profile(path: Path) -> dict:
     """Self and inclusive sample counts per function and hot lines, from a
-    samply profile and the .syms.json next to it. Inlined frames of the leaf
-    count as functions of their own: in a hot loop nearly everything is
-    inlined."""
+    samply profile and the .syms.json next to it.
+
+    Functions are symbols, so inlined code counts towards its enclosing
+    function. .syms.json has one entry per symbol, whose `frames` describe a
+    single address, so they can't attribute samples within a function: lines
+    come from addr2line (Linux) or dbghelp (Windows), per sampled address.
+    Samples outside criterion's measured loop are setup and are left out.
+    """
     with gzip.open(path, "rt", encoding="utf-8") as fh:
         profile = json.load(fh)
     syms = json.loads(Path(str(path).replace(".json.gz", ".json.syms.json")).read_text(encoding="utf-8"))
@@ -715,7 +732,7 @@ def parse_profile(path: Path) -> dict:
         )
 
     def resolve(lib_name: str | None, address: int) -> list[tuple[str, str | None]]:
-        """(function, file:line) for one address, innermost inlined frame first."""
+        """[(function, None)] for one address."""
         known = tables.get(lib_name)
         if not known:
             return []
@@ -725,11 +742,7 @@ def parse_profile(path: Path) -> dict:
             if i < 0 or address >= known[2][i] + known[1][i].get("size", 0):
                 return []
             entry = known[1][i]
-        frames = [
-            (clean(text(f["function"] if "function" in f else entry.get("symbol"))), f"{text(f.get('file'))}:{f.get('line')}")
-            for f in entry.get("frames") or []
-        ]
-        return frames or [(clean(text(entry.get("symbol"))), None)]
+        return [(clean(text(entry.get("symbol"))), None)]
 
     pdbs: dict[str, PdbSymbols | None] = {}
 
@@ -744,13 +757,14 @@ def parse_profile(path: Path) -> dict:
     self_time: dict[str, float] = {}
     inclusive: dict[str, float] = {}
     lines: dict[str, float] = {}
-    total, threads = 0.0, 0
     libs = profile["libs"]
+    samples = []
+    per_thread = []
     for t in profile["threads"]:
         count = t["samples"]["length"]
         if t.get("name") == "samply" or not count:
             continue
-        threads += 1
+        before = len(samples)
         frames_at: dict[int, list] = {}
 
         def frames_of(frame: int) -> list:
@@ -776,29 +790,61 @@ def parse_profile(path: Path) -> dict:
             if stack is None:
                 continue
             weight = weights[i] if weights else 1
-            leaf = frames_of(stacks["frame"][stack])
-            if IDLE_RE.match(leaf[0][0]):
+            frame = stacks["frame"][stack]
+            leaf = frames_of(frame)[0]
+            if IDLE_RE.match(leaf[0]):
                 continue
-            total += weight
-            self_time[leaf[0][0]] = self_time.get(leaf[0][0], 0) + weight
-            if leaf[0][1]:
-                lines[leaf[0][1]] = lines.get(leaf[0][1], 0) + weight
-            seen = {name for name, _ in leaf}
-            stack = stacks["prefix"][stack]
-            # Callers are return addresses: they resolve to whatever follows
-            # the call, often the next inlined function, so of each caller
-            # only the enclosing function (the outermost frame) can be trusted.
-            while stack is not None:
-                seen.add(frames_of(stacks["frame"][stack])[-1][0])
-                stack = stacks["prefix"][stack]
-            for name in seen:
-                inclusive[name] = inclusive.get(name, 0) + weight
+            seen = {leaf[0]}
+            caller = stacks["prefix"][stack]
+            while caller is not None:
+                seen.add(frames_of(stacks["frame"][caller])[0][0])
+                caller = stacks["prefix"][caller]
+            func = t["frameTable"]["func"][frame]
+            res = t["funcTable"]["resource"][func]
+            lib = t["resourceTable"]["lib"][res] if res is not None and res >= 0 else None
+            image = libs[lib].get("path") if lib is not None else None
+            samples.append((weight, leaf, seen, image, t["frameTable"]["address"][frame]))
+        per_thread.append(len(samples) - before)
     for pdb in pdbs.values():
         if pdb:
             pdb.close()
+    measured = [s for s in samples if any(BENCH_LOOP_RE.search(name) for name in s[2])]
+    setup = 1 - len(measured) / len(samples) if samples and measured else 0.0
+    total = 0.0
+    addresses: dict[str, dict[int, float]] = {}
+    for weight, leaf, seen, image, address in measured or samples:
+        total += weight
+        self_time[leaf[0]] = self_time.get(leaf[0], 0) + weight
+        for name in seen:
+            inclusive[name] = inclusive.get(name, 0) + weight
+        if leaf[1]:
+            lines[leaf[1]] = lines.get(leaf[1], 0) + weight
+        elif image:
+            by_address = addresses.setdefault(image, {})
+            by_address[address] = by_address.get(address, 0) + weight
+    if platform.system() != "Windows":
+        for image, by_address in addresses.items():
+            for where, weight in addr2line(image, by_address).items():
+                lines[where] = lines.get(where, 0) + weight
     if not total:
         die(f"no samples in {path}")
-    return {"total": total, "threads": threads, "self": self_time, "inclusive": inclusive, "lines": lines}
+    threads = sum(1 for n in per_thread if n >= 0.01 * max(len(samples), 1))
+    return {"total": total, "threads": threads, "setup": setup, "self": self_time, "inclusive": inclusive, "lines": lines}
+
+
+def addr2line(image: str, by_address: dict[int, float]) -> dict[str, float]:
+    """Sample weight per source line of `image`; unknown lines are left out."""
+    if not Path(image).exists():
+        return {}
+    addresses = list(by_address)
+    text = "\n".join(hex(a) for a in addresses)
+    r = subprocess.run(["addr2line", "-e", image], input=text, capture_output=True, text=True, check=False)
+    out: dict[str, float] = {}
+    for address, line in zip(addresses, r.stdout.splitlines()):
+        where = line.split(" (discriminator")[0].strip()
+        if not where.startswith("??") and not where.endswith(":?") and not where.endswith(":0"):
+            out[where] = out.get(where, 0) + by_address[address]
+    return out
 
 
 def record_profile(side: str, sha: str | None, args: argparse.Namespace) -> dict:
@@ -848,7 +894,8 @@ def cmd_profile(args: argparse.Namespace) -> None:
         delegate_to_wsl(["profile", "--bench-id", args.bench_id, "--side", args.side, "--ref", sha, "--seconds", str(args.seconds), *(["--target", args.target] if args.target else []), *(["--reuse"] if args.reuse else [])])
     sha = resolve_sha(args.ref) if args.side == "base" else None
     data = record_profile(args.side, sha, args)
-    print(f"BENCH: {args.bench_id}  samples: {data['total']:.0f}, {data['threads']} thread(s)")
+    print(f"BENCH: {args.bench_id}  samples: {data['total']:.0f}, {data['threads']} busy thread(s), "
+          f"{data['setup'] * 100:.1f}% setup samples left out")
     print_shares("TOP SELF TIME", data["self"], data["total"])
     print_shares("TOP INCLUSIVE TIME", data["inclusive"], data["total"])
     print_shares("HOT LINES", data["lines"], data["total"])
@@ -860,8 +907,10 @@ def cmd_profile_diff(args: argparse.Namespace) -> None:
         delegate_to_wsl(["profile-diff", "--bench-id", args.bench_id, "--ref", sha, "--seconds", str(args.seconds), *(["--target", args.target] if args.target else []), *(["--reuse"] if args.reuse else [])])
     base = record_profile("base", sha, args)
     tree = record_profile("tree", None, args)
-    print(f"BENCH: {args.bench_id}  A {args.ref}: {base['total']:.0f} samples, B tree: {tree['total']:.0f} samples")
-    print("Shares of each side's own samples; a fixed profile time runs a different number of iterations.")
+    print(f"BENCH: {args.bench_id}  A {args.ref}: {base['total']:.0f} samples, {base['threads']} busy thread(s); "
+          f"B tree: {tree['total']:.0f} samples, {tree['threads']} busy thread(s)")
+    print("Shares of each side's own samples, one run per side. Sample counts follow elapsed time, not speed: "
+          "a fixed profile time runs a different number of iterations.")
     for title, key in (("SELF TIME", "self"), ("HOT LINES", "lines")):
         rows = []
         for name in set(base[key]) | set(tree[key]):
@@ -936,9 +985,13 @@ def cmd_callgrind(args: argparse.Namespace) -> None:
         die("callgrind counted no instructions; is the example's `measured` function still there?")
     delta = tree_total / base_total - 1
     print(f"BENCH: {args.bench_id} ({pkg} {op} {size} bytes, Linux build)")
+    print(f"A = {args.ref}, B = working tree")
     print(f"instructions: A {base_total:,}  B {tree_total:,}  Δ {delta * 100:+.2f}%")
     rows = [(tree.get(n, 0) - base.get(n, 0), n) for n in set(base) | set(tree)]
-    print("| A | B | Δ instructions | function |\n|---|---|---|---|")
+    print("\nHOTTEST\n| A | B | Δ instructions | function |\n|---|---|---|---|")
+    for name in sorted(tree, key=lambda n: -tree[n])[:PROFILE_ROWS]:
+        print(f"| {base.get(name, 0):,} | {tree[name]:,} | {tree[name] - base.get(name, 0):+,} | {name} |")
+    print("\nCHANGED\n| A | B | Δ instructions | function |\n|---|---|---|---|")
     for diff, name in sorted(rows, key=lambda r: -abs(r[0]))[:PROFILE_ROWS]:
         if diff:
             print(f"| {base.get(name, 0):,} | {tree.get(name, 0):,} | {diff:+,} | {name} |")

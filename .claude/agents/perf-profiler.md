@@ -19,7 +19,8 @@ report `PROFILER: none` with its output. Don't install anything yourself.
 ## 2. Run the job
 
 Run these with `bench.py`; they build with symbols in their own target dirs and
-write profiles under `target/perf/profiles` (`~/.cache/crush-perf` in WSL):
+write profiles under `target/perf/profiles` (`~/.cache/crush-perf/perf/profiles`
+in WSL):
 
 - **Profile**: `profile --bench-id <id> [--side base --ref <r>]`
 - **Diff**: `profile-diff --bench-id <id> --ref <r>`: per-function
