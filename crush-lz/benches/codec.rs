@@ -17,6 +17,8 @@ use crush_core::plugin::CompressionAlgorithm;
 use crush_core::{PluginSelector, ScoringWeights, init_plugins};
 use crush_lz::{FastLzConfig, FastLzPlugin, compress, decompress};
 use std::hint::black_box;
+use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 
 #[path = "../../crush-parallel/benches/common/variants.rs"]
 mod variants;
@@ -56,6 +58,27 @@ fn bench_codec(c: &mut Criterion) {
         });
         group.bench_with_input(BenchmarkId::new("decompress", &name), &packed, |b, p| {
             b.iter(|| decompress(black_box(p), data.len()).expect("decompress"));
+        });
+        // The paths products use: crush_core::decompress goes through the
+        // plugin's `decompress`, and the CLI through `decompress_to`.
+        let cancel = Arc::new(AtomicBool::new(false));
+        group.bench_with_input(
+            BenchmarkId::new("decompress_plugin", &name),
+            &packed,
+            |b, p| {
+                b.iter(|| {
+                    FastLzPlugin
+                        .decompress(black_box(p), Arc::clone(&cancel))
+                        .expect("decompress")
+                });
+            },
+        );
+        group.bench_with_input(BenchmarkId::new("decompress_to", &name), &packed, |b, p| {
+            b.iter(|| {
+                FastLzPlugin
+                    .decompress_to(black_box(p), Arc::clone(&cancel), &mut std::io::sink())
+                    .expect("decompress")
+            });
         });
         group.finish();
     }
