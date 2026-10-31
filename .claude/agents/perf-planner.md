@@ -47,7 +47,11 @@ The constitution (`.specify/memory/constitution.md`) is binding:
    (e.g. "memcpy is 9% self time; removing one of two copies saves ≈4.5% of
    wall time"), and check it against the ceiling. Don't propose things whose
    upper bound is below the noise floor.
-4. Rank by expected gain ÷ risk. Put cheap, low-risk experiments first.
+4. Every hypothesis needs profile evidence and a prediction a profile can prove
+   wrong, for example "`decode_block` self time falls from 40% to about 30%".
+   Drop any hypothesis without both; list it under NOT WORTH TRYING. If there's
+   no usable profile, say so in SUMMARY and propose no hypotheses.
+5. Rank by expected gain ÷ risk. Put cheap, low-risk experiments first.
 
 ## Reply format
 
@@ -61,6 +65,8 @@ TIME BUDGET
 
 HYPOTHESES (ranked)
 1. <title>
+   Evidence: <profile rows or instruction counts behind this>
+   Prediction: <what a profile will show if this is right>
    Expected gain: x–y% on <bench> (reasoning: ...)
    Risk: low|med|high — <why>; ratio impact: none|<...>; memory impact: ...
    Files: <path:line ranges>

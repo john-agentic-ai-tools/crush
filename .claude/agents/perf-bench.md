@@ -19,6 +19,10 @@ The caller gives you a job like one of these; do exactly that job:
 
 - **A/B against a commit**: `bench.py ab --ref <sha> --suite <S> | --crates <list> --name <N> [--quick]`.
   This is the only A/B that counts for decisions (ABBA order, see the skill).
+- **Targeted A/B**: `bench.py ab --ref <sha> --changed --name <N> [--quick]`
+  (the benchmarks covering the changes since `<sha>`) or `--filter '<regex>'`
+  (those benchmarks only). Add `--dry-run` to list them and estimate the time.
+- **Which benchmarks cover the changes**: `bench.py targets --ref <sha>`.
 - **Plain run**: `bench.py run --suite <S> --name <N>` (reference numbers, ceiling input).
 - **Re-compare saved runs**: `bench.py compare <base> <new>`; each side may be
   a comma list, e.g. `N-A1,N-A2 N-B1,N-B2` for an earlier `ab`.
