@@ -22,20 +22,84 @@ pub(crate) fn decode_frame(
     limit: Option<usize>,
     cancel: Option<&AtomicBool>,
 ) -> Result<Vec<u8>> {
-    // Reserve the expected size up front (no regrowth copies), but never
-    // more than the payload could expand to: a sequence of at most 3 bytes
-    // per 255 output bytes, so 256 bytes out per byte in is a safe ceiling.
-    let mut out =
-        Vec::with_capacity(limit.map_or(0, |n| n.min(payload.len().saturating_mul(256)) + WILD));
-    for_each_block(payload, limit, cancel, |block, stored, ulen| {
-        if stored {
-            out.extend_from_slice(block);
-            Ok(())
-        } else {
-            decode_block(block, ulen, &mut out)
-        }
+    // One zeroed allocation up front: a large one comes from fresh pages, so
+    // nothing is filled, where a `resize` per block would zero every byte.
+    let size = limit.map_or_else(|| declared_len(payload), |n| initial_len(n, payload.len()));
+    let mut out = output_buffer(size);
+    let mut at = 0;
+    let total = for_each_block(payload, limit, cancel, |block, stored, ulen| {
+        decode_at(block, stored, ulen, &mut out, at)?;
+        at += ulen;
+        Ok(())
     })?;
+    out.truncate(total);
     Ok(out)
+}
+
+/// A zeroed buffer of `size` bytes, or an empty one if memory is refused:
+/// `size` can come from forged lengths, and a failed `vec!` aborts the process.
+/// `decode_at` grows an empty buffer block by block, after each header passes
+/// validation, so forged input ends in a decode error instead.
+fn output_buffer(size: usize) -> Vec<u8> {
+    // Asking first keeps the zeroed allocation below, which `reserve` plus
+    // `resize` would fill byte by byte.
+    if Vec::<u8>::new().try_reserve_exact(size).is_err() {
+        return Vec::new();
+    }
+    vec![0; size]
+}
+
+/// Output buffer size for `expected` bytes from `payload_len` bytes: never
+/// more than the payload could expand to, so a forged length can't force a
+/// huge allocation. A sequence takes at most 3 bytes per 255 output bytes,
+/// so 256 bytes out per byte in is a safe ceiling.
+fn initial_len(expected: usize, payload_len: usize) -> usize {
+    expected
+        .min(payload_len.saturating_mul(256))
+        .saturating_add(WILD)
+}
+
+/// Largest buffer sized from block headers alone, per payload byte. Headers
+/// are forgeable, so the limit is tighter than [`initial_len`]'s ceiling;
+/// output beyond it grows as blocks arrive.
+const MAX_DECLARED_EXPANSION: usize = 16;
+
+/// Output buffer size for a payload with no expected length: what its block
+/// headers declare, up to [`MAX_DECLARED_EXPANSION`]. Malformed headers end
+/// the sum, and decoding reports them.
+fn declared_len(payload: &[u8]) -> usize {
+    let mut declared = 0usize;
+    let walked = for_each_block(payload, None, None, |_, _, ulen| {
+        declared += ulen;
+        Ok(())
+    });
+    drop(walked);
+    declared
+        .min(payload.len().saturating_mul(MAX_DECLARED_EXPANSION))
+        .saturating_add(WILD)
+}
+
+/// Decode one block to `out[at..at + ulen]`, growing `out` if it's short.
+///
+/// The destination is cut to exactly `ulen + WILD` bytes: the decoder takes
+/// its bounds from that length, so a longer slice would let a corrupt block
+/// run past its declared size.
+fn decode_at(block: &[u8], stored: bool, ulen: usize, out: &mut Vec<u8>, at: usize) -> Result<()> {
+    if stored {
+        // Appending when short avoids zeroing bytes about to be overwritten.
+        if let Some(dst) = out.get_mut(at..at + ulen) {
+            dst.copy_from_slice(block);
+        } else {
+            out.truncate(at);
+            out.extend_from_slice(block);
+        }
+        return Ok(());
+    }
+    let end = at + ulen + WILD;
+    if out.len() < end {
+        out.resize(end, 0);
+    }
+    decode_into(block, ulen, &mut out[at..end])
 }
 
 /// Decode a whole `fast-lz` payload into `w`, one block at a time (at most
@@ -46,14 +110,16 @@ pub(crate) fn decode_frame_to(
     cancel: Option<&AtomicBool>,
     w: &mut dyn Write,
 ) -> Result<u64> {
+    // Kept at its longest length between blocks, so that it's zeroed only as
+    // it grows. The decoder never reads a byte it didn't write for the
+    // current block, and only `ulen` bytes of a block that decoded are output.
     let mut scratch = Vec::new();
     let total = for_each_block(payload, None, cancel, |block, stored, ulen| {
         if stored {
             w.write_all(block)?;
         } else {
-            scratch.clear();
-            decode_block(block, ulen, &mut scratch)?;
-            w.write_all(&scratch)?;
+            decode_at(block, false, ulen, &mut scratch, 0)?;
+            w.write_all(&scratch[..ulen])?;
         }
         Ok(())
     })?;
@@ -112,22 +178,14 @@ fn for_each_block(
 
 /// Bytes a fast copy may write past the end of a literal run or match. Each
 /// block is decoded into `ulen + WILD` bytes so fixed-size copies never need
-/// a length check; the slack is truncated afterwards and anything written
-/// past a sequence's end is overwritten by the next one.
+/// a length check; anything written past a sequence's end is overwritten by
+/// the next one, and the slack is never output.
 const WILD: usize = 16;
-
-/// Append exactly `ulen` decoded bytes of one compressed block to `out`.
-fn decode_block(src: &[u8], ulen: usize, out: &mut Vec<u8>) -> Result<()> {
-    let start = out.len();
-    out.resize(start + ulen + WILD, 0);
-    let result = decode_into(src, ulen, &mut out[start..]);
-    out.truncate(start + ulen);
-    result
-}
 
 /// Decode one block into `dst` (`ulen + WILD` bytes). Matches never reach
 /// before the start of `dst`: offsets are checked against `op`.
 fn decode_into(src: &[u8], ulen: usize, dst: &mut [u8]) -> Result<()> {
+    debug_assert_eq!(dst.len(), ulen + WILD);
     let mut i = 0usize;
     let mut op = 0usize;
 
@@ -302,5 +360,87 @@ fn copy_match(dst: &mut [u8], op: usize, off: usize, len: usize) {
         let from = op + k - d;
         rest[..8].copy_from_slice(&done[from..from + 8]);
         k += 8;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::compress::Compressor;
+    use proptest::collection::vec;
+    use proptest::prelude::*;
+
+    #[test]
+    fn initial_len_is_capped_by_the_payload() {
+        assert_eq!(initial_len(0, 100), WILD);
+        assert_eq!(initial_len(1000, 100), 1000 + WILD);
+        assert_eq!(initial_len(1 << 40, 100), 25_600 + WILD);
+        assert_eq!(initial_len(usize::MAX, 100), 25_600 + WILD);
+        assert_eq!(initial_len(usize::MAX, usize::MAX), usize::MAX);
+    }
+
+    #[test]
+    fn output_buffer_is_empty_when_memory_is_refused() {
+        // More than any allocator grants: with `vec!` this would abort.
+        assert_eq!(output_buffer(1 << 62), Vec::<u8>::new());
+        assert_eq!(output_buffer(1000), vec![0; 1000]);
+    }
+
+    #[test]
+    fn declared_len_sums_headers_up_to_the_limit() {
+        let frame = crate::format::FrameHeader::new(20).expect("header");
+        let block = |ulen: u32| {
+            crate::format::BlockHeader {
+                compressed_len: 1,
+                stored: false,
+                uncompressed_len: ulen,
+            }
+            .to_bytes()
+        };
+        let mut payload = frame.to_bytes().to_vec();
+        payload.extend_from_slice(&block(10));
+        payload.push(0);
+        assert_eq!(declared_len(&payload), 10 + WILD, "truncated frame");
+
+        // Blocks of a few bytes that each declare 1 MiB.
+        for _ in 0..1000 {
+            payload.extend_from_slice(&block(1 << 20));
+            payload.push(0);
+        }
+        assert_eq!(declared_len(&payload), 16 * payload.len() + WILD);
+        assert_eq!(declared_len(b"not a frame"), WILD);
+    }
+
+    fn decode_over(src: &[u8], ulen: usize, fill: u8) -> Option<Vec<u8>> {
+        let mut dst = vec![fill; ulen + WILD];
+        decode_into(src, ulen, &mut dst).ok()?;
+        dst.truncate(ulen);
+        Some(dst)
+    }
+
+    proptest! {
+        /// Reusing a buffer between blocks is safe only if the decoder never
+        /// lets its earlier contents affect the result.
+        #[test]
+        fn decode_into_ignores_buffer_contents(
+            data in vec(0u8..4, 1..2000),
+            flips in vec((any::<prop::sample::Index>(), any::<u8>()), 0..4),
+            extra in 0usize..40,
+        ) {
+            let mut src = vec![0; data.len() + WILD];
+            let n = Compressor::new().compress_block(&data, &mut src);
+            prop_assume!(n.is_some());
+            src.truncate(n.unwrap_or(0));
+            for (at, byte) in flips {
+                let i = at.index(src.len());
+                src[i] = byte;
+            }
+            let ulen = data.len() + extra;
+            for ulen in [data.len(), ulen] {
+                let zeroed = decode_over(&src, ulen, 0);
+                prop_assert_eq!(&zeroed, &decode_over(&src, ulen, 0xFF));
+                prop_assert_eq!(&zeroed, &decode_over(&src, ulen, 0xA5));
+            }
+        }
     }
 }

@@ -7,8 +7,11 @@
 )]
 
 use crush_core::error::{CrushError, ValidationError};
-use crush_lz::decompress;
+use crush_core::plugin::CompressionAlgorithm;
 use crush_lz::format::{BlockHeader, END_MARKER};
+use crush_lz::{FastLzPlugin, decompress};
+use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 
 mod common;
 
@@ -134,6 +137,102 @@ fn block_length_and_total_errors() {
     let mut v = one_block(&last(b"abcd"), 4);
     v.push(0);
     assert_corrupt(&v, 4, "trailing bytes");
+}
+
+fn push_block(v: &mut Vec<u8>, payload: &[u8], stored: bool, u: u32) {
+    v.extend_from_slice(
+        &BlockHeader {
+            compressed_len: payload.len() as u32,
+            stored,
+            uncompressed_len: u,
+        }
+        .to_bytes(),
+    );
+    v.extend_from_slice(payload);
+}
+
+/// A block that declares 100 bytes but encodes far more, in the sequence
+/// shape the decoder's fast loop accepts.
+fn overrunning_block() -> Vec<u8> {
+    let mut p = seq(&[b'a'; 20], 20, 4);
+    for _ in 0..20 {
+        p.extend(seq(b"bcde", 16, 18));
+    }
+    p.extend(last(b""));
+    p
+}
+
+#[test]
+fn block_overrun_is_rejected_with_room_after_it() {
+    // The output buffer has space after this block for the next one, so the
+    // decoder must bound the block by its own declared size.
+    let mut v = frame(16);
+    push_block(&mut v, &overrunning_block(), false, 100);
+    push_block(&mut v, &[7; 4096], true, 4096);
+    v.extend_from_slice(&END_MARKER);
+    assert_corrupt(&v, 100 + 4096, "block overruns its declared size");
+}
+
+#[test]
+fn forged_block_len_grows_one_block_only() {
+    // A few payload bytes declare a 1 MiB block and a 1 TiB total.
+    let mut v = frame(20);
+    push_block(&mut v, &last(b"ab"), false, 1 << 20);
+    v.extend_from_slice(&END_MARKER);
+    assert_corrupt(&v, 1 << 40, "forged block length and total");
+}
+
+fn stream(payload: &[u8]) -> (crush_core::error::Result<u64>, Vec<u8>) {
+    let mut sink = Vec::new();
+    let cancel = Arc::new(AtomicBool::new(false));
+    let result = FastLzPlugin.decompress_to(payload, cancel, &mut sink);
+    (result, sink)
+}
+
+/// A 65,536-byte run of a 16-byte pattern, so the streaming decoder's buffer is full of
+/// these bytes when the next block arrives.
+fn marker_block() -> (Vec<u8>, Vec<u8>) {
+    let pattern = *b"MARKERmarkerMARK";
+    let mut p = seq(&pattern, 16, 65_536 - 16);
+    p.extend(last(b""));
+    (p, pattern.repeat(4096))
+}
+
+#[test]
+fn corrupt_block_after_valid_block_surfaces_no_stale_bytes() {
+    let (valid, expected) = marker_block();
+    let mut beyond = seq(b"abcd", 5, 4);
+    beyond.extend(last(b""));
+    let mut past = seq(b"abcd", 4, 200);
+    past.extend(last(b""));
+    for (what, block, ulen) in [
+        ("decodes short", last(b"abc"), 1000),
+        ("offset beyond the block", beyond, 8),
+        ("match past the block", past, 10),
+    ] {
+        let mut v = frame(16);
+        push_block(&mut v, &valid, false, 65_536);
+        push_block(&mut v, &block, false, ulen);
+        v.extend_from_slice(&END_MARKER);
+        let (result, sink) = stream(&v);
+        assert!(result.is_err(), "{what}: expected an error");
+        assert_eq!(sink, expected, "{what}: wrote more than the valid block");
+    }
+}
+
+#[test]
+fn smaller_block_after_larger_writes_exact_length() {
+    let (valid, mut expected) = marker_block();
+    let mut v = frame(16);
+    push_block(&mut v, &valid, false, 65_536);
+    push_block(&mut v, &last(b"hello"), false, 5);
+    push_block(&mut v, &last(&[b'z'; 40]), false, 40);
+    v.extend_from_slice(&END_MARKER);
+    expected.extend_from_slice(b"hello");
+    expected.extend_from_slice(&[b'z'; 40]);
+    let (result, sink) = stream(&v);
+    assert_eq!(result.expect("valid frame"), expected.len() as u64);
+    assert_eq!(sink, expected);
 }
 
 #[test]
