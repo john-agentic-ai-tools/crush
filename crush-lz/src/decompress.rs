@@ -24,7 +24,8 @@ pub(crate) fn decode_frame(
 ) -> Result<Vec<u8>> {
     // One zeroed allocation up front: a large one comes from fresh pages, so
     // nothing is filled, where a `resize` per block would zero every byte.
-    let mut out = vec![0; limit.map_or(0, |n| initial_len(n, payload.len()))];
+    let size = limit.map_or_else(|| declared_len(payload), |n| initial_len(n, payload.len()));
+    let mut out = vec![0; size];
     let mut at = 0;
     let total = for_each_block(payload, limit, cancel, |block, stored, ulen| {
         decode_at(block, stored, ulen, &mut out, at)?;
@@ -42,6 +43,26 @@ pub(crate) fn decode_frame(
 fn initial_len(expected: usize, payload_len: usize) -> usize {
     expected
         .min(payload_len.saturating_mul(256))
+        .saturating_add(WILD)
+}
+
+/// Largest buffer sized from block headers alone, per payload byte. Headers
+/// are forgeable and a failed allocation aborts, so the limit is tighter than
+/// [`initial_len`]'s ceiling; output beyond it grows as blocks arrive.
+const MAX_DECLARED_EXPANSION: usize = 16;
+
+/// Output buffer size for a payload with no expected length: what its block
+/// headers declare, up to [`MAX_DECLARED_EXPANSION`]. Malformed headers end
+/// the sum, and decoding reports them.
+fn declared_len(payload: &[u8]) -> usize {
+    let mut declared = 0usize;
+    let walked = for_each_block(payload, None, None, |_, _, ulen| {
+        declared += ulen;
+        Ok(())
+    });
+    drop(walked);
+    declared
+        .min(payload.len().saturating_mul(MAX_DECLARED_EXPANSION))
         .saturating_add(WILD)
 }
 
@@ -343,6 +364,31 @@ mod tests {
         assert_eq!(initial_len(1 << 40, 100), 25_600 + WILD);
         assert_eq!(initial_len(usize::MAX, 100), 25_600 + WILD);
         assert_eq!(initial_len(usize::MAX, usize::MAX), usize::MAX);
+    }
+
+    #[test]
+    fn declared_len_sums_headers_up_to_the_limit() {
+        let frame = crate::format::FrameHeader::new(20).expect("header");
+        let block = |ulen: u32| {
+            crate::format::BlockHeader {
+                compressed_len: 1,
+                stored: false,
+                uncompressed_len: ulen,
+            }
+            .to_bytes()
+        };
+        let mut payload = frame.to_bytes().to_vec();
+        payload.extend_from_slice(&block(10));
+        payload.push(0);
+        assert_eq!(declared_len(&payload), 10 + WILD, "truncated frame");
+
+        // Blocks of a few bytes that each declare 1 MiB.
+        for _ in 0..1000 {
+            payload.extend_from_slice(&block(1 << 20));
+            payload.push(0);
+        }
+        assert_eq!(declared_len(&payload), 16 * payload.len() + WILD);
+        assert_eq!(declared_len(b"not a frame"), WILD);
     }
 
     fn decode_over(src: &[u8], ulen: usize, fill: u8) -> Option<Vec<u8>> {

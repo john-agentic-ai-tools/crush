@@ -5,9 +5,12 @@
     clippy::cast_possible_truncation
 )]
 
+use crush_core::plugin::CompressionAlgorithm;
 use crush_lz::format::{FRAME_HEADER_SIZE, compress_bound};
-use crush_lz::{FastLzConfig, compress, decompress};
+use crush_lz::{FastLzConfig, FastLzPlugin, compress, decompress};
 use proptest::prelude::*;
+use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 
 fn config(log2: u8) -> FastLzConfig {
     FastLzConfig::builder()
@@ -163,6 +166,20 @@ fn stored_and_compressed_blocks_mix_with_a_short_tail() {
         let packed = roundtrip(&data, config(log2));
         assert!(packed.len() < data.len(), "log2 {log2}: nothing compressed");
     }
+}
+
+#[test]
+fn plugin_decodes_output_larger_than_its_presized_buffer() {
+    // Zeros compress far beyond the plugin decoder's up-front size limit, so
+    // its buffer has to grow.
+    let data = vec![0u8; 8 << 20];
+    let packed = compress(&data, &FastLzConfig::default()).expect("compress");
+    assert!(packed.len() * 16 < data.len());
+    let cancel = Arc::new(AtomicBool::new(false));
+    let out = FastLzPlugin
+        .decompress(&packed, cancel)
+        .expect("decompress");
+    assert_eq!(out, data);
 }
 
 #[test]
