@@ -153,6 +153,19 @@ fn blocks_near_the_stored_threshold() {
 }
 
 #[test]
+fn stored_and_compressed_blocks_mix_with_a_short_tail() {
+    for log2 in [16u8, 20] {
+        let block = 1usize << log2;
+        let mut data = xorshift(block, 11);
+        data.extend(wordy(2 * block));
+        data.extend(xorshift(block, 12));
+        data.extend(wordy(1000));
+        let packed = roundtrip(&data, config(log2));
+        assert!(packed.len() < data.len(), "log2 {log2}: nothing compressed");
+    }
+}
+
+#[test]
 fn text_compresses() {
     let data = wordy(4 << 20);
     let packed = roundtrip(&data, FastLzConfig::default());

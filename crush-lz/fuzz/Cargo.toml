@@ -13,6 +13,7 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4"
+crush-core = { path = "../../crush-core" }
 crush-lz = { path = ".." }
 
 [[bin]]
