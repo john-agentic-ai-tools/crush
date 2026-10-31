@@ -25,7 +25,7 @@ pub(crate) fn decode_frame(
     // One zeroed allocation up front: a large one comes from fresh pages, so
     // nothing is filled, where a `resize` per block would zero every byte.
     let size = limit.map_or_else(|| declared_len(payload), |n| initial_len(n, payload.len()));
-    let mut out = vec![0; size];
+    let mut out = output_buffer(size);
     let mut at = 0;
     let total = for_each_block(payload, limit, cancel, |block, stored, ulen| {
         decode_at(block, stored, ulen, &mut out, at)?;
@@ -34,6 +34,19 @@ pub(crate) fn decode_frame(
     })?;
     out.truncate(total);
     Ok(out)
+}
+
+/// A zeroed buffer of `size` bytes, or an empty one if memory is refused:
+/// `size` can come from forged lengths, and a failed `vec!` aborts the process.
+/// `decode_at` grows an empty buffer block by block, after each header passes
+/// validation, so forged input ends in a decode error instead.
+fn output_buffer(size: usize) -> Vec<u8> {
+    // Asking first keeps the zeroed allocation below, which `reserve` plus
+    // `resize` would fill byte by byte.
+    if Vec::<u8>::new().try_reserve_exact(size).is_err() {
+        return Vec::new();
+    }
+    vec![0; size]
 }
 
 /// Output buffer size for `expected` bytes from `payload_len` bytes: never
@@ -47,8 +60,8 @@ fn initial_len(expected: usize, payload_len: usize) -> usize {
 }
 
 /// Largest buffer sized from block headers alone, per payload byte. Headers
-/// are forgeable and a failed allocation aborts, so the limit is tighter than
-/// [`initial_len`]'s ceiling; output beyond it grows as blocks arrive.
+/// are forgeable, so the limit is tighter than [`initial_len`]'s ceiling;
+/// output beyond it grows as blocks arrive.
 const MAX_DECLARED_EXPANSION: usize = 16;
 
 /// Output buffer size for a payload with no expected length: what its block
@@ -364,6 +377,13 @@ mod tests {
         assert_eq!(initial_len(1 << 40, 100), 25_600 + WILD);
         assert_eq!(initial_len(usize::MAX, 100), 25_600 + WILD);
         assert_eq!(initial_len(usize::MAX, usize::MAX), usize::MAX);
+    }
+
+    #[test]
+    fn output_buffer_is_empty_when_memory_is_refused() {
+        // More than any allocator grants: with `vec!` this would abort.
+        assert_eq!(output_buffer(1 << 62), Vec::<u8>::new());
+        assert_eq!(output_buffer(1000), vec![0; 1000]);
     }
 
     #[test]
