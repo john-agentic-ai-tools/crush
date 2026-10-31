@@ -171,17 +171,52 @@ cumulative run on `fast_lz/compress/file`.
 The six `decompress_plugin` and `decompress_to` rows do not exist at afc4bad, so
 the full-suite run skipped them. The cumulative table covers them.
 
-**Baseline caveat:** `perf/baselines/<fingerprint>.json` was saved from B1 of the
-slow full-suite pass. It reads `fast_lz/compress/file` at 213.6 ms against 198 ms
-in the focused rerun, so its numbers run high. Baselines are context only, and no
-decision here used them.
+**Baseline not updated.** `save-summary` ran on B1 of the slow full-suite pass and
+read `fast_lz/compress/file` at 213.6 ms against 198 ms in the focused rerun.
+`/perf goal` uses baselines for feasibility checks, and the README refreshes them
+from `develop` after a release, so that change was dropped from this branch. Run
+`/perf baseline` after this merges.
+
+## Review fix: forged headers could abort the process
+
+A cloud review found that H3 could abort on malformed input. A forged frame of
+about 1 GiB whose 9-byte blocks each declare a full block makes `declared_len`
+reach the 16x cap, and a failed `vec![0; 16 GiB]` aborts where afc4bad returned
+a corrupt-data error. So the 16x cap alone did not meet the contract at the top
+of `decompress.rs`. A smaller cap would only have moved the threshold.
+
+`output_buffer` now asks `try_reserve_exact` first and returns an empty buffer if
+memory is refused; `decode_at` then grows per validated block, and forged input
+ends in a decode error. Both `decode_frame` paths use it, which also covers the
+256x `Some` path. A test covers the refused case using a size no allocator
+grants; a refusal at a real commit limit was not reproduced. The check and the
+allocation are separate steps, so memory taken between them can still abort.
+
+| benchmark | A db29789 | B | Δ time | 95% CI | verdict |
+|---|---|---|---|---|---|
+| fast_lz/decompress/file | 60.7 ms | 60.5 ms | -0.3% | [-2.8, +2.0] | noise |
+| fast_lz/decompress/text-64MB | 25.3 ms | 25.8 ms | +1.9% | [+0.8, +2.9] | noise |
+| fast_lz/decompress_plugin/file | 59.4 ms | 59.8 ms | +0.7% | [-0.6, +2.0] | noise |
+| fast_lz/decompress_plugin/text-64MB | 25.4 ms | 25.7 ms | +1.0% | [-0.4, +2.3] | noise |
+| fast_lz/decompress_to/file | 41.7 ms | 42.2 ms | +1.2% | [+0.3, +2.1] | noise |
+| fast_lz/decompress_to/text-64MB | 16.9 ms | 17.1 ms | +1.5% | [+0.3, +2.8] | slower (<gate) |
+
+The verdict was NEUTRAL. The start of that run overlapped a `cargo test` from the
+Stop hook. `decompress/random-64MB` read +4.6% [+1.3, +8.6] there and -0.4%
+[-2.3, +1.2] when rerun alone. Numbers elsewhere in this log are from 74f5269,
+before this fix, and were not repeated after it.
+
+The same `cargo test` failed `test_fast_compression_short_timeout`, which allows
+10 ms of wall clock. It passed 20 of 20 alone, the workspace passed on an idle
+machine, and this branch does not change `crush-core`.
 
 ## Verification
 
 - `quality-gate` agent at 74f5269: PASS (fmt, clippy, 581 tests passed, 6
   ignored, doc, audit, deny, cuda clippy).
 - Fuzz in WSL at 74f5269: `fuzz_decompress` and `fuzz_roundtrip`, 100k runs each,
-  clean. `fuzz_decompress` now also compares `decompress` with `decompress_to`.
+  clean, and again with the review fix (100k each, exit 0). `fuzz_decompress` now
+  also compares `decompress` with `decompress_to`.
 - Mutation check on the exact-slice rule: an oversized-slice mutant survives
   `block_overrun_is_rejected_with_room_after_it` alone, for a reason not
   established. The `debug_assert_eq!(dst.len(), ulen + WILD)` in `decode_into`
