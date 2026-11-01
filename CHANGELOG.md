@@ -84,8 +84,9 @@ pigz 2.8, zstd 1.5.7, lz4 1.10.0):
 | `lz4 -1` | 2,049 | 2,300 | 2.295 |
 | `pigz -6` | 611 | 343 | 3.481 |
 
-- `crush` is the fastest decompressor of the ten configurations here at 4 and
-  all cores on real files, and `fast-lz` is the fastest at one core.
+- On real files, `crush` is the fastest decompressor at all cores, of the
+  configurations measured. `fast-lz` is the fastest at one core. At 4 cores
+  `lz4 -9` leads narrowly, 2,382 to 2,334 MB/s.
 - `zstd` remains ahead on compression speed at its ratio: `zstd -3` is both
   faster and smaller than `crush` when compressing.
 - `fast-lz` trails `lz4 -1` through the CLI at 4 and all cores (0.80x and 0.89x).
