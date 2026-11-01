@@ -89,10 +89,12 @@ The CUDA backend uses a single multi-block kernel launch per batch (up to 512 ti
 
 | Corpus | Throughput |
 |--------|-----------|
-| log-text-1MB | 179 MiB/s |
-| binary-1MB | 69 MiB/s |
-| mixed-1MB | 98 MiB/s |
-| mixed-10MB | 100 MiB/s |
+| log-text-1MB | 1.8 GiB/s |
+| binary-1MB | 960 MiB/s |
+| mixed-1MB | 1.05 GiB/s |
+| mixed-10MB | 2.1 GiB/s |
+
+All cores of an i9-12900K, Windows, Criterion quick run.
 
 ## File Format (CGPU)
 

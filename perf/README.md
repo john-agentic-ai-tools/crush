@@ -77,8 +77,18 @@ python3 perf/compare.py
 These are wall-clock CLI numbers including file I/O and process start, so
 they aren't comparable with the criterion baselines above.
 
+To chart the newest results as speed against ratio:
+
+```sh
+python perf/chart.py
+```
+
+This needs only Python, on any platform. It writes `comparisons/chart.html`,
+with filters for dataset, core count and direction, and the two SVGs the
+top-level README shows. It draws what is in the file, so run `compare.py` first.
+
 The tool `crush-fast-lz` (`crush compress --plugin fast-lz`) is measured at
-one core only. To compare a subset in alternating order, which is how
+every core count. To compare a subset in alternating order, which is how
 feature 023 measured fast-lz against lz4:
 
 ```sh

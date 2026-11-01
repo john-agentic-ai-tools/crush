@@ -4,10 +4,12 @@
 //! Compression runs on the CPU ([`crate::gdeflate::gdeflate_compress_tile`]).
 //! Decompression can run on GPU (via [`crate::backend::ComputeBackend`]) or CPU fallback.
 
+use std::borrow::Cow;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use crc32fast::Hasher;
 use crush_core::error::{CrushError, PluginError, Result};
+use rayon::prelude::*;
 use tracing::{debug, info, warn};
 
 use crate::format::{
@@ -78,76 +80,40 @@ pub fn compress(input: &[u8], config: &EngineConfig, cancel: &AtomicBool) -> Res
     output.resize(output.len() + hdr_pad, 0);
 
     // ── Compress each tile ───────────────────────────────────────────
+    // Tiles are independent. Their offsets depend on earlier tiles' sizes,
+    // so layout follows as a serial pass and keeps the bytes thread-independent.
+    let encoded: Vec<EncodedTile<'_>> = tiles
+        .par_iter()
+        .enumerate()
+        .map(|(i, tile_data)| {
+            if cancel.load(Ordering::Relaxed) {
+                return Err(CrushError::Cancelled);
+            }
+            encode_tile(tile_data, i + 1 == tile_count, config)
+        })
+        .collect::<Result<_>>()?;
+
     let mut index_entries: Vec<TileIndexEntry> = Vec::with_capacity(tile_count);
 
-    for (i, tile_data) in tiles.iter().enumerate() {
-        if cancel.load(Ordering::Relaxed) {
-            return Err(CrushError::Cancelled);
-        }
-
-        let is_last = i + 1 == tile_count;
-
+    for tile in &encoded {
         let tile_offset =
             u64::try_from(output.len()).map_err(|e| PluginError::OperationFailed(e.to_string()))?;
 
-        let checksum = if config.enable_checksums {
-            let mut h = Hasher::new();
-            h.update(tile_data);
-            h.finalize()
-        } else {
-            0
-        };
-
-        // Compress tile with GDeflate (handles 32-way sub-stream interleaving internally).
-        let compressed_payload = gdeflate::gdeflate_compress_tile(tile_data)?;
-
-        let compressed_size = u32::try_from(compressed_payload.len())
-            .map_err(|e| PluginError::OperationFailed(e.to_string()))?;
-        let uncompressed_size = u32::try_from(tile_data.len())
-            .map_err(|e| PluginError::OperationFailed(e.to_string()))?;
-
-        // Build tile flags.
-        let mut flags = TileFlags::default();
-        if is_last {
-            flags = flags.with_last_tile();
-        }
-        // If "compression" expanded the data, store raw.
-        let (final_payload, final_compressed_size, final_flags) =
-            if compressed_payload.len() >= tile_data.len() {
-                // Stored mode – write raw tile
-                let stored_size = u32::try_from(tile_data.len())
-                    .map_err(|e| PluginError::OperationFailed(e.to_string()))?;
-                (tile_data.to_vec(), stored_size, flags.with_stored())
-            } else {
-                (compressed_payload, compressed_size, flags)
-            };
-
-        let tile_header = TileHeader {
-            version: 2,
-            flags: final_flags,
-            sub_stream_count: config.sub_stream_count,
-            compressed_size: final_compressed_size,
-            uncompressed_size,
-            checksum,
-            sub_stream_offsets_size: 0, // GDeflate handles sub-streams internally
-        };
-
-        output.extend_from_slice(&tile_header.to_bytes());
-        output.extend_from_slice(&final_payload);
+        output.extend_from_slice(&tile.header.to_bytes());
+        output.extend_from_slice(&tile.payload);
 
         // Pad to 128-byte alignment.
-        let written = TileHeader::SIZE + final_payload.len();
+        let written = TileHeader::SIZE + tile.payload.len();
         let pad = padding_to_alignment(written);
         output.resize(output.len() + pad, 0);
 
-        let entry = TileIndexEntry {
+        index_entries.push(TileIndexEntry {
             tile_offset,
-            compressed_size: final_compressed_size,
-            uncompressed_size,
-            checksum,
-            flags: u32::from(final_flags.0),
-        };
-        index_entries.push(entry);
+            compressed_size: tile.header.compressed_size,
+            uncompressed_size: tile.header.uncompressed_size,
+            checksum: tile.header.checksum,
+            flags: u32::from(tile.header.flags.0),
+        });
     }
 
     // ── Tile index ───────────────────────────────────────────────────
@@ -175,6 +141,54 @@ pub fn compress(input: &[u8], config: &EngineConfig, cancel: &AtomicBool) -> Res
     output.extend_from_slice(&footer.to_bytes());
 
     Ok(output)
+}
+
+/// One compressed tile, ready for layout.
+struct EncodedTile<'a> {
+    header: TileHeader,
+    /// Compressed bytes, or the tile itself when it is stored.
+    payload: Cow<'a, [u8]>,
+}
+
+/// Compress one tile, storing it raw if compression does not shrink it.
+fn encode_tile<'a>(
+    tile_data: &'a [u8],
+    is_last: bool,
+    config: &EngineConfig,
+) -> Result<EncodedTile<'a>> {
+    let checksum = if config.enable_checksums {
+        let mut h = Hasher::new();
+        h.update(tile_data);
+        h.finalize()
+    } else {
+        0
+    };
+
+    // Compress tile with GDeflate (handles 32-way sub-stream interleaving internally).
+    let compressed_payload = gdeflate::gdeflate_compress_tile(tile_data)?;
+
+    let mut flags = TileFlags::default();
+    if is_last {
+        flags = flags.with_last_tile();
+    }
+    let (payload, flags) = if compressed_payload.len() >= tile_data.len() {
+        (Cow::Borrowed(tile_data), flags.with_stored())
+    } else {
+        (Cow::Owned(compressed_payload), flags)
+    };
+
+    let header = TileHeader {
+        version: 2,
+        flags,
+        sub_stream_count: config.sub_stream_count,
+        compressed_size: u32::try_from(payload.len())
+            .map_err(|e| PluginError::OperationFailed(e.to_string()))?,
+        uncompressed_size: u32::try_from(tile_data.len())
+            .map_err(|e| PluginError::OperationFailed(e.to_string()))?,
+        checksum,
+        sub_stream_offsets_size: 0, // GDeflate handles sub-streams internally
+    };
+    Ok(EncodedTile { header, payload })
 }
 
 /// Decompress a GPU-format archive back to the original bytes.

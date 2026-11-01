@@ -23,6 +23,7 @@
 //! Reference implementation: `<https://github.com/microsoft/DirectStorage/tree/main/GDeflate>`
 
 use crush_core::error::{CrushError, PluginError, Result};
+use std::sync::LazyLock;
 
 /// Number of sub-streams in `GDeflate` (matches GPU warp width).
 const NUM_STREAMS: usize = 32;
@@ -113,35 +114,41 @@ impl<'a> BitReader<'a> {
 // Bit-level writer for building GDeflate sub-streams
 // ---------------------------------------------------------------------------
 
-/// Writes bits to a byte vector in LSB-first order.
+/// Writes bits to a byte vector in LSB-first order, through a 64-bit
+/// accumulator.
 struct BitWriter {
     data: Vec<u8>,
-    current_byte: u8,
-    bit_pos: u8,
+    /// Pending bits, the oldest in the low end. Always fewer than 8 between
+    /// calls, so a 16-bit write cannot overflow it.
+    pending: u64,
+    pending_bits: u32,
 }
 
 impl BitWriter {
     fn new() -> Self {
         Self {
             data: Vec::new(),
-            current_byte: 0,
-            bit_pos: 0,
+            pending: 0,
+            pending_bits: 0,
+        }
+    }
+
+    /// Append the low `n` bits of `bits`, which must have no higher bits set.
+    #[inline]
+    fn push_bits(&mut self, bits: u64, n: u32) {
+        self.pending |= bits << self.pending_bits;
+        self.pending_bits += n;
+        while self.pending_bits >= 8 {
+            self.data.push(self.pending.to_le_bytes()[0]);
+            self.pending >>= 8;
+            self.pending_bits -= 8;
         }
     }
 
     /// Write `n` bits (up to 16) in LSB-first order.
     fn write_bits(&mut self, value: u16, n: u8) {
-        for i in 0..n {
-            if (value >> i) & 1 != 0 {
-                self.current_byte |= 1 << self.bit_pos;
-            }
-            self.bit_pos += 1;
-            if self.bit_pos >= 8 {
-                self.data.push(self.current_byte);
-                self.current_byte = 0;
-                self.bit_pos = 0;
-            }
-        }
+        let n = u32::from(n);
+        self.push_bits(u64::from(value) & ((1 << n) - 1), n);
     }
 
     /// Write `n` bits in MSB-first order (for Huffman codes).
@@ -149,26 +156,18 @@ impl BitWriter {
     /// DEFLATE Huffman codes are stored MSB-first in the bitstream.
     /// The first bit written is the most-significant bit of the code.
     fn write_bits_msb(&mut self, value: u16, n: u8) {
-        for i in (0..n).rev() {
-            let bit = (value >> i) & 1;
-            if bit != 0 {
-                self.current_byte |= 1 << self.bit_pos;
-            }
-            self.bit_pos += 1;
-            if self.bit_pos >= 8 {
-                self.data.push(self.current_byte);
-                self.current_byte = 0;
-                self.bit_pos = 0;
-            }
+        if n > 0 {
+            let n = u32::from(n);
+            self.push_bits(u64::from(value.reverse_bits() >> (16 - n)), n);
         }
     }
 
     /// Flush remaining bits (pad with zeros).
     fn flush(&mut self) {
-        if self.bit_pos > 0 {
-            self.data.push(self.current_byte);
-            self.current_byte = 0;
-            self.bit_pos = 0;
+        if self.pending_bits > 0 {
+            self.data.push(self.pending.to_le_bytes()[0]);
+            self.pending = 0;
+            self.pending_bits = 0;
         }
     }
 
@@ -453,37 +452,113 @@ fn build_fixed_dist_codes() -> ([u16; NUM_DIST_CODES], [u8; NUM_DIST_CODES]) {
     (codes, lengths)
 }
 
-/// Encode a match length (3..258) into `(code, extra_value, extra_bits)`.
-fn encode_length(length: u16) -> Result<(u16, u16, u8)> {
-    for (i, (&base, &extra)) in LENGTH_BASE.iter().zip(LENGTH_EXTRA.iter()).enumerate() {
-        let max_len = base + (1 << extra) - 1;
-        if length >= base && length <= max_len {
-            #[allow(clippy::cast_possible_truncation)]
-            let code = 257 + i as u16; // i < 29, fits in u16
-            let extra_val = length - base;
-            return Ok((code, extra_val, extra));
-        }
+/// Index of the length range holding `length`, by search. Lengths with two
+/// valid codes take the first, so 258 is code 284: changing that would change
+/// archive bytes.
+fn find_length_index(length: u16) -> Option<usize> {
+    LENGTH_BASE
+        .iter()
+        .zip(LENGTH_EXTRA.iter())
+        .position(|(&base, &extra)| length >= base && length < base + (1 << extra))
+}
+
+/// Index of the distance range holding `distance`, by search.
+fn find_dist_index(distance: u16) -> Option<usize> {
+    DIST_BASE
+        .iter()
+        .zip(DIST_EXTRA.iter())
+        .position(|(&base, &extra)| {
+            u32::from(distance) >= u32::from(base)
+                && u32::from(distance) < u32::from(base) + (1 << extra)
+        })
+}
+
+/// Marks a length with no code in [`EncodeTables::length_index`].
+const NO_INDEX: u8 = u8::MAX;
+
+/// Everything the encoder needs that never changes, built once.
+struct EncodeTables {
+    litlen_codes: [u16; NUM_LITLEN_CODES],
+    litlen_lengths: [u8; NUM_LITLEN_CODES],
+    dist_codes: [u16; NUM_DIST_CODES],
+    dist_lengths: [u8; NUM_DIST_CODES],
+    /// Range index by match length.
+    length_index: [u8; MAX_MATCH_LEN + 1],
+    /// Range index by `distance - 1`, for distances up to 256.
+    near_dist_index: [u8; 256],
+    /// Range index by `(distance - 1) >> 7`, for larger distances. Each of
+    /// their ranges starts on a 128-byte boundary, so one entry is enough.
+    far_dist_index: [u8; 256],
+}
+
+/// `index` as a table entry; every index fits, as there are at most 30.
+fn table_entry(index: Option<usize>) -> u8 {
+    index.and_then(|i| u8::try_from(i).ok()).unwrap_or(NO_INDEX)
+}
+
+fn build_encode_tables() -> EncodeTables {
+    let (litlen_codes, litlen_lengths) = build_fixed_litlen_codes();
+    let (dist_codes, dist_lengths) = build_fixed_dist_codes();
+    let mut length_index = [NO_INDEX; MAX_MATCH_LEN + 1];
+    for (length, entry) in (0u16..).zip(length_index.iter_mut()) {
+        *entry = table_entry(find_length_index(length));
     }
-    Err(CrushError::InvalidFormat(format!(
-        "GDeflate: cannot encode length {length}"
-    )))
+    let mut near_dist_index = [NO_INDEX; 256];
+    for (distance, entry) in (1u16..).zip(near_dist_index.iter_mut()) {
+        *entry = table_entry(find_dist_index(distance));
+    }
+    let mut far_dist_index = [NO_INDEX; 256];
+    for (bucket, entry) in (0u16..).zip(far_dist_index.iter_mut()) {
+        *entry = table_entry(find_dist_index((bucket << 7) + 1));
+    }
+    EncodeTables {
+        litlen_codes,
+        litlen_lengths,
+        dist_codes,
+        dist_lengths,
+        length_index,
+        near_dist_index,
+        far_dist_index,
+    }
+}
+
+static ENCODE_TABLES: LazyLock<EncodeTables> = LazyLock::new(build_encode_tables);
+
+/// Encode a match length (3..258) into `(code, extra_value, extra_bits)`.
+fn encode_length(tables: &EncodeTables, length: u16) -> Result<(u16, u16, u8)> {
+    match tables.length_index.get(usize::from(length)) {
+        Some(&index) if index != NO_INDEX => {
+            let i = usize::from(index);
+            Ok((
+                257 + u16::from(index),
+                length - LENGTH_BASE[i],
+                LENGTH_EXTRA[i],
+            ))
+        }
+        _ => Err(CrushError::InvalidFormat(format!(
+            "GDeflate: cannot encode length {length}"
+        ))),
+    }
 }
 
 /// Encode a match distance (1..32768) into `(code, extra_value, extra_bits)`.
-fn encode_distance(distance: u16) -> Result<(u16, u16, u8)> {
-    for (i, (&base, &extra)) in DIST_BASE.iter().zip(DIST_EXTRA.iter()).enumerate() {
-        let max_dist = base + (1 << extra) - 1;
-        if distance >= base && distance <= max_dist {
-            let extra_val = distance - base;
-            #[allow(clippy::cast_possible_truncation)]
-            {
-                return Ok((i as u16, extra_val, extra)); // i < 30, fits in u16
-            }
-        }
+fn encode_distance(tables: &EncodeTables, distance: u16) -> Result<(u16, u16, u8)> {
+    let index = match distance {
+        0 => NO_INDEX,
+        1..=256 => tables.near_dist_index[usize::from(distance - 1)],
+        _ => tables
+            .far_dist_index
+            .get(usize::from((distance - 1) >> 7))
+            .copied()
+            .unwrap_or(NO_INDEX),
+    };
+    if index == NO_INDEX {
+        return Err(CrushError::InvalidFormat(format!(
+            "GDeflate: cannot encode distance {distance}"
+        )));
     }
-    Err(CrushError::InvalidFormat(format!(
-        "GDeflate: cannot encode distance {distance}"
-    )))
+    let i = usize::from(index);
+    Ok((u16::from(index), distance - DIST_BASE[i], DIST_EXTRA[i]))
 }
 
 // ---------------------------------------------------------------------------
@@ -501,8 +576,11 @@ fn encode_distance(distance: u16) -> Result<(u16, u16, u8)> {
 /// Each symbol's Huffman code + extra bits are written to the assigned sub-stream
 /// in round-robin order. Length/distance pairs go to the same sub-stream.
 fn serialize_gdeflate(symbols: &[LzSymbol]) -> Result<Vec<u8>> {
-    let (litlen_codes, litlen_lengths) = build_fixed_litlen_codes();
-    let (dist_codes, dist_lengths) = build_fixed_dist_codes();
+    let tables: &EncodeTables = &ENCODE_TABLES;
+    let litlen_codes = &tables.litlen_codes;
+    let litlen_lengths = &tables.litlen_lengths;
+    let dist_codes = &tables.dist_codes;
+    let dist_lengths = &tables.dist_lengths;
 
     // Create 32 sub-stream bit writers.
     let mut streams: Vec<BitWriter> = (0..NUM_STREAMS).map(|_| BitWriter::new()).collect();
@@ -524,7 +602,7 @@ fn serialize_gdeflate(symbols: &[LzSymbol]) -> Result<Vec<u8>> {
             }
             LzSymbol::Match { length, distance } => {
                 // Encode length: find the length code
-                let (len_code, len_extra, len_extra_bits) = encode_length(*length)?;
+                let (len_code, len_extra, len_extra_bits) = encode_length(tables, *length)?;
                 let code = litlen_codes[usize::from(len_code)];
                 let code_len = litlen_lengths[usize::from(len_code)];
 
@@ -535,7 +613,7 @@ fn serialize_gdeflate(symbols: &[LzSymbol]) -> Result<Vec<u8>> {
                 }
 
                 // Distance code + extra also goes to the SAME stream
-                let (dist_code, dist_extra, dist_extra_bits) = encode_distance(*distance)?;
+                let (dist_code, dist_extra, dist_extra_bits) = encode_distance(tables, *distance)?;
                 let dc = dist_codes[usize::from(dist_code)];
                 let dl = dist_lengths[usize::from(dist_code)];
 
@@ -756,4 +834,44 @@ pub fn gdeflate_decompress_tile(payload: &[u8], uncompressed_size: usize) -> Res
     }
 
     deserialize_gdeflate(payload, uncompressed_size)
+}
+
+#[cfg(test)]
+mod encode_table_tests {
+    use super::*;
+
+    #[test]
+    fn length_lookup_matches_the_search_for_every_value() {
+        let tables = build_encode_tables();
+        for length in 0..=u16::MAX {
+            let found = encode_length(&tables, length)
+                .ok()
+                .map(|(code, ..)| code - 257);
+            let searched = find_length_index(length).and_then(|i| u16::try_from(i).ok());
+            assert_eq!(found, searched, "length {length}");
+        }
+    }
+
+    #[test]
+    fn distance_lookup_matches_the_search_for_every_value() {
+        let tables = build_encode_tables();
+        for distance in 0..=u16::MAX {
+            let found = encode_distance(&tables, distance)
+                .ok()
+                .map(|(code, ..)| code);
+            let searched = find_dist_index(distance).and_then(|i| u16::try_from(i).ok());
+            assert_eq!(found, searched, "distance {distance}");
+        }
+    }
+
+    #[test]
+    fn bit_writer_packs_lsb_and_msb_codes() {
+        let mut w = BitWriter::new();
+        w.write_bits(0b101, 3);
+        w.write_bits_msb(0b110, 3);
+        w.write_bits(0xFFFF, 16);
+        w.flush();
+        // Bits in order: 1,0,1 then 1,1,0 then sixteen 1s, then padding.
+        assert_eq!(w.data, [0b1101_1101, 0xFF, 0b0011_1111]);
+    }
 }

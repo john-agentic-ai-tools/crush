@@ -22,7 +22,7 @@ Crush is built to:
 - **Parallel CPU Compression**: Multi-threaded compression scaling near-linearly to all available cores (~1.1 GiB/s at default workers, post-011 hot-path optimizations)
 - **GPU-Accelerated Decompression**: GDeflate-based GPU decompression via CUDA (560 MiB/s) or wgpu Vulkan/Metal/DX12 (386 MiB/s) with automatic CPU fallback
 - **Plugin Architecture**: Extensible system supporting multiple compression algorithms with automatic scoring and selection
-- **Fast single-core codec (`fast-lz`)**: an LZ4-class plugin for maximum single-core speed at an LZ4-like ratio; `--level fast` uses it automatically, but only for data a quick sampled estimate shows it compresses well
+- **Fast codec (`fast-lz`)**: an LZ4-class plugin for maximum speed at an LZ4-like ratio; it compresses on all cores and decompresses on one; `--level fast` uses it automatically, but only for data a quick sampled estimate shows it compresses well
 - **Random Access**: O(1) tile-based decompression for seeking into large archives without full decompression
 - **Metadata Preservation**: Automatically preserves file modification times and Unix permissions
 - **Pipeline Integration**: Full stdin/stdout support for seamless Unix pipeline integration
@@ -130,10 +130,12 @@ GPU decompression outperforms CPU at larger data sizes (>2-4 MB) where the fixed
 
 | Corpus | Throughput |
 |--------|-----------|
-| log-text-1MB | 179 MiB/s |
-| binary-1MB | 69 MiB/s |
-| mixed-1MB | 98 MiB/s |
-| mixed-10MB | 100 MiB/s |
+| log-text-1MB | 1.8 GiB/s |
+| binary-1MB | 960 MiB/s |
+| mixed-1MB | 1.05 GiB/s |
+| mixed-10MB | 2.1 GiB/s |
+
+All cores of an i9-12900K, Windows, Criterion quick run.
 
 **Random Access Performance** (64 MB corpus, 1 MB blocks):
 
@@ -197,10 +199,20 @@ alternative. lz4 needs version 1.10 or later for multithreading (`-T`); older
 distribution packages run it on one thread. See `perf/README.md` for the
 latest results.
 
-### Fast single-core compression (`fast-lz`)
+Latest results on real files at all cores (i9-12900K, WSL2). Up and to the right
+is better:
+
+![Compression speed against ratio](perf/comparisons/real-all-compress.svg)
+
+![Decompression speed against ratio](perf/comparisons/real-all-decompress.svg)
+
+To explore every dataset and core count, open `perf/comparisons/chart.html`.
+After a new `perf/compare.py` run, redraw these with `python perf/chart.py`.
+
+### Fast compression (`fast-lz`)
 
 `fast-lz` is an LZ4-class codec (byte-oriented LZ77, no entropy coding) for
-when single-core speed matters more than ratio:
+when speed matters more than ratio:
 
 ```bash
 crush compress --plugin fast-lz big.log        # always use it
@@ -223,9 +235,21 @@ On one core of an i9-12900K (WSL2, tmpfs, 128 MB of real files, lz4 1.10.0):
 | `fast-lz` codec in memory | 721 MB/s | 2,519 MB/s | 2.23 |
 | `lz4 -b1` in memory | 784 MB/s | 4,429 MB/s | 2.30 |
 
-The codec is safe Rust; end to end it is level with or ahead of the lz4 CLI
-because crush memory-maps large inputs and streams blocks to and from the
-files. Details: `specs/023-lz4-fast-plugin/perf-log.md` and
+The codec is safe Rust; on one core, end to end it is level with or ahead of
+the lz4 CLI because crush memory-maps large inputs and streams blocks to and
+from the files.
+
+Compression also runs on every core, with the same output bytes at any core
+count. In memory it reaches 5,238 MB/s on all cores. End to end it trails
+multi-threaded `lz4 -1`:
+
+| | 4 cores | all cores |
+|---|---|---|
+| `crush --plugin fast-lz` | 1,544 MB/s | 1,823 MB/s |
+| `lz4 -1` | 1,927 MB/s | 2,049 MB/s |
+
+Details: `specs/023-lz4-fast-plugin/perf-log.md`,
+`perf/log/2026-11-parallel-fast-compression.md` and
 [`crush-lz/README.md`](crush-lz/README.md).
 
 ## Installation
@@ -384,7 +408,7 @@ crush inspect *.crush --csv
 crush plugins list
 # Available plugins:
 #   deflate - DEFLATE compression (default)
-#   fast-lz - LZ4-class single-core codec (used at --level fast when it pays off)
+#   fast-lz - LZ4-class codec (used at --level fast when it pays off)
 
 # JSON output
 crush plugins list --json

@@ -44,7 +44,7 @@ crush/
 │   │       └── shaders/deflate.wgsl
 │   ├── benches/
 │   └── fuzz/
-├── crush-lz/            # fast-lz plugin: LZ4-class single-core codec (feature 023)
+├── crush-lz/            # fast-lz plugin: LZ4-class codec, parallel compress (features 023, 027)
 │   ├── src/
 │   │   ├── lib.rs           # FastLzPlugin (linkme-registered), compress/decompress API
 │   │   ├── format.rs        # frame/block headers, bounds
