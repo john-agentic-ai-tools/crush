@@ -85,7 +85,7 @@ def core_sets():
 
 
 # Single-threaded tools: measured at 1 core only.
-SINGLE_THREADED = ("gzip-6", "gzip-1", "crush-fast-lz")
+SINGLE_THREADED = ("gzip-6", "gzip-1")
 # Optional tools: (binary, version command).
 OPTIONAL = {"zstd": "zstd --version", "lz4": "lz4 --version"}
 

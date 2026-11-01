@@ -2,7 +2,7 @@
 //!
 //! An LZ4-class codec: byte-oriented `LZ77` sequences with a 64-kilobyte
 //! window and no entropy coding, compressed in independent blocks. It trades
-//! ratio for single-core speed. The format is described in
+//! ratio for speed. The format is described in
 //! `specs/023-lz4-fast-plugin/contracts/fast-lz-format.md`.
 pub mod format;
 
@@ -161,7 +161,7 @@ impl CompressionAlgorithm for FastLzPlugin {
             magic_number: PLUGIN_MAGIC,
             throughput: 900.0,
             compression_ratio: 0.44,
-            description: "LZ4-class single-core codec: fastest, lower ratio; picked automatically only for compressible data at --level fast",
+            description: "LZ4-class codec: fastest, lower ratio; picked automatically only for compressible data at --level fast",
         }
     }
 

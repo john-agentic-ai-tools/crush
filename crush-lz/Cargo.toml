@@ -16,6 +16,7 @@ path = "src/lib.rs"
 [dependencies]
 crush-core = { version = "0.4.0", path = "../crush-core" }
 linkme = { workspace = true }
+rayon = { workspace = true }
 
 [dev-dependencies]
 criterion = { workspace = true }

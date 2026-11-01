@@ -78,6 +78,7 @@ These are wall-clock CLI numbers including file I/O and process start, so
 they aren't comparable with the criterion baselines above.
 
 The tool `crush-fast-lz` (`crush compress --plugin fast-lz`) is measured at
+every core count, though the committed WSL file predates that and holds it at
 one core only. To compare a subset in alternating order, which is how
 feature 023 measured fast-lz against lz4:
 

@@ -1,8 +1,9 @@
 # crush-lz
 
 The `fast-lz` compression plugin for [Crush](../README.md): an LZ4-class
-codec (byte-oriented LZ77 sequences, no entropy coding) for maximum
-single-core speed at an LZ4-like ratio. Safe Rust, no third-party codec.
+codec (byte-oriented LZ77 sequences, no entropy coding) for maximum speed at
+an LZ4-like ratio. It compresses on all cores and decompresses on one. Safe
+Rust, no third-party codec.
 
 ## Using it
 
@@ -60,6 +61,16 @@ One core of an i9-12900K, 128 MB of real files (tar of `/usr/lib` and
 The spec's in-memory targets (1.15x lz4 compress, 0.60x decompress) are not
 met; `specs/023-lz4-fast-plugin/perf-log.md` records the experiments and the
 measured speed/ratio frontier.
+
+Compression, same corpus, with lz4 1.10.0 multi-threaded:
+
+| | 4 cores | all cores |
+|---|---|---|
+| fast-lz codec, in memory | 2,193 MB/s | 5,238 MB/s |
+| `crush --plugin fast-lz`, end to end | 1,572 MB/s (0.85x `lz4 -1`) | 1,759 MB/s (0.87x) |
+
+Output bytes do not depend on the core count. Details:
+`perf/log/2026-11-parallel-fast-compression.md`.
 
 ## Benchmarks
 

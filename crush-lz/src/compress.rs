@@ -8,10 +8,10 @@
 //! extended 8 bytes at a time; the probe step grows while no match is found,
 //! so incompressible regions are skipped quickly.
 
-use crate::format::{
-    BLOCK_HEADER_SIZE, BlockHeader, END_MARKER, FrameHeader, block_bound, compress_bound,
-};
+use crate::format::{BLOCK_HEADER_SIZE, BlockHeader, END_MARKER, FrameHeader, compress_bound};
 use crush_core::error::{PluginError, Result};
+use rayon::prelude::*;
+use std::cell::RefCell;
 use std::io::Write;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -23,6 +23,9 @@ const MAX_OFFSET: usize = 65_535;
 const SKIP_TRIGGER: u32 = 6;
 /// Matches only start where 8 bytes can be read.
 const READ_AHEAD: usize = 8;
+/// Blocks per thread in one parallel batch. Bounds the compressed blocks held
+/// in memory while still giving Rayon enough work to balance slower cores.
+const BATCH_BLOCKS_PER_THREAD: usize = 8;
 
 /// Reusable compressor state (about 16 kilobytes).
 pub(crate) struct Compressor {
@@ -30,6 +33,9 @@ pub(crate) struct Compressor {
     /// Table value of the current block's first byte. Positions are stored as
     /// `base + i`; anything below `base` belongs to an earlier block.
     base: u32,
+    /// Output of the current block. Kept between blocks so that encoding one
+    /// does not zero-fill a block-sized buffer.
+    buf: Vec<u8>,
 }
 
 impl Compressor {
@@ -41,6 +47,7 @@ impl Compressor {
         Self {
             table: Box::new([0; HASH_SIZE]),
             base: 1,
+            buf: Vec::new(),
         }
     }
 
@@ -87,8 +94,10 @@ impl Compressor {
             let mut i = 0usize;
             let mut misses = 0u32;
             while i < limit {
-                let word = read_u32(src, i);
-                let h = hash6(read_u64(src, i));
+                let next8 = read_u64(src, i);
+                #[allow(clippy::cast_possible_truncation)]
+                let word = next8 as u32; // the low 4 bytes, read little-endian
+                let h = hash6(next8);
                 let cand = self.table[h];
                 let here = base + pos32(i);
                 self.table[h] = here;
@@ -281,40 +290,85 @@ pub(crate) fn compress_frame_into(
     cancel: Option<&AtomicBool>,
     out: &mut Vec<u8>,
 ) -> Result<()> {
-    let block_size = frame.block_size();
-    out.reserve(compress_bound(input.len(), block_size));
+    out.reserve(compress_bound(input.len(), frame.block_size()));
     out.extend_from_slice(&frame.to_bytes());
-    let mut compressor = Compressor::new();
-    for chunk in input.chunks(block_size) {
-        check_cancel(cancel)?;
-        push_block(&mut compressor, chunk, out);
-    }
+    encode_blocks(input, frame.block_size(), cancel, |bytes| {
+        out.extend_from_slice(bytes);
+        Ok(())
+    })?;
     out.extend_from_slice(&END_MARKER);
     Ok(())
 }
 
-/// [`compress_frame`], writing to `w` one block at a time (one block of
-/// memory). Returns the number of bytes written.
+/// [`compress_frame`], writing to `w` as blocks finish, so memory is bounded
+/// by one batch of blocks. Returns the number of bytes written.
 pub(crate) fn compress_frame_to(
     input: &[u8],
     frame: FrameHeader,
     cancel: Option<&AtomicBool>,
     w: &mut dyn Write,
 ) -> Result<u64> {
-    let block_size = frame.block_size();
-    w.write_all(&frame.to_bytes())?;
-    let mut written = (frame.to_bytes().len() + END_MARKER.len()) as u64;
-    let mut compressor = Compressor::new();
-    let mut scratch = Vec::with_capacity(BLOCK_HEADER_SIZE + block_bound(block_size));
-    for chunk in input.chunks(block_size) {
-        check_cancel(cancel)?;
-        scratch.clear();
-        push_block(&mut compressor, chunk, &mut scratch);
-        w.write_all(&scratch)?;
-        written += scratch.len() as u64;
-    }
+    let header = frame.to_bytes();
+    w.write_all(&header)?;
+    let mut written = (header.len() + END_MARKER.len()) as u64;
+    encode_blocks(input, frame.block_size(), cancel, |bytes| {
+        w.write_all(bytes)?;
+        written += bytes.len() as u64;
+        Ok(())
+    })?;
     w.write_all(&END_MARKER)?;
     Ok(written)
+}
+
+thread_local! {
+    /// Each pool thread's compressor, kept between batches so that its output
+    /// buffer is only zero-filled once.
+    static WORKER: RefCell<Compressor> = RefCell::new(Compressor::new());
+}
+
+/// Encode every block of `input`, passing their bytes to `emit` in order.
+///
+/// Blocks are independent, so the bytes do not depend on the thread count.
+/// One thread or one block takes the serial path, which has no parallel
+/// overhead (about 7% on one core).
+fn encode_blocks(
+    input: &[u8],
+    block_size: usize,
+    cancel: Option<&AtomicBool>,
+    mut emit: impl FnMut(&[u8]) -> Result<()>,
+) -> Result<()> {
+    let threads = rayon::current_num_threads();
+    if threads == 1 || input.len() <= block_size {
+        let mut compressor = Compressor::new();
+        for chunk in input.chunks(block_size) {
+            check_cancel(cancel)?;
+            let (header, payload) = encode_block(&mut compressor, chunk);
+            emit(&header.to_bytes())?;
+            emit(payload)?;
+        }
+        return Ok(());
+    }
+
+    for batch in input.chunks(block_size * threads * BATCH_BLOCKS_PER_THREAD) {
+        check_cancel(cancel)?;
+        let blocks: Vec<Vec<u8>> = batch
+            .par_chunks(block_size)
+            .map(|chunk| {
+                WORKER.with_borrow_mut(|compressor| {
+                    let (header, payload) = encode_block(compressor, chunk);
+                    let mut block = Vec::with_capacity(BLOCK_HEADER_SIZE + payload.len());
+                    block.extend_from_slice(&header.to_bytes());
+                    block.extend_from_slice(payload);
+                    block
+                })
+            })
+            .collect();
+        for block in &blocks {
+            check_cancel(cancel)?;
+            emit(block)?;
+        }
+    }
+    Ok(())
 }
 
 fn check_cancel(cancel: Option<&AtomicBool>) -> Result<()> {
@@ -325,23 +379,22 @@ fn check_cancel(cancel: Option<&AtomicBool>) -> Result<()> {
     }
 }
 
-/// Append one block (header and payload, stored if it doesn't shrink).
-fn push_block(compressor: &mut Compressor, chunk: &[u8], out: &mut Vec<u8>) {
-    let header_at = out.len();
-    let payload_at = header_at + BLOCK_HEADER_SIZE;
-    out.resize(payload_at + chunk.len() + WILD, 0);
-    let written = compressor.compress_block(chunk, &mut out[payload_at..]);
-    let stored = written.is_none();
-    if let Some(n) = written {
-        out.truncate(payload_at + n);
-    } else {
-        out.truncate(payload_at);
-        out.extend_from_slice(chunk);
+/// Encode one block; its payload is stored if it doesn't shrink.
+fn encode_block<'a>(compressor: &'a mut Compressor, chunk: &'a [u8]) -> (BlockHeader, &'a [u8]) {
+    let mut buf = std::mem::take(&mut compressor.buf);
+    if buf.len() < chunk.len() + WILD {
+        buf.resize(chunk.len() + WILD, 0);
     }
+    let written = compressor.compress_block(chunk, &mut buf);
+    compressor.buf = buf;
+    let payload = match written {
+        Some(n) => &compressor.buf[..n],
+        None => chunk,
+    };
     let header = BlockHeader {
-        compressed_len: pos32(out.len() - payload_at),
-        stored,
+        compressed_len: pos32(payload.len()),
+        stored: written.is_none(),
         uncompressed_len: pos32(chunk.len()),
     };
-    out[header_at..payload_at].copy_from_slice(&header.to_bytes());
+    (header, payload)
 }
