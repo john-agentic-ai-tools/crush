@@ -1,10 +1,11 @@
 use crate::cli::DecompressArgs;
+use crate::commands::mapped_output::FileTarget;
 use crate::commands::utils;
 use crate::error::{CliError, Result};
 use crate::output::{self, DecompressionResult};
 use crush_core::cancel::CancellationToken;
 use crush_core::plugin::FileMetadata;
-use crush_core::{StreamedDecompression, decompress_to_writer, decompress_with_cancel};
+use crush_core::{StreamedDecompression, decompress_to_target, decompress_with_cancel};
 use filetime::{FileTime, set_file_mtime};
 use indicatif::{ProgressBar, ProgressStyle};
 use is_terminal::IsTerminal;
@@ -22,9 +23,8 @@ fn decompress_single_block(
     compressed_data: &[u8],
     block_n: u64,
 ) -> Result<(Vec<u8>, FileMetadata)> {
-    // Detect if this is a parallel-deflate CRSH file
+    // A bare CRSH file has no Crush header.
     if compressed_data.len() >= 4 && &compressed_data[0..4] == b"CRSH" {
-        // Use crush_parallel for random access
         let mut cursor = Cursor::new(compressed_data);
         let index = crush_parallel::load_index(&mut cursor)?;
 
@@ -47,10 +47,8 @@ fn decompress_single_block(
         );
         Ok((block_data, FileMetadata::default()))
     } else {
-        Err(CliError::InvalidInput(
-            "Random access (--block) is only supported for parallel-deflate (.crsh) files"
-                .to_string(),
-        ))
+        let block_data = crush_core::decompress_block(compressed_data, block_n)?;
+        Ok((block_data, FileMetadata::default()))
     }
 }
 
@@ -247,7 +245,7 @@ fn decompress_file(
         (data, metadata, size)
     } else if streamed {
         trace!("Streaming decompression into {}", output_path.display());
-        let result = stream_to_file(&compressed_data, cancel_flag, &output_path)?;
+        let result = stream_to_file(&compressed_data, cancel_flag, input_path, &output_path)?;
         (Vec::new(), result.metadata, result.bytes)
     } else {
         // Full decompression (with cancel flag connected to Ctrl+C)
@@ -403,17 +401,22 @@ fn plugin_name_for(data: &[u8]) -> String {
 fn stream_to_file(
     data: &[u8],
     cancel_flag: Arc<std::sync::atomic::AtomicBool>,
+    input_path: &Path,
     path: &Path,
 ) -> Result<StreamedDecompression> {
-    let mut file = fs::File::create(path)?;
-    match decompress_to_writer(data, cancel_flag, &mut file) {
-        Ok(result) => Ok(result),
-        Err(e) => {
-            drop(file);
-            let _ = fs::remove_file(path);
-            Err(e.into())
-        }
-    }
+    let same_file = same_file(input_path, path);
+    let mut target = FileTarget::create(path, !same_file)?;
+    let result = decompress_to_target(data, cancel_flag, &mut target);
+    drop(target);
+    result.map_err(|e| {
+        let _ = fs::remove_file(path);
+        e.into()
+    })
+}
+
+/// True if both paths resolve to one file. A missing output never does.
+fn same_file(a: &Path, b: &Path) -> bool {
+    matches!((a.canonicalize(), b.canonicalize()), (Ok(a), Ok(b)) if a == b)
 }
 
 fn determine_output_path(input: &Path, output_arg: &Option<PathBuf>) -> Result<PathBuf> {
@@ -541,7 +544,7 @@ mod tests {
         let result = decompress_single_block(data, 0);
         assert!(result.is_err());
         let msg = result.unwrap_err().to_string();
-        assert!(msg.contains("Random access"));
+        assert!(msg.contains("Not a valid Crush archive"), "{msg}");
     }
 
     #[test]

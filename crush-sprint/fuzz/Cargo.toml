@@ -1,0 +1,17 @@
+[package]
+name = "crush-sprint-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+# Not part of the parent workspace (it's in the root's `exclude` too, but
+# cargo-fuzz needs this to build the crate).
+[workspace]
+
+[dependencies]
+libfuzzer-sys = "0.4"
+crush-core = { path = "../../crush-core" }
+crush-sprint = { path = ".." }

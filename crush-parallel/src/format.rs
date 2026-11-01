@@ -20,6 +20,10 @@ pub const CRSH_MAGIC: [u8; 4] = [0x43, 0x52, 0x53, 0x48];
 /// Current format version. Files with a different version are rejected.
 pub const FORMAT_VERSION: u32 = 1;
 
+/// Format version of files written by a codec other than DEFLATE. Such files
+/// carry a codec id in header byte 22.
+pub const FORMAT_VERSION_CODEC: u32 = 2;
+
 /// Current engine semantic version (set at build time).
 pub const ENGINE_VERSION_STR: &str = env!("CARGO_PKG_VERSION");
 
@@ -162,6 +166,8 @@ pub struct FileHeader {
     pub uncompressed_size: u64,
     /// `u64::MAX` = unknown (streaming input).
     pub block_count: u64,
+    /// 0 = DEFLATE, the only codec of format version 1.
+    pub codec_id: u8,
 }
 
 impl FileHeader {
@@ -176,15 +182,42 @@ impl FileHeader {
         uncompressed_size: u64,
         block_count: u64,
     ) -> Self {
+        Self::for_codec(
+            block_size,
+            compression_level,
+            flags,
+            uncompressed_size,
+            block_count,
+            0,
+        )
+    }
+
+    /// Build a header for `codec_id`. DEFLATE keeps format version 1 byte for
+    /// byte; any other codec writes [`FORMAT_VERSION_CODEC`], so a reader that
+    /// predates it refuses the file.
+    #[must_use]
+    pub fn for_codec(
+        block_size: u32,
+        compression_level: u8,
+        flags: FileFlags,
+        uncompressed_size: u64,
+        block_count: u64,
+        codec_id: u8,
+    ) -> Self {
         Self {
             magic: CRSH_MAGIC,
-            format_version: FORMAT_VERSION,
+            format_version: if codec_id == 0 {
+                FORMAT_VERSION
+            } else {
+                FORMAT_VERSION_CODEC
+            },
             engine_version: EngineVersion::current(),
             block_size,
             compression_level,
             flags,
             uncompressed_size,
             block_count,
+            codec_id,
         }
     }
 
@@ -198,7 +231,8 @@ impl FileHeader {
         b[16..20].copy_from_slice(&self.block_size.to_le_bytes());
         b[20] = self.compression_level;
         b[21] = self.flags.0;
-        // b[22..24] reserved — zero
+        b[22] = self.codec_id;
+        // b[23] reserved — zero
         b[24..32].copy_from_slice(&self.uncompressed_size.to_le_bytes());
         b[32..40].copy_from_slice(&self.block_count.to_le_bytes());
         // b[40..64] reserved — zero
@@ -219,7 +253,7 @@ impl FileHeader {
             )));
         }
         let format_version = u32::from_le_bytes([b[4], b[5], b[6], b[7]]);
-        if format_version != FORMAT_VERSION {
+        if format_version != FORMAT_VERSION && format_version != FORMAT_VERSION_CODEC {
             let ev = EngineVersion::from_bytes(b[8..16].try_into().map_err(|_| {
                 CrushError::InvalidFormat("header too short for engine version".to_owned())
             })?);
@@ -227,6 +261,12 @@ impl FileHeader {
                 file_version: format!("format v{format_version} (engine {})", ev.to_string_repr()),
                 current_version: format!("format v{FORMAT_VERSION} (engine {ENGINE_VERSION_STR})"),
             });
+        }
+        let codec_id = b[22];
+        if (format_version == FORMAT_VERSION) != (codec_id == 0) {
+            return Err(CrushError::InvalidFormat(format!(
+                "format v{format_version} cannot hold codec {codec_id}"
+            )));
         }
         let engine_version = EngineVersion::from_bytes(
             b[8..16]
@@ -251,6 +291,7 @@ impl FileHeader {
             flags,
             uncompressed_size,
             block_count,
+            codec_id,
         })
     }
 }

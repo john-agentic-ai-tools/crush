@@ -1,10 +1,11 @@
 //! Block index loading and random-access decompression.
 
-use crate::block::decompress_block_payload;
+use crate::block::decompress_block_into;
+use crate::codec::{BlockCodec, DeflateCodec};
 use crate::config::EngineConfiguration;
-use crate::format::{BlockHeader, BlockIndexEntry, FileFooter, IndexHeader};
+use crate::engine::{check_block_in_file, check_header_matches_index};
+use crate::format::{BlockHeader, BlockIndexEntry, FileFooter, FileHeader, IndexHeader};
 use crush_core::error::{CrushError, Result};
-use libdeflater::Decompressor;
 use std::io::{Read, Seek, SeekFrom};
 
 /// In-memory representation of the trailing block index.
@@ -17,6 +18,8 @@ use std::io::{Read, Seek, SeekFrom};
 pub struct BlockIndex {
     pub entries: Vec<BlockIndexEntry>,
     pub checksums_enabled: bool,
+    /// Codec named by the file header.
+    pub codec_id: u8,
     /// `cum[0] = 0`, `cum[i] = sum_{j<i} entries[j].uncompressed_size as u64`.
     /// Length is `entries.len() + 1`. Populated once in `load_index`.
     cumulative_uncompressed: Vec<u64>,
@@ -24,7 +27,7 @@ pub struct BlockIndex {
 
 impl BlockIndex {
     /// Construct an in-memory `BlockIndex` and precompute the cumulative-offset table.
-    fn new(entries: Vec<BlockIndexEntry>, checksums_enabled: bool) -> Self {
+    fn new(entries: Vec<BlockIndexEntry>, checksums_enabled: bool, codec_id: u8) -> Self {
         let mut cumulative_uncompressed = Vec::with_capacity(entries.len() + 1);
         cumulative_uncompressed.push(0u64);
         let mut running: u64 = 0;
@@ -37,6 +40,7 @@ impl BlockIndex {
         Self {
             entries,
             checksums_enabled,
+            codec_id,
             cumulative_uncompressed,
         }
     }
@@ -109,28 +113,51 @@ pub fn load_index<R: Read + Seek>(reader: &mut R) -> Result<BlockIndex> {
         )));
     }
 
-    // Step 2: read footer
+    // Step 2: read the file header, which names the format version and codec
+    if file_size < (FileHeader::SIZE + FileFooter::SIZE) as u64 {
+        return Err(CrushError::IndexCorrupted(format!(
+            "file too short ({file_size} bytes) to contain a CRSH header and footer"
+        )));
+    }
+    reader.seek(SeekFrom::Start(0))?;
+    let mut header_buf = [0u8; FileHeader::SIZE];
+    reader.read_exact(&mut header_buf)?;
+    let file_header = FileHeader::from_bytes(&header_buf)?;
+
+    // Step 3: read footer
     reader.seek(SeekFrom::Start(file_size - FileFooter::SIZE as u64))?;
     let mut footer_buf = [0u8; FileFooter::SIZE];
     reader.read_exact(&mut footer_buf)?;
     let footer = FileFooter::from_bytes(&footer_buf)?;
 
-    // Step 3: validate index region bounds
-    let index_end = footer.index_offset + u64::from(footer.index_size);
-    if index_end > file_size - FileFooter::SIZE as u64 {
+    // Step 4: validate index region bounds
+    let footer_start = file_size - FileFooter::SIZE as u64;
+    if footer
+        .index_offset
+        .checked_add(u64::from(footer.index_size))
+        .is_none_or(|end| end > footer_start)
+    {
         return Err(CrushError::IndexCorrupted(
             "index region extends beyond footer position".to_owned(),
         ));
     }
 
-    // Step 4: read IndexHeader
+    // Step 5: read IndexHeader
     reader.seek(SeekFrom::Start(footer.index_offset))?;
     let mut ih_buf = [0u8; IndexHeader::SIZE];
     reader.read_exact(&mut ih_buf)?;
     let ih = IndexHeader::from_bytes(&ih_buf);
 
-    // Step 5: read BlockIndexEntry records
+    // Step 6: read BlockIndexEntry records, sized from what the file really
+    // holds, so a forged count cannot demand a huge allocation.
     let entry_count = ih.entry_count as usize;
+    let index_size = IndexHeader::SIZE as u64 + entry_count as u64 * BlockIndexEntry::SIZE as u64;
+    if index_size != u64::from(footer.index_size) {
+        return Err(CrushError::IndexCorrupted(format!(
+            "index holds {} bytes but {entry_count} entries need {index_size}",
+            footer.index_size
+        )));
+    }
     let mut entries = Vec::with_capacity(entry_count);
     for i in 0..entry_count {
         let mut e_buf = [0u8; BlockIndexEntry::SIZE];
@@ -143,10 +170,14 @@ pub fn load_index<R: Read + Seek>(reader: &mut R) -> Result<BlockIndex> {
     // Infer checksums_enabled from the first entry's checksum field
     let checksums_enabled = entries.first().is_some_and(|e| e.checksum != 0);
 
-    Ok(BlockIndex::new(entries, checksums_enabled))
+    Ok(BlockIndex::new(
+        entries,
+        checksums_enabled,
+        file_header.codec_id,
+    ))
 }
 
-/// Decompress a single block by its zero-based index.
+/// Decompress a single DEFLATE block by its zero-based index.
 ///
 /// This is the random-access entry point. Time-to-first-byte is O(1) in the
 /// number of blocks — requires only a single seek to `index.entries[block_n].block_offset`.
@@ -154,14 +185,43 @@ pub fn load_index<R: Read + Seek>(reader: &mut R) -> Result<BlockIndex> {
 /// # Errors
 ///
 /// - [`CrushError::InvalidConfig`] if `block_n` is out of range.
+/// - [`CrushError::InvalidFormat`] if the block is malformed or the codec differs.
 /// - [`CrushError::ChecksumMismatch`] if the block's CRC32 fails.
 /// - [`CrushError::Io`] for I/O failures.
 pub fn decompress_block<R: Read + Seek>(
     reader: &mut R,
     block_index: &BlockIndex,
     block_n: u64,
+    config: &EngineConfiguration,
+) -> Result<Vec<u8>> {
+    decompress_block_with(
+        &DeflateCodec::default(),
+        reader,
+        block_index,
+        block_n,
+        config,
+    )
+}
+
+/// Decompress a single block written by `codec`, by its zero-based index.
+///
+/// # Errors
+///
+/// As for [`decompress_block`].
+pub fn decompress_block_with<C: BlockCodec, R: Read + Seek>(
+    codec: &C,
+    reader: &mut R,
+    block_index: &BlockIndex,
+    block_n: u64,
     _config: &EngineConfiguration,
 ) -> Result<Vec<u8>> {
+    if block_index.codec_id != C::CODEC_ID {
+        return Err(CrushError::InvalidFormat(format!(
+            "file uses codec {} but this reader is codec {}",
+            block_index.codec_id,
+            C::CODEC_ID
+        )));
+    }
     let block_n_usize = usize::try_from(block_n)
         .map_err(|_| CrushError::InvalidConfig(format!("block_n {block_n} overflows usize")))?;
     let entry = block_index.entries.get(block_n_usize).ok_or_else(|| {
@@ -171,27 +231,30 @@ pub fn decompress_block<R: Read + Seek>(
         ))
     })?;
 
-    // Seek to the block header
-    reader.seek(SeekFrom::Start(entry.block_offset))?;
+    let file_size = reader.seek(SeekFrom::End(0))?;
+    check_block_in_file(block_n_usize, entry, file_size)?;
 
-    // Read BlockHeader
+    reader.seek(SeekFrom::Start(entry.block_offset))?;
     let mut hdr_buf = [0u8; BlockHeader::SIZE];
     reader.read_exact(&mut hdr_buf)?;
     let header = BlockHeader::from_bytes(&hdr_buf);
+    check_header_matches_index(block_n_usize, &header, entry)?;
 
-    // Read payload
     let mut payload = vec![0u8; header.compressed_size as usize];
     reader.read_exact(&mut payload)?;
 
-    // Single-block random access allocates its own Decompressor — not a hot path.
-    let mut decompressor = Decompressor::new();
-    decompress_block_payload(
-        &mut decompressor,
+    // Single-block random access allocates its own decoder — not a hot path.
+    let mut output = vec![0u8; header.uncompressed_size as usize];
+    decompress_block_into(
+        codec,
+        &mut codec.decoder()?,
         &header,
         &payload,
+        &mut output,
         block_n,
         block_index.checksums_enabled,
-    )
+    )?;
+    Ok(output)
 }
 
 #[cfg(test)]

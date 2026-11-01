@@ -1,13 +1,11 @@
 //! Main compression and decompression entry points.
 
-use crate::block::{
-    BlockOutput, compress_block_with_scratch, decompress_block_into, resolve_compression_level,
-};
+use crate::block::{BlockOutput, compress_block, decompress_block_into};
+use crate::codec::{BlockCodec, DeflateCodec};
 use crate::config::{EngineConfiguration, ProgressEvent, ProgressPhase};
 use crate::format::{BlockHeader, BlockIndexEntry, FileFlags, FileFooter, FileHeader, IndexHeader};
-use crate::index::load_index;
+use crate::index::{BlockIndex, load_index};
 use crush_core::error::{CrushError, Result};
-use libdeflater::{Compressor, Decompressor};
 use rayon::prelude::*;
 use std::io::{Cursor, Read, Seek, SeekFrom, Write};
 use std::path::Path;
@@ -25,36 +23,58 @@ fn with_pool<T: Send>(config: &EngineConfiguration, f: impl FnOnce() -> T + Send
     }
 }
 
+/// Turn a failed per-worker state creation into a block error.
+fn worker_state<S>(state: &mut Result<S>) -> Result<&mut S> {
+    state
+        .as_mut()
+        .map_err(|e| CrushError::InvalidConfig(format!("codec state: {e}")))
+}
+
 // ---------------------------------------------------------------------------
 // compress
 // ---------------------------------------------------------------------------
 
-/// Compress `input` bytes using the parallel block engine.
+/// Compress `input` bytes with DEFLATE through the parallel block engine.
 ///
 /// # Errors
 ///
-/// - [`CrushError::Cancelled`] — cancelled via the progress callback.
+/// - [`CrushError::Cancelled`] — cancelled by the flag or the progress callback.
 /// - [`CrushError::InvalidConfig`] — configuration validation failed.
-#[allow(clippy::too_many_lines)] // single cohesive pipeline: resolve → parallel compress → pre-allocate → parallel assemble → index → footer → progress
 pub fn compress(input: &[u8], config: &EngineConfiguration) -> Result<Vec<u8>> {
+    let codec = DeflateCodec::new(config.compression_level, config.incompressible_probe)?;
+    compress_with(&codec, input, config)
+}
+
+/// Compress `input` bytes with `codec` through the parallel block engine.
+///
+/// # Errors
+///
+/// - [`CrushError::Cancelled`] — cancelled by the flag or the progress callback.
+/// - [`CrushError::InvalidConfig`] — configuration validation failed.
+#[allow(clippy::too_many_lines)] // single cohesive pipeline: parallel compress → pre-allocate → parallel assemble → index → footer → progress
+pub fn compress_with<C: BlockCodec>(
+    codec: &C,
+    input: &[u8],
+    config: &EngineConfiguration,
+) -> Result<Vec<u8>> {
     let block_size = config.block_size as usize;
     let blocks: Vec<&[u8]> = input.chunks(block_size).collect();
     let total_blocks = blocks.len() as u64;
 
-    // Resolve compression level once on the driver, not per-block (Slice A).
-    let lvl = resolve_compression_level(config.compression_level)?;
-
-    // Slice A: pool one Compressor and one DEFLATE scratch buffer per worker
-    // thread via map_init. The first block on each worker allocates them;
-    // every subsequent block on that worker reuses them.
+    // Slice A: pool one encoder and one scratch buffer per worker thread via
+    // map_init. The first block on each worker allocates them; every
+    // subsequent block on that worker reuses them.
     let results: Vec<Result<BlockOutput>> = with_pool(config, || {
         blocks
             .par_iter()
             .enumerate()
             .map_init(
-                || (Compressor::new(lvl), Vec::new()),
-                |(compressor, scratch), (i, chunk)| {
-                    compress_block_with_scratch(compressor, scratch, chunk, i, config)
+                || (codec.encoder(), Vec::new()),
+                |(encoder, scratch), (i, chunk)| {
+                    if config.is_cancelled() {
+                        return Err(CrushError::Cancelled);
+                    }
+                    compress_block(codec, worker_state(encoder)?, scratch, chunk, i, config)
                 },
             )
             .collect()
@@ -76,12 +96,13 @@ pub fn compress(input: &[u8], config: &EngineConfiguration) -> Result<Vec<u8>> {
         flags = flags.with_checksums();
     }
 
-    let file_header = FileHeader::new(
+    let file_header = FileHeader::for_codec(
         config.block_size,
         config.compression_level,
         flags,
         input.len() as u64,
         total_blocks,
+        C::CODEC_ID,
     );
 
     let header_size = FileHeader::SIZE;
@@ -264,7 +285,7 @@ pub fn compress_stream<R: Read, W: Write>(
 // decompress
 // ---------------------------------------------------------------------------
 
-/// Decompress a CRSH-format byte slice.
+/// Decompress a DEFLATE CRSH byte slice.
 ///
 /// Reads the file footer first, loads the index, then decompresses all
 /// blocks in parallel.
@@ -272,42 +293,151 @@ pub fn compress_stream<R: Read, W: Write>(
 /// # Errors
 ///
 /// - `VersionMismatch` — file was produced by a different engine version.
-/// - `InvalidFormat` — magic bytes invalid or file truncated.
+/// - `InvalidFormat` — magic bytes invalid, file truncated, or wrong codec.
 /// - `ChecksumMismatch` — a block's CRC32 does not match.
 /// - `ExpansionLimitExceeded` — output would exceed `config.max_decompression_ratio`.
 /// - `IndexCorrupted` — block index is missing or truncated.
-/// - `Cancelled` — cancelled via progress callback.
+/// - `Cancelled` — cancelled by the flag or the progress callback.
 pub fn decompress(input: &[u8], config: &EngineConfiguration) -> Result<Vec<u8>> {
-    let mut cursor = Cursor::new(input);
-    decompress_from_reader(&mut cursor, config)
+    decompress_with(&DeflateCodec::default(), input, config)
 }
 
-// ---------------------------------------------------------------------------
-// decompress_from_reader
-// ---------------------------------------------------------------------------
-
-/// Decompress a CRSH file from a seekable reader.
-///
-/// Phase 1 (sequential): reads all block headers and payloads into memory.
-/// Phase 2 (parallel): decompresses the collected payloads directly into a
-/// pre-allocated output buffer via pooled `Decompressor`s.
-///
-/// This two-phase approach avoids sharing `&mut R` across rayon worker threads.
+/// Decompress a CRSH byte slice written by `codec`.
 ///
 /// # Errors
 ///
-/// - [`CrushError::ExpansionLimitExceeded`] — decompressed size would exceed the ratio limit.
-/// - [`CrushError::ChecksumMismatch`] — a block's CRC32 does not match.
-/// - [`CrushError::InvalidFormat`] — file is truncated or block data is corrupt.
-/// - [`CrushError::IndexCorrupted`] — footer or index is missing or invalid.
-/// - [`CrushError::Cancelled`] — cancelled via progress callback.
-/// - [`CrushError::Io`] — underlying I/O error.
-#[allow(clippy::too_many_lines)] // single cohesive pipeline: load index → read phase → partition → parallel decompress → progress
+/// As for [`decompress`].
+pub fn decompress_with<C: BlockCodec>(
+    codec: &C,
+    input: &[u8],
+    config: &EngineConfiguration,
+) -> Result<Vec<u8>> {
+    let index = load_index(&mut Cursor::new(input))?;
+    let total = checked_output_size::<C>(&index, input.len() as u64, config)?;
+    let located = locate_blocks(input, &index)?;
+    let mut output = vec![0u8; total];
+    decode_blocks(
+        codec,
+        &raw_blocks(&located),
+        index.checksums_enabled,
+        config,
+        &mut output,
+    )?;
+    Ok(output)
+}
+
+/// Validated decompressed size of a CRSH byte slice written by `codec`.
+///
+/// # Errors
+///
+/// As for [`decompress`], for everything checked before decoding starts.
+pub fn decompressed_size<C: BlockCodec>(
+    input: &[u8],
+    config: &EngineConfiguration,
+) -> Result<usize> {
+    let index = load_index(&mut Cursor::new(input))?;
+    checked_output_size::<C>(&index, input.len() as u64, config)
+}
+
+/// Decompress a CRSH byte slice written by `codec` into `output`, whose length
+/// must equal [`decompressed_size`]. Blocks decode in parallel, straight into
+/// their place in `output`, so this needs no buffer of its own.
+///
+/// # Errors
+///
+/// As for [`decompress`]. On error, `output` may hold partial data.
+pub fn decompress_into<C: BlockCodec>(
+    codec: &C,
+    input: &[u8],
+    config: &EngineConfiguration,
+    output: &mut [u8],
+) -> Result<()> {
+    let index = load_index(&mut Cursor::new(input))?;
+    checked_output_size::<C>(&index, input.len() as u64, config)?;
+    let located = locate_blocks(input, &index)?;
+    decode_blocks(
+        codec,
+        &raw_blocks(&located),
+        index.checksums_enabled,
+        config,
+        output,
+    )
+}
+
+/// Decompress a DEFLATE CRSH file from a seekable reader.
+///
+/// Reads every block into memory, then decodes in parallel. Input that is
+/// already in memory should use [`decompress`], which borrows it.
+///
+/// # Errors
+///
+/// As for [`decompress`], plus [`CrushError::Io`] for I/O errors.
 pub fn decompress_from_reader<R: Read + Seek>(
     reader: &mut R,
     config: &EngineConfiguration,
 ) -> Result<Vec<u8>> {
     let index = load_index(reader)?;
+    let file_size = reader.seek(SeekFrom::End(0))?;
+    let total = checked_output_size::<DeflateCodec>(&index, file_size, config)?;
+
+    let mut raw: Vec<(BlockHeader, Vec<u8>)> = Vec::with_capacity(index.entries.len());
+    for (i, entry) in index.entries.iter().enumerate() {
+        check_block_in_file(i, entry, file_size)?;
+        reader.seek(SeekFrom::Start(entry.block_offset))?;
+        let mut hdr_buf = [0u8; BlockHeader::SIZE];
+        reader
+            .read_exact(&mut hdr_buf)
+            .map_err(|e| CrushError::InvalidFormat(format!("block {i} header read error: {e}")))?;
+        let header = BlockHeader::from_bytes(&hdr_buf);
+        check_header_matches_index(i, &header, entry)?;
+        let mut payload = vec![0u8; header.compressed_size as usize];
+        reader
+            .read_exact(&mut payload)
+            .map_err(|e| CrushError::InvalidFormat(format!("block {i} payload read error: {e}")))?;
+        raw.push((header, payload));
+    }
+
+    let blocks: Vec<RawBlock> = raw
+        .iter()
+        .map(|(header, payload)| RawBlock { header, payload })
+        .collect();
+    let mut output = vec![0u8; total];
+    decode_blocks(
+        &DeflateCodec::default(),
+        &blocks,
+        index.checksums_enabled,
+        config,
+        &mut output,
+    )?;
+    Ok(output)
+}
+
+/// One block's validated header and payload.
+struct RawBlock<'a> {
+    header: &'a BlockHeader,
+    payload: &'a [u8],
+}
+
+fn raw_blocks<'a>(located: &'a [(BlockHeader, &'a [u8])]) -> Vec<RawBlock<'a>> {
+    located
+        .iter()
+        .map(|(header, payload)| RawBlock { header, payload })
+        .collect()
+}
+
+/// Check the codec and expansion limit, and return the total output size.
+fn checked_output_size<C: BlockCodec>(
+    index: &BlockIndex,
+    file_size: u64,
+    config: &EngineConfiguration,
+) -> Result<usize> {
+    if index.codec_id != C::CODEC_ID {
+        return Err(CrushError::InvalidFormat(format!(
+            "file uses codec {} but this reader is codec {}",
+            index.codec_id,
+            C::CODEC_ID
+        )));
+    }
 
     // Expansion ratio guard.
     // Precision and sign-loss are acceptable: this is a heuristic ratio check, not a byte counter.
@@ -316,90 +446,113 @@ pub fn decompress_from_reader<R: Read + Seek>(
         clippy::cast_possible_truncation,
         clippy::cast_sign_loss
     )]
-    let limit = {
-        let file_size = reader.seek(SeekFrom::End(0))?;
-        (file_size as f64 * config.max_decompression_ratio) as u64
-    };
-    let total_uncompressed = index.total_uncompressed_size();
-    if total_uncompressed > limit {
+    let limit = (file_size as f64 * config.max_decompression_ratio) as u64;
+    let total = index.total_uncompressed_size();
+    if total > limit {
         return Err(CrushError::ExpansionLimitExceeded { block_index: 0 });
     }
+    usize::try_from(total).map_err(|_| {
+        CrushError::InvalidConfig(format!("total uncompressed size {total} overflows usize"))
+    })
+}
 
-    let total_blocks = index.len();
-    let checksums_enabled = index.checksums_enabled;
+/// Reject an index entry that cannot lie inside the file, before allocating for it.
+pub(crate) fn check_block_in_file(i: usize, entry: &BlockIndexEntry, file_size: u64) -> Result<()> {
+    let end = entry
+        .block_offset
+        .checked_add(BlockHeader::SIZE as u64)
+        .and_then(|e| e.checked_add(u64::from(entry.compressed_size)));
+    match end {
+        Some(end) if end <= file_size => Ok(()),
+        _ => Err(CrushError::InvalidFormat(format!(
+            "block {i} extends past the end of the file"
+        ))),
+    }
+}
 
-    // Phase 1: Read all block data sequentially (requires exclusive &mut reader).
-    let raw_blocks: Vec<(BlockHeader, Vec<u8>)> = index
+/// A block header must agree with the index, which sized the output.
+pub(crate) fn check_header_matches_index(
+    i: usize,
+    header: &BlockHeader,
+    entry: &BlockIndexEntry,
+) -> Result<()> {
+    if header.compressed_size == entry.compressed_size
+        && header.uncompressed_size == entry.uncompressed_size
+    {
+        Ok(())
+    } else {
+        Err(CrushError::InvalidFormat(format!(
+            "block {i} header disagrees with the index"
+        )))
+    }
+}
+
+/// Parse every block's header, borrowing its payload from `input`.
+fn locate_blocks<'a>(input: &'a [u8], index: &BlockIndex) -> Result<Vec<(BlockHeader, &'a [u8])>> {
+    index
         .entries
         .iter()
         .enumerate()
-        .map(|(i, entry)| -> Result<(BlockHeader, Vec<u8>)> {
-            reader.seek(SeekFrom::Start(entry.block_offset))?;
-            let mut hdr_buf = [0u8; BlockHeader::SIZE];
-            reader.read_exact(&mut hdr_buf).map_err(|e| {
-                CrushError::InvalidFormat(format!("block {i} header read error: {e}"))
-            })?;
-            let header = BlockHeader::from_bytes(&hdr_buf);
-            let mut payload = vec![0u8; header.compressed_size as usize];
-            reader.read_exact(&mut payload).map_err(|e| {
-                CrushError::InvalidFormat(format!("block {i} payload read error: {e}"))
-            })?;
-            Ok((header, payload))
+        .map(|(i, entry)| {
+            check_block_in_file(i, entry, input.len() as u64)?;
+            // In bounds and within usize: the block lies inside `input`.
+            #[allow(clippy::cast_possible_truncation)]
+            let start = entry.block_offset as usize;
+            let (hdr, rest) = input[start..]
+                .split_first_chunk::<{ BlockHeader::SIZE }>()
+                .ok_or_else(|| CrushError::InvalidFormat(format!("block {i} truncated")))?;
+            let header = BlockHeader::from_bytes(hdr);
+            check_header_matches_index(i, &header, entry)?;
+            Ok((header, &rest[..header.compressed_size as usize]))
         })
-        .collect::<Result<Vec<_>>>()?;
+        .collect()
+}
 
-    // Slice C: pre-allocate the final output once, with the known total uncompressed size.
-    let total_usize = usize::try_from(total_uncompressed).map_err(|_| {
-        CrushError::InvalidConfig(format!(
-            "total uncompressed size {total_uncompressed} overflows usize"
-        ))
-    })?;
-    let mut output = vec![0u8; total_usize];
-
-    // Compute per-block output offsets inline with a single running sum — no dependency on
-    // BlockIndex::cumulative_uncompressed (US3), so this slice lands independently.
-    let mut per_block_sizes: Vec<usize> = Vec::with_capacity(raw_blocks.len());
-    let mut running: usize = 0;
-    for (header, _) in &raw_blocks {
-        let sz = header.uncompressed_size as usize;
-        per_block_sizes.push(sz);
-        running = running.checked_add(sz).ok_or_else(|| {
-            CrushError::InvalidFormat(
-                "block uncompressed sizes overflow usize during offset calculation".to_owned(),
-            )
-        })?;
-    }
-    debug_assert_eq!(running, total_usize);
-
+/// Decode all blocks in parallel into disjoint slices of `output`, then report progress.
+fn decode_blocks<C: BlockCodec>(
+    codec: &C,
+    blocks: &[RawBlock<'_>],
+    checksums_enabled: bool,
+    config: &EngineConfiguration,
+    output: &mut [u8],
+) -> Result<()> {
     // Partition output into disjoint per-block slices.
-    let mut output_slices: Vec<&mut [u8]> = Vec::with_capacity(raw_blocks.len());
-    {
-        let mut remaining: &mut [u8] = &mut output;
-        for &sz in &per_block_sizes {
-            let (chunk, rest) = remaining.split_at_mut(sz);
-            output_slices.push(chunk);
-            remaining = rest;
+    let mut output_slices: Vec<&mut [u8]> = Vec::with_capacity(blocks.len());
+    let mut remaining: &mut [u8] = output;
+    for (i, block) in blocks.iter().enumerate() {
+        let size = block.header.uncompressed_size as usize;
+        if size > remaining.len() {
+            return Err(CrushError::InvalidFormat(format!(
+                "block {i} does not fit the output"
+            )));
         }
-        debug_assert_eq!(remaining, []);
+        let (chunk, rest) = remaining.split_at_mut(size);
+        output_slices.push(chunk);
+        remaining = rest;
+    }
+    if !remaining.is_empty() {
+        return Err(CrushError::InvalidFormat(
+            "blocks do not fill the output".to_owned(),
+        ));
     }
 
-    // Phase 2: parallel decompress with pooled Decompressors, writing directly into the
-    // pre-partitioned output slices (Slice A + Slice C combined).
-    #[allow(clippy::type_complexity)]
-    let pairs: Vec<(&mut [u8], &(BlockHeader, Vec<u8>))> =
-        output_slices.into_iter().zip(raw_blocks.iter()).collect();
-
+    // Parallel decode with pooled decoders, writing directly into the slices.
     let results: Vec<Result<()>> = with_pool(config, || {
-        pairs
+        output_slices
             .into_par_iter()
+            .zip(blocks.par_iter())
             .enumerate()
             .map_init(
-                Decompressor::new,
-                |decompressor, (i, (slice, (header, payload)))| {
+                || codec.decoder(),
+                |decoder, (i, (slice, block))| {
+                    if config.is_cancelled() {
+                        return Err(CrushError::Cancelled);
+                    }
                     decompress_block_into(
-                        decompressor,
-                        header,
-                        payload,
+                        codec,
+                        worker_state(decoder)?,
+                        block.header,
+                        block.payload,
                         slice,
                         i as u64,
                         checksums_enabled,
@@ -408,7 +561,6 @@ pub fn decompress_from_reader<R: Read + Seek>(
             )
             .collect()
     });
-
     for r in results {
         r?;
     }
@@ -419,12 +571,12 @@ pub fn decompress_from_reader<R: Read + Seek>(
             .lock()
             .map_err(|_| CrushError::InvalidConfig("progress mutex poisoned".to_owned()))?;
         let mut bytes_processed: u64 = 0;
-        for (i, (header, _)) in raw_blocks.iter().enumerate() {
-            bytes_processed += u64::from(header.uncompressed_size);
+        for (i, block) in blocks.iter().enumerate() {
+            bytes_processed += u64::from(block.header.uncompressed_size);
             let event = ProgressEvent {
                 bytes_processed,
                 blocks_completed: i as u64 + 1,
-                total_blocks: Some(total_blocks),
+                total_blocks: Some(blocks.len() as u64),
                 phase: ProgressPhase::Decompressing,
             };
             if !cb(event) {
@@ -433,7 +585,7 @@ pub fn decompress_from_reader<R: Read + Seek>(
         }
     }
 
-    Ok(output)
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------

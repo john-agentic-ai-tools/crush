@@ -16,6 +16,13 @@ libfuzzer-sys = "0.4"
 crush-parallel = { path = ".." }
 
 [[bin]]
+name = "fuzz_decompress_into"
+path = "fuzz_targets/fuzz_decompress_into.rs"
+test = false
+bench = false
+doc = false
+
+[[bin]]
 name = "fuzz_decompress"
 path = "fuzz_targets/fuzz_decompress.rs"
 test = false

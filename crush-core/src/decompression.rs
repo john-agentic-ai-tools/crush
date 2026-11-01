@@ -3,7 +3,7 @@
 //! Provides the public `decompress()` API that reads Crush-compressed data,
 //! validates headers and checksums, routes to the correct plugin, and decompresses.
 
-use crate::error::{PluginError, Result, ValidationError};
+use crate::error::{CrushError, PluginError, Result, ValidationError};
 use crate::plugin::registry::get_plugin_by_magic;
 use crate::plugin::{CompressionAlgorithm, CrushHeader, FileMetadata, list_plugins};
 use crc32fast::Hasher;
@@ -101,7 +101,7 @@ pub fn decompress_with_cancel(
     input: &[u8],
     cancel_flag: Arc<AtomicBool>,
 ) -> Result<DecompressionResult> {
-    let c = open_container(input)?;
+    let c = open_container(input, Crc::Verify)?;
 
     // Decompress the payload using the caller-provided cancel flag
     let decompressed = c.plugin.decompress(c.payload, cancel_flag)?;
@@ -141,13 +141,87 @@ pub fn decompress_to_writer(
     cancel_flag: Arc<AtomicBool>,
     out: &mut dyn Write,
 ) -> Result<StreamedDecompression> {
-    let c = open_container(input)?;
+    let c = open_container(input, Crc::Verify)?;
     let bytes = c.plugin.decompress_to(c.payload, cancel_flag, out)?;
     check_size(c.expected_size, bytes)?;
     Ok(StreamedDecompression {
         bytes,
         metadata: c.metadata,
     })
+}
+
+/// Where [`decompress_to_target`] sends its output.
+pub trait OutputTarget {
+    /// A writable slice of exactly `len` bytes that holds the final output, or
+    /// `None` if this target can only be written to in order.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the output cannot hold `len` bytes.
+    fn output_slice(&mut self, len: usize) -> Result<Option<&mut [u8]>>;
+
+    /// The sequential writer used when no slice is available.
+    fn writer(&mut self) -> &mut dyn Write;
+}
+
+/// Decompress into `target`, decoding straight into its slice when both the
+/// plugin and the target allow it, and otherwise as [`decompress_to_writer`].
+///
+/// # Errors
+///
+/// As for [`decompress_to_writer`].
+pub fn decompress_to_target(
+    input: &[u8],
+    cancel_flag: Arc<AtomicBool>,
+    target: &mut dyn OutputTarget,
+) -> Result<StreamedDecompression> {
+    let c = open_container(input, Crc::Verify)?;
+    if let Some(len) = c.plugin.decompressed_len(c.payload)? {
+        check_size(c.expected_size, len as u64)?;
+        if let Some(output) = target.output_slice(len)? {
+            c.plugin.decompress_into(c.payload, cancel_flag, output)?;
+            return Ok(StreamedDecompression {
+                bytes: len as u64,
+                metadata: c.metadata,
+            });
+        }
+    }
+    let bytes = c
+        .plugin
+        .decompress_to(c.payload, cancel_flag, target.writer())?;
+    check_size(c.expected_size, bytes)?;
+    Ok(StreamedDecompression {
+        bytes,
+        metadata: c.metadata,
+    })
+}
+
+/// Decompress one block of a Crush file, without reading the rest of it.
+///
+/// The CRC32 over the whole payload is skipped, because it would read the whole
+/// file. The block's own checksum still applies.
+///
+/// # Errors
+///
+/// Returns an error if the file is malformed, `block_n` is out of range, or the
+/// file's plugin has no random access.
+pub fn decompress_block(input: &[u8], block_n: u64) -> Result<Vec<u8>> {
+    let c = open_container(input, Crc::Skip)?;
+    c.plugin
+        .decompress_block(c.payload, block_n)?
+        .ok_or_else(|| {
+            CrushError::InvalidConfig(format!(
+                "plugin '{}' does not support random access",
+                c.plugin.name()
+            ))
+        })
+}
+
+/// Whether [`open_container`] checks the payload CRC32.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Crc {
+    Verify,
+    Skip,
 }
 
 /// A parsed, CRC-checked Crush container.
@@ -159,7 +233,7 @@ struct Container<'a> {
 }
 
 /// Parse the header, verify the CRC32, read the metadata, and find the plugin.
-fn open_container(input: &[u8]) -> Result<Container<'_>> {
+fn open_container(input: &[u8], crc: Crc) -> Result<Container<'_>> {
     // Validate minimum size (header + CRC32 if present)
     if input.len() < CrushHeader::SIZE {
         return Err(ValidationError::InvalidHeader(format!(
@@ -180,14 +254,24 @@ fn open_container(input: &[u8]) -> Result<Container<'_>> {
 
     // Handle CRC32
     if header.has_crc32() {
-        let (stored_crc, computed_crc, new_start) = read_crc32_block(input, payload_start)?;
-        payload_start = new_start;
-        if stored_crc != computed_crc {
-            return Err(ValidationError::CrcMismatch {
-                expected: stored_crc,
-                actual: computed_crc,
+        if crc == Crc::Verify {
+            let (stored_crc, computed_crc, new_start) = read_crc32_block(input, payload_start)?;
+            payload_start = new_start;
+            if stored_crc != computed_crc {
+                return Err(ValidationError::CrcMismatch {
+                    expected: stored_crc,
+                    actual: computed_crc,
+                }
+                .into());
             }
-            .into());
+        } else {
+            payload_start += 4;
+            if input.len() < payload_start {
+                return Err(ValidationError::InvalidHeader(
+                    "Truncated: CRC32 flag set but no CRC32 data".to_string(),
+                )
+                .into());
+            }
         }
     }
 

@@ -192,6 +192,59 @@ pub trait CompressionAlgorithm: Send + Sync {
         Ok(data.len() as u64)
     }
 
+    /// Exact decompressed length of `input`, when this plugin can decode into
+    /// a caller-provided slice with [`Self::decompress_into`]. `None` means it
+    /// cannot. All sizes must be validated here, because the caller allocates
+    /// from the result.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `input` is malformed.
+    fn decompressed_len(&self, input: &[u8]) -> Result<Option<usize>> {
+        let _ = input;
+        Ok(None)
+    }
+
+    /// Decompress `input` into `output`, whose length is the value returned by
+    /// [`Self::decompressed_len`].
+    ///
+    /// The provided implementation calls [`Self::decompress`] and copies its
+    /// result. Plugins that decode in independent pieces override it to decode
+    /// each piece straight into place.
+    ///
+    /// # Errors
+    ///
+    /// As for [`Self::decompress`]. On error, `output` may hold partial data.
+    fn decompress_into(
+        &self,
+        input: &[u8],
+        cancel_flag: Arc<AtomicBool>,
+        output: &mut [u8],
+    ) -> Result<()> {
+        let data = self.decompress(input, cancel_flag)?;
+        if data.len() != output.len() {
+            return Err(crate::error::PluginError::OperationFailed(format!(
+                "decompressed {} bytes into a {}-byte output",
+                data.len(),
+                output.len()
+            ))
+            .into());
+        }
+        output.copy_from_slice(&data);
+        Ok(())
+    }
+
+    /// Decompress only block `block_n` of `input`. `None` means this plugin
+    /// has no random access.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `input` is malformed or `block_n` is out of range.
+    fn decompress_block(&self, input: &[u8], block_n: u64) -> Result<Option<Vec<u8>>> {
+        let _ = (input, block_n);
+        Ok(None)
+    }
+
     /// Detect if this plugin can handle the given file header
     ///
     /// This method determines if the plugin supports compressing a particular file type.
