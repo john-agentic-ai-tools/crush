@@ -199,6 +199,16 @@ alternative. lz4 needs version 1.10 or later for multithreading (`-T`); older
 distribution packages run it on one thread. See `perf/README.md` for the
 latest results.
 
+Latest results on real files at all cores (i9-12900K, WSL2). Up and to the right
+is better:
+
+![Compression speed against ratio](perf/comparisons/real-all-compress.svg)
+
+![Decompression speed against ratio](perf/comparisons/real-all-decompress.svg)
+
+To explore every dataset and core count, open `perf/comparisons/chart.html`.
+After a new `perf/compare.py` run, redraw these with `python perf/chart.py`.
+
 ### Fast compression (`fast-lz`)
 
 `fast-lz` is an LZ4-class codec (byte-oriented LZ77, no entropy coding) for
@@ -235,8 +245,8 @@ multi-threaded `lz4 -1`:
 
 | | 4 cores | all cores |
 |---|---|---|
-| `crush --plugin fast-lz` | 1,572 MB/s | 1,759 MB/s |
-| `lz4 -1` | 1,850 MB/s | 2,026 MB/s |
+| `crush --plugin fast-lz` | 1,544 MB/s | 1,823 MB/s |
+| `lz4 -1` | 1,927 MB/s | 2,049 MB/s |
 
 Details: `specs/023-lz4-fast-plugin/perf-log.md`,
 `perf/log/2026-11-parallel-fast-compression.md` and

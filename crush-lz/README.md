@@ -67,7 +67,7 @@ Compression, same corpus, with lz4 1.10.0 multi-threaded:
 | | 4 cores | all cores |
 |---|---|---|
 | fast-lz codec, in memory | 2,193 MB/s | 5,238 MB/s |
-| `crush --plugin fast-lz`, end to end | 1,572 MB/s (0.85x `lz4 -1`) | 1,759 MB/s (0.87x) |
+| `crush --plugin fast-lz`, end to end | 1,544 MB/s (0.80x `lz4 -1`) | 1,823 MB/s (0.89x) |
 
 Output bytes do not depend on the core count. Details:
 `perf/log/2026-11-parallel-fast-compression.md`.

@@ -36,7 +36,7 @@ The first build rebuilt workers per batch and reached about 4,570 MB/s at 4 bloc
 | `crush-fast-lz` | 1,572 | 1,759 |
 | `lz4 -1` | 1,850 | 2,026 |
 
-The ratio also trails: 2.23 vs 2.295. At 1 core, Crush led 650 to 634 MB/s.
+The ratio also trails: 2.23 vs 2.295. At 1 core, Crush led 650 to 634 MB/s. The full comparison at 5964e93, 7 reps, gave 0.80x at 4 cores and 0.89x at all cores.
 
 The harness governs gates, so this is a miss. A plain loop on the same machine disagreed at all cores, 11 runs, median wall time: `crush-fast-lz` 59.0 ms, `lz4 -1` 61.6 ms. The gap between the two methods is unexplained: the commands are the same.
 
@@ -85,6 +85,6 @@ Windows, quick run against 7e034ca: **IMPROVED**, no REGRESSION rows in 34.
 
 ## Fuzz
 
-`fuzz_roundtrip` and `fuzz_decompress`, 100,000 runs each, clean, from an empty corpus. The build used 16 blocks per thread; only that constant differs from the final code.
+`fuzz_roundtrip` and `fuzz_decompress`, 100,000 runs each, clean, from an empty corpus, on the final code (5964e93).
 
 `fuzz_roundtrip` runs take about 2.5x longer than before (19 vs 48 s per 5,000 runs). The target tiles inputs to four 64 KB blocks, so each run now goes through Rayon under the sanitizer. Default blocks are 1 MB.
