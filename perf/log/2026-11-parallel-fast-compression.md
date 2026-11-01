@@ -52,6 +52,23 @@ A plain map needs no new `unsafe`, so it was tried at every core count. It did n
 
 The read phase falls from about 9.4 ms to 0.01 ms, but the compress phase grows by more than that at 1 and all cores. Medians of three in-process totals: 205 to 226 ms at 1 core, 84 to 78 ms at 4, 54 to 61 ms at all. The 4-core gain does not show in the harness. Output hashes match.
 
+## Incompressible data
+
+The full comparison showed `fast-lz` getting slower with more cores on data it cannot shrink, and old against new confirmed a regression from this feature. The criterion benchmarks missed it because they run in memory.
+
+Workers copied each stored block into a new buffer, while the serial path writes straight from the input. Workers now return only the header for a stored block, and the writer takes the bytes from the input. `perf/compare.py`, ABBA, 11 reps, compress MB/s, 128 MiB:
+
+| | 1 core | 4 cores | all cores |
+|---|---|---|---|
+| `random`, before this feature | 2,149 | 2,313 | 2,320 |
+| `random`, with the copy | 2,314 | 1,799 | 1,460 |
+| `random`, fixed | 2,330 | 2,451 | 2,220 |
+| `text`, before this feature | 2,069 | 2,199 | 2,261 |
+| `text`, with the copy | 2,233 | 1,711 | 1,422 |
+| `text`, fixed | 2,203 | 2,384 | 2,112 |
+
+At all cores, `random` stays 4.3% and `text` 6.6% below the old serial speed. Both are inside their runs' spreads (6.5-15.7%), but `text` sits over the 5% gate on medians. Output hashes equal the old build at 1, 4 and all cores on all four datasets.
+
 ## `/perf check`
 
 Windows, quick run against 7e034ca: **IMPROVED**, no REGRESSION rows in 34.

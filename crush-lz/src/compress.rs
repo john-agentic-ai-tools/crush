@@ -8,7 +8,7 @@
 //! extended 8 bytes at a time; the probe step grows while no match is found,
 //! so incompressible regions are skipped quickly.
 
-use crate::format::{BLOCK_HEADER_SIZE, BlockHeader, END_MARKER, FrameHeader, compress_bound};
+use crate::format::{BlockHeader, END_MARKER, FrameHeader, compress_bound};
 use crush_core::error::{PluginError, Result};
 use rayon::prelude::*;
 use std::cell::RefCell;
@@ -351,21 +351,23 @@ fn encode_blocks(
 
     for batch in input.chunks(block_size * threads * BATCH_BLOCKS_PER_THREAD) {
         check_cancel(cancel)?;
-        let blocks: Vec<Vec<u8>> = batch
+        // A stored block's payload is its input, so it is written from there.
+        // Copying it to the writer's thread made incompressible data slower
+        // than the serial path.
+        let blocks: Vec<(BlockHeader, Option<Vec<u8>>)> = batch
             .par_chunks(block_size)
             .map(|chunk| {
                 WORKER.with_borrow_mut(|compressor| {
                     let (header, payload) = encode_block(compressor, chunk);
-                    let mut block = Vec::with_capacity(BLOCK_HEADER_SIZE + payload.len());
-                    block.extend_from_slice(&header.to_bytes());
-                    block.extend_from_slice(payload);
-                    block
+                    let packed = (!header.stored).then(|| payload.to_vec());
+                    (header, packed)
                 })
             })
             .collect();
-        for block in &blocks {
+        for ((header, packed), chunk) in blocks.iter().zip(batch.chunks(block_size)) {
             check_cancel(cancel)?;
-            emit(block)?;
+            emit(&header.to_bytes())?;
+            emit(packed.as_deref().unwrap_or(chunk))?;
         }
     }
     Ok(())
