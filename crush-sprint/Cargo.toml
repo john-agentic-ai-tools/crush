@@ -1,0 +1,28 @@
+[package]
+name = "crush-sprint"
+version = "0.1.0"
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+rust-version.workspace = true
+description = "Hybrid high-speed codec plugin (sprint) for Crush"
+
+[lib]
+name = "crush_sprint"
+path = "src/lib.rs"
+
+[dependencies]
+crush-core = { version = "0.4.0", path = "../crush-core" }
+crush-parallel = { version = "0.3.0", path = "../crush-parallel" }
+crc32fast = { workspace = true }
+linkme = { workspace = true }
+
+[dev-dependencies]
+criterion = { workspace = true }
+proptest = "1.11"
+
+[lints.clippy]
+all = "deny"
+pedantic = "warn"

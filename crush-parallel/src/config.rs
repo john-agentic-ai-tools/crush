@@ -1,5 +1,6 @@
 //! Engine configuration and progress reporting types.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 /// Callback type invoked after each block completes.
@@ -58,6 +59,8 @@ pub struct EngineConfiguration {
     pub incompressible_probe: bool,
     /// Optional progress callback.
     pub progress: Option<Arc<Mutex<ProgressCallback>>>,
+    /// Optional cancel flag, checked before each block starts.
+    pub cancel_flag: Option<Arc<AtomicBool>>,
 }
 
 impl Default for EngineConfiguration {
@@ -72,11 +75,20 @@ impl Default for EngineConfiguration {
             checksums: true,
             incompressible_probe: true,
             progress: None,
+            cancel_flag: None,
         }
     }
 }
 
 impl EngineConfiguration {
+    /// True once the cancel flag has been set.
+    #[must_use]
+    pub fn is_cancelled(&self) -> bool {
+        self.cancel_flag
+            .as_ref()
+            .is_some_and(|f| f.load(Ordering::Acquire))
+    }
+
     /// Create a new builder.
     #[must_use]
     pub fn builder() -> EngineConfigurationBuilder {
@@ -95,6 +107,14 @@ impl EngineConfigurationBuilder {
         Self {
             inner: EngineConfiguration::default(),
         }
+    }
+
+    /// Set a cancel flag. Once it is set, no further block starts, and the
+    /// engine returns `CrushError::Cancelled`.
+    #[must_use]
+    pub fn cancel_flag(mut self, flag: Arc<AtomicBool>) -> Self {
+        self.inner.cancel_flag = Some(flag);
+        self
     }
 
     /// Set the number of worker threads (`0` = rayon default).

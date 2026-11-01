@@ -15,7 +15,8 @@
 //! assert_eq!(data.as_slice(), recovered.as_slice());
 //! ```
 
-pub mod block;
+pub(crate) mod block;
+pub mod codec;
 pub mod config;
 pub mod engine;
 pub mod format;
@@ -26,12 +27,13 @@ pub use config::{
     EngineConfiguration, EngineConfigurationBuilder, ProgressCallback, ProgressEvent, ProgressPhase,
 };
 pub use engine::{
-    compress, compress_file, compress_stream, compress_to_writer, decompress,
-    decompress_from_reader,
+    compress, compress_file, compress_stream, compress_to_writer, compress_with, decompress,
+    decompress_from_reader, decompress_into, decompress_with, decompressed_size,
 };
 pub use format::BlockIndexEntry;
-pub use index::{BlockIndex, decompress_block, load_index};
+pub use index::{BlockIndex, decompress_block, decompress_block_with, load_index};
 
+use crate::codec::DeflateCodec;
 use crush_core::error::Result;
 use crush_core::plugin::{COMPRESSION_ALGORITHMS, CompressionAlgorithm, PluginMetadata};
 use linkme::distributed_slice;
@@ -44,6 +46,13 @@ use std::sync::atomic::AtomicBool;
 /// Plugin ID 0x00 is reserved for the native deflate plugin; 0x02 identifies
 /// the parallel-deflate engine so `CrushHeader::has_valid_version()` passes.
 pub const PLUGIN_MAGIC: [u8; 4] = [0x43, 0x52, 0x01, 0x02];
+
+/// Engine configuration for a plugin call, bridged to its cancel flag.
+fn plugin_config(cancel_flag: Arc<AtomicBool>) -> Result<EngineConfiguration> {
+    EngineConfiguration::builder()
+        .cancel_flag(cancel_flag)
+        .build()
+}
 
 /// Crush-parallel plugin implementation registered into the crush-core plugin registry.
 struct ParallelDeflatePlugin;
@@ -65,28 +74,41 @@ impl CompressionAlgorithm for ParallelDeflatePlugin {
     }
 
     fn compress(&self, input: &[u8], cancel_flag: Arc<AtomicBool>) -> Result<Vec<u8>> {
-        use crate::config::ProgressCallback;
-        use std::sync::Mutex;
-        use std::sync::atomic::Ordering;
-
-        // Bridge the crush-core AtomicBool cancel flag into our ProgressCallback.
-        let cb: ProgressCallback = Box::new(move |_event| !cancel_flag.load(Ordering::Acquire));
-        let config = EngineConfiguration::builder()
-            .progress(Arc::new(Mutex::new(cb)))
-            .build()?;
-        compress(input, &config)
+        compress(input, &plugin_config(cancel_flag)?)
     }
 
     fn decompress(&self, input: &[u8], cancel_flag: Arc<AtomicBool>) -> Result<Vec<u8>> {
-        use crate::config::ProgressCallback;
-        use std::sync::Mutex;
-        use std::sync::atomic::Ordering;
+        decompress(input, &plugin_config(cancel_flag)?)
+    }
 
-        let cb: ProgressCallback = Box::new(move |_event| !cancel_flag.load(Ordering::Acquire));
-        let config = EngineConfiguration::builder()
-            .progress(Arc::new(Mutex::new(cb)))
-            .build()?;
-        decompress(input, &config)
+    fn decompressed_len(&self, input: &[u8]) -> Result<Option<usize>> {
+        decompressed_size::<DeflateCodec>(input, &EngineConfiguration::default()).map(Some)
+    }
+
+    fn decompress_into(
+        &self,
+        input: &[u8],
+        cancel_flag: Arc<AtomicBool>,
+        output: &mut [u8],
+    ) -> Result<()> {
+        engine::decompress_into(
+            &DeflateCodec::default(),
+            input,
+            &plugin_config(cancel_flag)?,
+            output,
+        )
+    }
+
+    fn decompress_block(&self, input: &[u8], block_n: u64) -> Result<Option<Vec<u8>>> {
+        let mut reader = std::io::Cursor::new(input);
+        let index = load_index(&mut reader)?;
+        decompress_block(
+            &mut reader,
+            &index,
+            block_n,
+            &EngineConfiguration::default(),
+        )
+        .map(Some)
     }
 
     fn detect(&self, file_header: &[u8]) -> bool {

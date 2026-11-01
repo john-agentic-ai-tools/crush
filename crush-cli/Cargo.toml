@@ -35,6 +35,10 @@ dirs = "7.0"
 filetime = "0.2.29"
 memmap2 = { workspace = true }
 
+[target.'cfg(target_os = "linux")'.dependencies]
+# Preallocates mapped output, so a full disk is an error and not a crash.
+rustix = { version = "1", default-features = false, features = ["fs", "std"] }
+
 [dev-dependencies]
 assert_cmd = "2.2"
 predicates = "3.1.4"

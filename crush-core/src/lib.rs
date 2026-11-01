@@ -77,7 +77,8 @@ pub mod plugin;
 pub use cancel::{AtomicCancellationToken, CancellationToken, ResourceTracker};
 pub use compression::{CompressionOptions, compress, compress_to_writer, compress_with_options};
 pub use decompression::{
-    StreamedDecompression, decompress, decompress_to_writer, decompress_with_cancel,
+    OutputTarget, StreamedDecompression, decompress, decompress_block, decompress_to_target,
+    decompress_to_writer, decompress_with_cancel,
 };
 pub use error::{CrushError, PluginError, Result, TimeoutError, ValidationError};
 pub use inspection::{InspectResult, inspect};

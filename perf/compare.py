@@ -21,6 +21,17 @@ tools alike. A subset run prints its table and writes JSON only with --out,
 so it never overwrites the full comparison.
 
     python3 perf/compare.py --cores 1 --tools crush-fast-lz,lz4-1 --data real --abba --reps 10
+
+Feature 026:
+
+    --in-memory prints zstd's own in-memory benchmark (zstd -b) for each dataset,
+    single-threaded, so codec speed can be told apart from CLI I/O costs.
+
+    --builds a=PATH,b=PATH runs every crush tool once per binary, as separate
+    rows named tool@a and tool@b. A win under 10% counts only if it holds across
+    separately built binaries, because identical code can move that much with
+    its placement. Vary placement with, for example,
+    RUSTFLAGS="-C llvm-args=-align-all-functions=6" and a separate target dir.
 """
 import argparse
 import datetime
@@ -79,13 +90,48 @@ SINGLE_THREADED = ("gzip-6", "gzip-1", "crush-fast-lz")
 OPTIONAL = {"zstd": "zstd --version", "lz4": "lz4 --version"}
 
 
-def tools(crush, threads):
-    """Compress and decompress commands; optional tools only when installed."""
-    all_tools = {
+def crush_tools(crush):
+    """Commands for each crush configuration, for one binary."""
+    return {
         "crush": (f"{crush} compress {{i}} -o {{o}} -f >/dev/null 2>&1",
                   f"{crush} decompress {{o}} -o {{d}} -f >/dev/null 2>&1"),
         "crush-fast-lz": (f"{crush} compress --plugin fast-lz {{i}} -o {{o}} -f >/dev/null 2>&1",
                           f"{crush} decompress {{o}} -o {{d}} -f >/dev/null 2>&1"),
+    }
+
+
+def in_memory_zstd(path, levels="1", last="3"):
+    """zstd's own single-threaded benchmark: {level: (comp_mbs, decomp_mbs, ratio)}."""
+    text = out(f"zstd -b{levels}e{last} --single-thread -i5 {path} 2>&1")
+    rows = {}
+    latest = None
+    # Progress lines carry the figures; a "<level>#" line then closes the level.
+    for line in re.split(r"[\r\n]+", text):
+        m = re.search(r"\(x?([\d.]+)\),\s*([\d.]+) MB/s\s*,\s*([\d.]+) MB/s", line)
+        if m:
+            latest = (float(m[2]), float(m[3]), float(m[1]))
+        level = re.match(r"\s*(-?\d+)#", line)
+        if level and latest:
+            rows[level[1]] = latest
+            latest = None
+    return rows
+
+
+def tools(crush, threads, builds=None):
+    """Compress and decompress commands; optional tools only when installed.
+
+    With builds ({label: path}), each crush tool appears once per binary as
+    "tool@label".
+    """
+    if builds:
+        rotated = {}
+        for label, path in builds.items():
+            for name, cmds in crush_tools(path).items():
+                rotated[f"{name}@{label}"] = cmds
+    else:
+        rotated = crush_tools(crush)
+    all_tools = {
+        **rotated,
         "gzip-6": ("gzip -6 -c {i} > {o}", "gzip -dc {o} > {d}"),
         "gzip-1": ("gzip -1 -c {i} > {o}", "gzip -dc {o} > {d}"),
         "pigz-6": (f"pigz -6 -p {threads} -c {{i}} > {{o}}",
@@ -142,7 +188,11 @@ def main():
     ap.add_argument("--data", help="subset of datasets: " + ",".join(DATASETS))
     ap.add_argument("--abba", action="store_true",
                     help="interleave the tools' runs, alternating their order")
+    ap.add_argument("--in-memory", action="store_true",
+                    help="also print zstd -b single-threaded figures per dataset")
+    ap.add_argument("--builds", help="label=path,... run each crush tool per binary")
     a = ap.parse_args()
+    builds = dict(b.split("=", 1) for b in a.builds.split(",")) if a.builds else None
     pick = lambda arg: set(arg.split(",")) if arg else None
     want_cores, want_tools, want_data = pick(a.cores), pick(a.tools), pick(a.data)
     subset = any(x is not None for x in (want_cores, want_tools, want_data))
@@ -171,9 +221,9 @@ def main():
                 if want_data and ds not in want_data:
                     continue
                 i = os.path.join(a.data_dir, f"{ds}.bin")
-                sel = {t: cmds for t, cmds in tools(a.crush, threads).items()
-                       if (not want_tools or t in want_tools)
-                       and not (cores != "1" and t in SINGLE_THREADED)}
+                sel = {t: cmds for t, cmds in tools(a.crush, threads, builds).items()
+                       if (not want_tools or t.split("@")[0] in want_tools)
+                       and not (cores != "1" and t.split("@")[0] in SINGLE_THREADED)}
                 pin = f"taskset -c {cpus} "
                 times = {t: ([], []) for t in sel}
                 ratio = {}
@@ -203,11 +253,25 @@ def main():
                          "decomp_mbs": round(mb / statistics.median(dt), 1),
                          "ratio": ratio[tool],
                          "comp_spread_pct": round(
-                             (max(ct) - min(ct)) / statistics.median(ct) * 100, 1)}
+                             (max(ct) - min(ct)) / statistics.median(ct) * 100, 1),
+                         "decomp_spread_pct": round(
+                             (max(dt) - min(dt)) / statistics.median(dt) * 100, 1)}
                     results.append(r)
                     print(f"{cores:>3} {ds:<10} {tool:<13} compress {r['comp_mbs']:>8} MB/s"
-                          f"  decompress {r['decomp_mbs']:>8} MB/s  ratio {r['ratio']}",
+                          f" (±{r['comp_spread_pct']}%)"
+                          f"  decompress {r['decomp_mbs']:>8} MB/s"
+                          f" (±{r['decomp_spread_pct']}%)  ratio {r['ratio']}",
                           flush=True)
+        if a.in_memory and shutil.which("zstd"):
+            for ds in DATASETS:
+                if want_data and ds not in want_data:
+                    continue
+                i = os.path.join(a.data_dir, f"{ds}.bin")
+                for level, (c, x, r) in in_memory_zstd(i).items():
+                    results.append({"cores": "1", "data": ds, "tool": f"zstd-b{level}",
+                                    "comp_mbs": c, "decomp_mbs": x, "ratio": r})
+                    print(f"  1 {ds:<10} zstd -b{level} in memory: compress {c} MB/s"
+                          f"  decompress {x} MB/s  ratio {r}", flush=True)
     finally:
         for f in (o, d):
             if os.path.exists(f):

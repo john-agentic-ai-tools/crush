@@ -10,3 +10,7 @@
 # block `specify integration upgrade`.
 .specify/** text eol=lf
 .claude/skills/speckit-*/** text eol=lf
+
+# Golden compressed files are compared byte for byte
+*.crsh binary
+crush-parallel/fuzz/corpus/** binary
