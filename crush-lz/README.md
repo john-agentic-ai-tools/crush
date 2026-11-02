@@ -51,12 +51,13 @@ random and already-compressed data go elsewhere.
 ## Performance
 
 One core of an i9-12900K, 128 MB of real files (tar of `/usr/lib` and
-`/usr/share`), lz4 1.10.0 measured in the same session:
+`/usr/share`), lz4 1.10.0. The codec row is from an earlier in-memory run. The
+CLI row is from the comparison at commit 6f7c3d8:
 
 | | compress | decompress | ratio |
 |---|---|---|---|
 | fast-lz codec, in memory | 721 MB/s (0.92x lz4) | 2,519 MB/s (0.57x) | 2.230 |
-| `crush --plugin fast-lz`, end to end | 619 MB/s (1.01x `lz4 -1`) | 1,747 MB/s (1.15x `lz4 -d`) | 2.23 |
+| `crush --plugin fast-lz`, end to end | 624 MB/s (1.03x `lz4 -1`) | 1,931 MB/s (1.20x `lz4 -d`) | 2.23 |
 
 The spec's in-memory targets (1.15x lz4 compress, 0.60x decompress) are not
 met; `specs/023-lz4-fast-plugin/perf-log.md` records the experiments and the
@@ -67,7 +68,7 @@ Compression, same corpus, with lz4 1.10.0 multi-threaded:
 | | 4 cores | all cores |
 |---|---|---|
 | fast-lz codec, in memory | 2,193 MB/s | 5,238 MB/s |
-| `crush --plugin fast-lz`, end to end | 1,544 MB/s (0.80x `lz4 -1`) | 1,823 MB/s (0.89x) |
+| `crush --plugin fast-lz`, end to end | 1,630 MB/s (0.86x `lz4 -1`) | 2,017 MB/s (0.96x) |
 
 Output bytes do not depend on the core count. Details:
 `perf/log/2026-11-parallel-fast-compression.md`.

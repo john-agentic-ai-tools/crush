@@ -14,7 +14,7 @@ Main CI pipeline running on all PRs and pushes to develop/main branches.
 - `lint`: Run Clippy linter with strict warnings
 - `build_matrix`: Build on 3 platforms (Linux, Windows, macOS) × 2 Rust versions (stable, beta)
 - `test`: Run tests with cargo-nextest on all platforms
-- `coverage`: Code coverage with cargo-llvm-cov (90% threshold)
+- `coverage`: Code coverage with cargo-llvm-cov (80% threshold)
 
 ### Security Audit (`security-audit.yml`)
 

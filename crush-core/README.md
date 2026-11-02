@@ -18,7 +18,7 @@ High-performance parallel compression library with a pluggable algorithm system.
 
 ```toml
 [dependencies]
-crush-core = "0.1.1"
+crush-core = "0.4"
 ```
 
 ## Quick Start

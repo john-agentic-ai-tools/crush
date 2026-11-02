@@ -86,6 +86,9 @@ crush/
 ├── crush-core/
 │   ├── tests/          # Integration tests
 │   └── fuzz/           # Fuzz targets
+├── crush-parallel/     # Tests and fuzz targets
+├── crush-lz/           # Tests and fuzz targets
+├── crush-gpu/          # Tests and fuzz targets
 └── crush-cli/
     └── tests/
         ├── common/     # Shared test utilities
@@ -109,7 +112,7 @@ Located within `src/` modules using `#[cfg(test)]` blocks. Test individual funct
 Located in `tests/` directories. Test complete workflows and command-line operations.
 
 ### Fuzz Tests
-Located in `crush-core/fuzz/`. Test robustness against malformed inputs:
+Located in each crate's `fuzz/` directory. They test robustness against malformed inputs, for example in `crush-core/fuzz/`:
 - `compress` - Test compression with random input
 - `decompress` - Test decompression with corrupted data
 

@@ -19,7 +19,7 @@ Crush is built to:
 
 ### Core Capabilities
 
-- **Parallel CPU Compression**: Multi-threaded compression scaling near-linearly to all available cores (~1.1 GiB/s at default workers, post-011 hot-path optimizations)
+- **Parallel CPU Compression**: Multi-threaded compression across all available cores (about 1.1 GB/s on an i9-12900K)
 - **GPU-Accelerated Decompression**: GDeflate-based GPU decompression via CUDA (560 MiB/s) or wgpu Vulkan/Metal/DX12 (386 MiB/s) with automatic CPU fallback
 - **Plugin Architecture**: Extensible system supporting multiple compression algorithms with automatic scoring and selection
 - **Fast codec (`fast-lz`)**: an LZ4-class plugin for maximum speed at an LZ4-like ratio; it compresses on all cores and decompresses on one; `--level fast` uses it automatically, but only for data a quick sampled estimate shows it compresses well
@@ -62,46 +62,39 @@ Crush delivers exceptional throughput for both compression and decompression ope
 
 ### Benchmark Results
 
-**Test Environment:**
-- Rust: 1.93.1 (stable)
-- CPU: Multi-core (benchmarks use all available cores by default)
-- GPU: NVIDIA GeForce RTX 3060 Ti (Vulkan)
-- Build: Release mode with optimizations
-- Feature 011 hot-path optimizations applied: pooled libdeflater state, pre-allocated output with parallel assembly, direct-write decompress, scoped-borrow input on `crush-core::compress`, and a cumulative-offset `BlockIndex`
+**Test environment:** i9-12900K (16 cores, 24 threads), Windows, Rust 1.99.1, release build, in memory, commit `b464204` (2026-10-29). Full figures are in `perf/baselines/`. For speed through the CLI against other tools, see [Comparing Against gzip, pigz, zstd, and lz4](#comparing-against-gzip-pigz-zstd-and-lz4).
 
 #### CPU Compression (crush-parallel, 128 MB corpus)
 
-**Compression Scaling (64 KB blocks):**
+**Compression scaling (64 KB blocks):**
 
-| Workers | Throughput  | Scaling |
-|---------|-------------|---------|
-| 1       | 90 MiB/s    | 1.0×    |
-| 2       | 182 MiB/s   | 2.02×   |
-| 4       | 361 MiB/s   | 4.01×   |
-| 8       | 601 MiB/s   | 6.68×   |
-| default (all cores) | 1.10 GiB/s | — |
+| Workers | Throughput | Scaling |
+|---------|------------|---------|
+| 1       | 100 MB/s   | 1.0x    |
+| 2       | 198 MB/s   | 2.0x    |
+| 4       | 382 MB/s   | 3.8x    |
+| 8       | 571 MB/s   | 5.7x    |
+| default (all cores) | 1,175 MB/s | 11.7x |
 
-Compression scales near-linearly with thread count. `workers=0` (default) uses all available logical CPUs.
+`workers=0` (the default) uses all available logical CPUs.
 
-**Compression Performance by Block Size (default workers):**
+**Compression by block size (default workers):**
 
-| Block Size | Throughput  |
-|-----------|-------------|
-| 64 KB     | 1.10 GiB/s  |
-| 512 KB    | 1.09 GiB/s  |
-| 1024 KB   | 1.11 GiB/s  |
+| Block size | Throughput |
+|------------|------------|
+| 64 KB      | 1,175 MB/s |
+| 512 KB     | 1,177 MB/s |
+| 1024 KB    | 1,184 MB/s |
 
 #### CPU Decompression (crush-parallel, 128 MB corpus, 1 MB blocks)
 
-Post-011 Slice C (direct-write decompress) eliminates the intermediate `Vec<Option<Vec<u8>>>` + flatten-copy phase; workers decompress DEFLATE output straight into disjoint slices of a single pre-allocated output buffer.
-
-| Workers | Throughput  |
-|---------|-------------|
-| 1       | 842 MiB/s   |
-| 2       | 1.54 GiB/s  |
-| 4       | 2.72 GiB/s  |
-| 8       | 4.05 GiB/s  |
-| default (all cores) | 4.63 GiB/s |
+| Workers | Throughput |
+|---------|------------|
+| 1       | 928 MB/s   |
+| 2       | 1,745 MB/s |
+| 4       | 3,029 MB/s |
+| 8       | 4,830 MB/s |
+| default (all cores) | 6,499 MB/s |
 
 #### GPU Decompression (crush-gpu, GDeflate)
 
@@ -111,14 +104,14 @@ GPU decompression uses multi-block kernel dispatch — all tiles in a batch laun
 
 | Corpus | GPU | CPU | Winner |
 |--------|-----|-----|--------|
-| log-1MB | 141 MiB/s | 319 MiB/s | CPU |
-| binary-1MB | 85 MiB/s | 126 MiB/s | CPU |
-| mixed-1MB | 87 MiB/s | 176 MiB/s | CPU |
-| mixed-10MB | **355 MiB/s** | 179 MiB/s | **GPU 1.98x** |
+| log-1MB | 153 MB/s | 348 MB/s | CPU |
+| binary-1MB | 94 MB/s | 148 MB/s | CPU |
+| mixed-1MB | 94 MB/s | 199 MB/s | CPU |
+| mixed-10MB | **329 MB/s** | 210 MB/s | **GPU 1.57x** |
 
 GPU decompression outperforms CPU at larger data sizes (>2-4 MB) where the fixed dispatch overhead is amortized across many tiles. For smaller data, CPU is faster.
 
-**Real-World Large File (1.8 GB compressed, ~62K tiles, RTX 3060 Ti):**
+**Real-world large file (1.8 GB compressed, ~62K tiles, RTX 3060 Ti). Earlier measurement, on Rust 1.93.1, not repeated since:**
 
 | Backend | Throughput | vs CPU |
 |---------|-----------|--------|
@@ -141,8 +134,8 @@ All cores of an i9-12900K, Windows, Criterion quick run.
 
 | Operation              | Latency  |
 |------------------------|----------|
-| Decompress last block  | ~1.14 ms |
-| Decompress first block | ~1.14 ms |
+| Decompress last block  | ~1.10 ms |
+| Decompress first block | ~1.13 ms |
 
 **Index Lookup Performance** (10 240-block CRSH file, 64 KB blocks, post-011 cumulative-offset index):
 
@@ -154,7 +147,7 @@ Feature 011 replaced the per-lookup O(N) cumulative sum with an O(1) indexed rea
 
 ### Key Performance Features
 
-- **Near-linear compression scaling**: throughput doubles with each doubling of worker count up to CPU core count
+- **Compression scaling**: close to linear up to 4 workers (3.8x), and 11.7x on all 24 logical CPUs
 - **SIMD-accelerated DEFLATE**: powered by libdeflater for maximum per-thread throughput (~4x faster than pure-Rust backends)
 - **GPU-accelerated decompression**: multi-block GDeflate dispatch via CUDA (560 MiB/s) or wgpu (Vulkan/Metal/DX12) with automatic CPU fallback
 - **Configurable parallelism**: `workers(n)` limits CPU usage for background tasks; `workers(0)` (default) uses all cores
@@ -951,6 +944,8 @@ crush/
 │   │   └── entropy.rs   # Shannon entropy analysis
 │   ├── benches/         # Criterion benchmarks
 │   └── Cargo.toml
+├── crush-parallel/      # Parallel DEFLATE engine and CRSH block format
+├── crush-lz/            # fast-lz, the LZ4-class plugin
 ├── crush-cli/           # CLI application
 │   ├── src/
 │   │   ├── main.rs
@@ -958,6 +953,7 @@ crush/
 │   │   ├── config.rs    # Configuration management
 │   │   └── output.rs    # Output formatting
 │   └── Cargo.toml
+├── perf/                # Comparisons, baselines and performance logs
 └── Cargo.toml           # Workspace manifest
 ```
 
@@ -974,6 +970,8 @@ cargo build --release
 
 # Build specific crate
 cargo build -p crush-core
+cargo build -p crush-parallel
+cargo build -p crush-lz
 cargo build -p crush-gpu
 cargo build -p crush-cli
 ```
@@ -986,6 +984,8 @@ cargo test
 
 # Run specific test suite
 cargo test -p crush-core
+cargo test -p crush-parallel
+cargo test -p crush-lz
 cargo test -p crush-gpu
 cargo test -p crush-cli
 
@@ -1000,7 +1000,7 @@ cargo test --test '*'
 cargo bench
 
 # CPU compression/decompression throughput
-cargo bench -p crush-core --bench throughput
+cargo bench -p crush-parallel --bench throughput
 
 # GPU decompression throughput (requires compatible GPU)
 cargo bench -p crush-gpu --bench throughput
@@ -1028,7 +1028,7 @@ See the [Contributing Guide](CONTRIBUTING.md) for details on how to contribute t
 
 ## License
 
-This project is licensed under [LICENSE] - see the LICENSE file for details.
+See the [LICENSE](LICENSE) file for details.
 
 ## Acknowledgments
 
