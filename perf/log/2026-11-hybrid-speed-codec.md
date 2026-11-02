@@ -302,4 +302,31 @@ Fewer threads on all CPUs also help: 978 MB/s at 8, 886 at 12. That fits content
 
 The curve flattens near 1,360 MB/s, below zstd's 1,633 and the 2,450 SC-002 asks for at all cores, so smaller tables alone cannot pass that gate. Table size cannot follow the thread count either, because output must not depend on it.
 
+### Option A: 2^17 tables and content-based segments
+
+The maintainer chose 2^17 / 2^16 tables on 2026-11-01 and asked to recover the ratio elsewhere. In memory, one core, one run each unless noted:
+
+| Change | Ratio | Compress | Decompress |
+|---|---|---|---|
+| 2^17 tables | 3.609 | 264 | 1,042 |
+| Boundaries, distance 1.0, 8 KiB chunks | 3.647 | 255 | 989 |
+| Boundaries, distance 0.7, 8 KiB chunks | 3.656 | 246 | 972 |
+| Boundaries, distance 0.35, 8 KiB chunks | 3.621 | 229 | 873 |
+| Distance 0.7, Huffman lengths tANS coded (kept) | 3.663 | 245 | 932 |
+
+Kept: a segment ends where a chunk's sampled byte distribution differs from the segment so far by more than 0.7 total variation, with no boundary in the first 16 KiB. Tried and dropped, medians of three: tANS table logs one or two steps larger (3.663 in both cases, no change), and favouring repeat mode by 2%, 5% or 10% (3.662, 3.657, 3.646, at most 2% more decode speed). The second also suggests table rebuilds are not why decoding fell, and that cause is open.
+
+Through the CLI against `zstd -3 -T<n>`, ABBA, 7 reps, 128 MiB in tmpfs, median MB/s. Ratio 3.663 against 3.700, -1.0%:
+
+| | 1 core | 4 cores | all cores |
+|---|---|---|---|
+| Sprint compress | 220 | 736 | 872 |
+| `zstd -3` compress | 201 | 1,010 | 1,729 |
+| **Multiple**, gate | **1.09x**, 1.0x | **0.73x**, 1.0x | **0.50x**, 1.5x |
+| Sprint decompress | 709 | 2,123 | 3,336 |
+| `zstd -3` decompress | 1,075 | 1,217 | 1,221 |
+| **Multiple**, gate | **0.66x**, 1.0x | **1.74x**, 2.0x | **2.73x**, 3.0x |
+
+Fuzz on this state: `fuzz_tables`, `fuzz_decompress` and `fuzz_roundtrip`, 50,000 runs each, clean. `fuzz_tables` finishes in under a second, so it is probably rejecting most inputs early.
+
 ## Gates

@@ -47,7 +47,7 @@ u24  regenerated size (at most 131,072)
 
 - **Raw**: The literal bytes follow.
 - **RLE**: One byte follows.
-- **Huffman**: u24 total size, a table description, three u16 stream sizes (the fourth is implied), and four streams. The description is a u8 last symbol, then a 4-bit code length per symbol up to it, low nibble first.
+- **Huffman**: u24 total size, a table description, three u16 stream sizes (the fourth is implied), and four streams. The description is a u8 last symbol, a u8 form, then the code length of each symbol up to the last. Form 0 uses 4 bits each, low nibble first. Form 1 is an explicit table description (log 5 or 6), a u8 stream size, and a tANS stream.
 - **Repeat Huffman**: As Huffman, with no table description.
 
 Code lengths are at most 11 bits. Streams are read backward from their final byte, which holds a sentinel bit. Each of the first three streams decodes `ceil(regenerated / 4)` symbols, and the fourth decodes the remainder.

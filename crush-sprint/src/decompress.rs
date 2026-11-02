@@ -1,12 +1,17 @@
 //! Block decompression. Every failure is an error, never a panic.
 
-use crate::codec::{LITERALS_HUFFMAN, LITERALS_RAW, LITERALS_REPEAT, LITERALS_RLE};
+use crate::bits::BitReader;
+use crate::codec::{
+    LENGTHS_CODED, LENGTHS_LOG, LENGTHS_NIBBLES, LITERALS_HUFFMAN, LITERALS_RAW, LITERALS_REPEAT,
+    LITERALS_RLE,
+};
 use crate::format::{
     MAX_SEGMENT_SIZE, SEGMENT_HEADER_SIZE, SPRINT_VERSION, SegmentHeader, SegmentKind, corrupt,
     read_u24,
 };
 use crate::huffman::HuffmanDecoder;
 use crate::sequences::SequenceDecoder;
+use crate::tans::{DecodeTable, MAX_SYMBOLS, read_counts};
 use crush_core::error::{CrushError, Result};
 
 /// Where a segment's literals are.
@@ -89,24 +94,48 @@ impl Decoder {
 
     /// Read a table description. Returns the streams after it.
     fn read_table<'a>(&mut self, section: &'a [u8]) -> Result<&'a [u8]> {
-        let (&last, rest) = section
-            .split_first()
-            .ok_or_else(|| corrupt("missing Huffman table"))?;
-        let symbols = usize::from(last) + 1;
-        let (packed, streams) = rest
-            .split_at_checked(symbols.div_ceil(2))
-            .ok_or_else(|| corrupt("truncated Huffman table"))?;
+        let [last, form, rest @ ..] = section else {
+            return Err(corrupt("missing Huffman table"));
+        };
+        let symbols = usize::from(*last) + 1;
         let mut lengths = [0u8; 256];
-        for (pair, &byte) in lengths.chunks_mut(2).zip(packed) {
-            pair[0] = byte & 15;
-            if let Some(high) = pair.get_mut(1) {
-                *high = byte >> 4;
+        let streams = match *form {
+            LENGTHS_NIBBLES => {
+                let (packed, streams) = rest
+                    .split_at_checked(symbols.div_ceil(2))
+                    .ok_or_else(|| corrupt("truncated Huffman table"))?;
+                for (pair, &byte) in lengths.chunks_mut(2).zip(packed) {
+                    pair[0] = byte & 15;
+                    if let Some(high) = pair.get_mut(1) {
+                        *high = byte >> 4;
+                    }
+                }
+                // An odd count leaves a high nibble past the last symbol.
+                if symbols % 2 == 1 && symbols < 256 && lengths[symbols] != 0 {
+                    return Err(corrupt("Huffman table past its last symbol"));
+                }
+                streams
             }
-        }
-        // An odd count leaves a high nibble past the last symbol.
-        if symbols % 2 == 1 && symbols < 256 && lengths[symbols] != 0 {
-            return Err(corrupt("Huffman table past its last symbol"));
-        }
+            LENGTHS_CODED => {
+                let mut counts = [0i16; MAX_SYMBOLS];
+                let (log, used, rest) = read_counts(rest, 13, &mut counts)?;
+                let table = DecodeTable::new(&counts[..used], log, LENGTHS_LOG)?;
+                let (&size, rest) = rest
+                    .split_first()
+                    .ok_or_else(|| corrupt("truncated Huffman table"))?;
+                let (stream, streams) = rest
+                    .split_at_checked(usize::from(size))
+                    .ok_or_else(|| corrupt("truncated Huffman table"))?;
+                let mut reader = BitReader::new(stream)?;
+                let decoded = table.decode(&mut reader, symbols)?;
+                if !reader.is_exhausted() {
+                    return Err(corrupt("Huffman table stream did not end"));
+                }
+                lengths[..symbols].copy_from_slice(&decoded);
+                streams
+            }
+            _ => return Err(corrupt("reserved Huffman table form")),
+        };
         self.huffman.rebuild(&lengths)?;
         Ok(streams)
     }

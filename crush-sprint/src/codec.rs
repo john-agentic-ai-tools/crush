@@ -1,5 +1,6 @@
 //! Block compression, and [`BlockCodec`] for sprint.
 
+use crate::bits::BitWriter;
 use crate::decompress::{Decoder, decompress_block};
 use crate::format::{
     BLOCK_SIZE, MAX_SEGMENT_SIZE, SEGMENT_HEADER_SIZE, SPRINT_VERSION, SegmentHeader, SegmentKind,
@@ -9,20 +10,36 @@ use crate::histogram::{byte_histogram, looks_incompressible};
 use crate::huffman::{HuffmanEncoder, build_code_lengths};
 use crate::matcher::{Matcher, Sequence};
 use crate::sequences::SequenceEncoder;
+use crate::tans::{EncodeTable, normalize_counts, write_counts};
 use crush_core::error::Result;
 use crush_parallel::codec::BlockCodec;
 
 /// The value stored in the container header.
 pub const CODEC_ID: u8 = 1;
 
-/// 8-byte match table size (research R5).
-const LONG_LOG: u32 = 18;
+/// 8-byte match table size. 2^18 reaches a better ratio, but 24 threads of it
+/// overflow a shared L3 (`perf/log/2026-11-hybrid-speed-codec.md`).
+const LONG_LOG: u32 = 17;
 /// 5-byte match table size.
 const SHORT_LOG: u32 = 16;
 /// Below this, Huffman's table costs more than it saves.
 const MIN_HUFFMAN_LITERALS: usize = 64;
+/// One byte in this many feeds the segment boundary search.
+const SPLIT_SAMPLE: usize = 8;
+/// Bytes compared at a time by the boundary search.
+const SPLIT_CHUNK: usize = 8192;
+/// Total variation between a chunk and its segment that ends the segment, of
+/// a possible 2. Tuned on `real`, where lower costs more in tables than it saves.
+const SPLIT_DISTANCE: f64 = 0.7;
+/// No boundary before this many bytes.
+const MIN_SPLIT: usize = 16_384;
 /// Bytes one short literal copy moves.
 const WILD_COPY: usize = 16;
+
+pub(crate) const LENGTHS_NIBBLES: u8 = 0;
+pub(crate) const LENGTHS_CODED: u8 = 1;
+/// Table log for coded Huffman lengths.
+pub(crate) const LENGTHS_LOG: u8 = 6;
 
 pub(crate) const LITERALS_RAW: u8 = 0;
 pub(crate) const LITERALS_RLE: u8 = 1;
@@ -214,6 +231,37 @@ impl Encoder {
     }
 }
 
+/// Sample bytes in chunks, and end the segment where a chunk stops looking
+/// like the segment so far, so each entropy table fits its data.
+fn segment_end(block: &[u8], start: usize) -> usize {
+    let limit = (start + MAX_SEGMENT_SIZE).min(block.len());
+    let mut total = [0u32; 256];
+    let mut count = 0u32;
+    for (i, part) in block[start..limit].chunks(SPLIT_CHUNK).enumerate() {
+        let mut current = [0u32; 256];
+        for &byte in part.iter().step_by(SPLIT_SAMPLE) {
+            current[usize::from(byte)] += 1;
+        }
+        let part_count: u32 = current.iter().sum();
+        if count != 0 && (i + 1) * SPLIT_CHUNK > MIN_SPLIT {
+            let (n, m) = (f64::from(count), f64::from(part_count));
+            let distance: f64 = total
+                .iter()
+                .zip(&current)
+                .map(|(&t, &c)| (f64::from(t) / n - f64::from(c) / m).abs())
+                .sum();
+            if distance > SPLIT_DISTANCE {
+                return start + i * SPLIT_CHUNK;
+            }
+        }
+        for (t, c) in total.iter_mut().zip(&current) {
+            *t += c;
+        }
+        count += part_count;
+    }
+    limit
+}
+
 fn code_bits(histogram: &[u32; 256], lengths: &[u8; 256]) -> u64 {
     let pairs = histogram.iter().zip(lengths);
     pairs.map(|(&c, &l)| u64::from(c) * u64::from(l)).sum()
@@ -228,18 +276,54 @@ fn last_symbol(lengths: &[u8; 256]) -> usize {
     lengths.iter().rposition(|&l| l != 0).unwrap_or(0)
 }
 
+/// Bytes [`write_description`] would use without coding its lengths.
 fn description_size(lengths: &[u8; 256]) -> usize {
-    1 + (last_symbol(lengths) + 1).div_ceil(2)
+    2 + (last_symbol(lengths) + 1).div_ceil(2)
 }
 
-/// Last symbol, then a 4-bit length for each symbol up to it.
+/// Last symbol, a form byte, then a length for each symbol up to it: 4 bits
+/// each for form 0, or tANS coded for form 1 when that is smaller.
 fn write_description(lengths: &[u8; 256], out: &mut Vec<u8>) {
     let last = last_symbol(lengths);
     out.push(last as u8);
-    for pair in lengths[..=last].chunks(2) {
-        let high = pair.get(1).copied().unwrap_or(0);
-        out.push(pair[0] | (high << 4));
+    let start = out.len();
+    if !write_coded_lengths(&lengths[..=last], out)
+        || out.len() - start >= description_size(lengths) - 1
+    {
+        out.truncate(start);
+        out.push(LENGTHS_NIBBLES);
+        for pair in lengths[..=last].chunks(2) {
+            let high = pair.get(1).copied().unwrap_or(0);
+            out.push(pair[0] | (high << 4));
+        }
     }
+}
+
+/// Returns false if these lengths cannot be tANS coded.
+fn write_coded_lengths(lengths: &[u8], out: &mut Vec<u8>) -> bool {
+    let mut counts = [0u32; 16];
+    for &l in lengths {
+        counts[usize::from(l) & 15] += 1;
+    }
+    let Ok(normalized) = normalize_counts(&counts[..=12], LENGTHS_LOG) else {
+        return false;
+    };
+    let Ok(table) = EncodeTable::new(&normalized, LENGTHS_LOG, LENGTHS_LOG) else {
+        return false;
+    };
+    let mut writer = BitWriter::new();
+    table.encode(lengths, &mut writer);
+    let stream = writer.finish();
+    let Ok(size) = u8::try_from(stream.len()) else {
+        return false;
+    };
+    out.push(LENGTHS_CODED);
+    if write_counts(&normalized, LENGTHS_LOG, out).is_err() {
+        return false;
+    }
+    out.push(size);
+    out.extend_from_slice(&stream);
+    true
 }
 
 impl BlockCodec for SprintCodec {
@@ -268,7 +352,7 @@ impl BlockCodec for SprintCodec {
         let mut repeats = encoder.sequences.repeats();
         let mut start = 0;
         while start < input.len() {
-            let end = (start + MAX_SEGMENT_SIZE).min(input.len());
+            let end = segment_end(input, start);
             encoder.write_segment(input, start, end, &mut repeats, out)?;
             start = end;
         }

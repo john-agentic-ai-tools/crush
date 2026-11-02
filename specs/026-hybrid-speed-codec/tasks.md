@@ -118,7 +118,7 @@ description: "Task list for the hybrid high-speed codec"
 
 - [X] T038 [US2] Implement safe bit reader and writer in `crush-sprint/src/bits.rs`, using fixed-size reads and masked table indices (R3)
 - [X] T039 [US2] Implement Huffman build, encode, and 4-stream decode in `crush-sprint/src/huffman.rs`, with 11-bit maximum code length and fixed-size masked tables
-- [X] T040 [US2] Implement the two-table match finder in `crush-sprint/src/matcher.rs`: 8-byte hashes at 2^18 entries, 5-byte at 2^16 or 2^17 (T028), repeat-offset probe at ip+1, and step growth
+- [X] T040 [US2] Implement the two-table match finder in `crush-sprint/src/matcher.rs`: 8-byte hashes at 2^17 entries, 5-byte at 2^16 (maintainer decision after T028), repeat-offset probe at ip+1, and step growth
 - [X] T041 [US2] Create `crush-sprint/examples/codec_bench.rs`, and measure T039 and T040 on `real` against live zstd in memory, recording results in `perf/log/2026-11-hybrid-speed-codec.md`
 - [X] T042 [US2] Inspect optimized code for T039 and T040 and remove remaining hot-loop bounds checks by safe means, recording before and after figures in `perf/log/2026-11-hybrid-speed-codec.md`
 - [X] T043 [US2] **Go/no-go**: Report T041 and T042 from `perf/log/2026-11-hybrid-speed-codec.md` to the maintainer. At 0.8x of zstd or better, continue. Below 0.8x, go to T046 before continuing
