@@ -383,6 +383,8 @@ fn decompress_tiles_gpu(
     );
     let build_start = std::time::Instant::now();
     let mut tiles = Vec::with_capacity(entries.len());
+    // One slot per tile: its bytes if stored, or `None` if the GPU decodes it.
+    let mut stored = Vec::with_capacity(entries.len());
     for (i, entry) in entries.iter().enumerate() {
         if cancel.load(Ordering::Relaxed) {
             return Err(CrushError::Cancelled);
@@ -408,12 +410,18 @@ fn decompress_tiles_gpu(
             )));
         }
 
-        tiles.push(crate::backend::CompressedTile {
-            data: input[payload_start..payload_end].to_vec(),
-            uncompressed_size: tile_hdr.uncompressed_size,
-            sub_stream_count: config.sub_stream_count,
-            checksum: entry.checksum,
-        });
+        let payload = &input[payload_start..payload_end];
+        if tile_hdr.flags.stored() {
+            stored.push(Some(payload));
+        } else {
+            stored.push(None);
+            tiles.push(crate::backend::CompressedTile {
+                data: payload.to_vec(),
+                uncompressed_size: tile_hdr.uncompressed_size,
+                sub_stream_count: config.sub_stream_count,
+                checksum: entry.checksum,
+            });
+        }
     }
     let build_elapsed = build_start.elapsed();
     debug!(
@@ -431,7 +439,11 @@ fn decompress_tiles_gpu(
         backend.name()
     );
     let dispatch_start = std::time::Instant::now();
-    let decompressed = backend.decompress_tiles_gdeflate(&tiles, cancel)?;
+    let decompressed = if tiles.is_empty() {
+        Vec::new()
+    } else {
+        backend.decompress_tiles_gdeflate(&tiles, cancel)?
+    };
     let dispatch_elapsed = dispatch_start.elapsed();
     debug!(
         elapsed_secs = dispatch_elapsed.as_secs_f64(),
@@ -444,7 +456,14 @@ fn decompress_tiles_gpu(
         CrushError::InvalidFormat("uncompressed size too large for platform".to_owned())
     })?;
     let mut output = Vec::with_capacity(uncompressed_total);
-    for (i, (tile_data, entry)) in decompressed.iter().zip(entries.iter()).enumerate() {
+    let mut from_gpu = decompressed.iter();
+    for (i, (raw, entry)) in stored.iter().zip(entries.iter()).enumerate() {
+        let tile_data: &[u8] = match raw {
+            Some(raw) => raw,
+            None => from_gpu.next().ok_or_else(|| {
+                PluginError::OperationFailed(format!("GPU returned no output for tile {i}"))
+            })?,
+        };
         if config.enable_checksums && entry.checksum != 0 {
             let mut h = Hasher::new();
             h.update(tile_data);
@@ -624,4 +643,157 @@ pub fn decompress_tile_by_index(
     }
 
     Ok(tile_data)
+}
+
+#[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::cast_possible_truncation
+)]
+mod tests {
+    use std::sync::Mutex;
+
+    use super::*;
+    use crate::backend::{CompressedTile, ComputeBackend, GpuInfo, GpuVendor};
+
+    const TILE: usize = 65536;
+
+    /// Decodes on the CPU with the same `GDeflate` decoder, so a stored tile
+    /// handed to it fails just as it does on a GPU.
+    struct FakeBackend {
+        info: GpuInfo,
+        received: Mutex<Vec<usize>>,
+    }
+
+    impl FakeBackend {
+        fn new() -> Self {
+            Self {
+                info: GpuInfo {
+                    name: "fake".to_owned(),
+                    vendor: GpuVendor::Other,
+                    vram_bytes: 0,
+                    api_backend: "fake".to_owned(),
+                },
+                received: Mutex::new(Vec::new()),
+            }
+        }
+
+        fn calls(&self) -> Vec<usize> {
+            self.received.lock().unwrap().clone()
+        }
+    }
+
+    impl ComputeBackend for FakeBackend {
+        fn name(&self) -> &str {
+            &self.info.name
+        }
+
+        fn gpu_info(&self) -> &GpuInfo {
+            &self.info
+        }
+
+        fn decompress_tiles(
+            &self,
+            tiles: &[CompressedTile],
+            cancel: &AtomicBool,
+        ) -> Result<Vec<Vec<u8>>> {
+            self.decompress_tiles_gdeflate(tiles, cancel)
+        }
+
+        fn decompress_tiles_gdeflate(
+            &self,
+            tiles: &[CompressedTile],
+            _cancel: &AtomicBool,
+        ) -> Result<Vec<Vec<u8>>> {
+            self.received.lock().unwrap().push(tiles.len());
+            tiles
+                .iter()
+                .map(|t| {
+                    gdeflate::gdeflate_decompress_tile(&t.data, t.uncompressed_size as usize)
+                        .or_else(|_| Ok(vec![0; t.uncompressed_size as usize]))
+                })
+                .collect()
+        }
+
+        fn release(&self) {}
+    }
+
+    fn compressible() -> Vec<u8> {
+        b"the quick brown fox jumps over the lazy dog. "
+            .iter()
+            .copied()
+            .cycle()
+            .take(TILE)
+            .collect()
+    }
+
+    fn incompressible(mut state: u64) -> Vec<u8> {
+        (0..TILE)
+            .map(|_| {
+                state ^= state << 13;
+                state ^= state >> 7;
+                state ^= state << 17;
+                state as u8
+            })
+            .collect()
+    }
+
+    fn mixed() -> Vec<u8> {
+        [
+            compressible(),
+            incompressible(1),
+            compressible(),
+            incompressible(2),
+        ]
+        .concat()
+    }
+
+    fn through_gpu(
+        original: &[u8],
+        config: &EngineConfig,
+        backend: &FakeBackend,
+    ) -> Result<Vec<u8>> {
+        let cancel = AtomicBool::new(false);
+        let archive = compress(original, config, &cancel)?;
+        let footer_start = archive.len() - GpuFileFooter::SIZE;
+        let footer = GpuFileFooter::from_bytes(archive[footer_start..].try_into().unwrap())?;
+        let header = GpuFileHeader::from_bytes(archive[..GpuFileHeader::SIZE].try_into().unwrap())?;
+        let entries = read_tile_index(&archive, &footer, footer_start)?;
+        decompress_tiles_gpu(&archive, &header, &entries, config, &cancel, backend)
+    }
+
+    #[test]
+    fn mixed_tiles_round_trip_through_the_gpu_path() {
+        let original = mixed();
+        let output = through_gpu(&original, &EngineConfig::default(), &FakeBackend::new()).unwrap();
+        assert!(output == original, "output differs from the original");
+    }
+
+    #[test]
+    fn mixed_tiles_round_trip_with_checksums_off() {
+        let original = mixed();
+        let config = EngineConfig {
+            enable_checksums: false,
+            ..EngineConfig::default()
+        };
+        let output = through_gpu(&original, &config, &FakeBackend::new()).unwrap();
+        assert!(output == original, "output differs from the original");
+    }
+
+    #[test]
+    fn stored_tiles_never_reach_the_backend() {
+        let backend = FakeBackend::new();
+        through_gpu(&mixed(), &EngineConfig::default(), &backend).unwrap();
+        assert_eq!(backend.calls(), vec![2]);
+    }
+
+    #[test]
+    fn an_all_stored_archive_skips_the_backend() {
+        let backend = FakeBackend::new();
+        let original = incompressible(3);
+        let output = through_gpu(&original, &EngineConfig::default(), &backend).unwrap();
+        assert!(output == original, "output differs from the original");
+        assert_eq!(backend.calls(), Vec::<usize>::new());
+    }
 }
