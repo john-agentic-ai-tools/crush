@@ -377,4 +377,8 @@ One pinned core, in memory, 128 MiB `real`, medians of three in alternating roun
 
 Bounds checks are not the wall, so T046 is not triggered. Runtime BMI2 dispatch would need one `unsafe` call, or a dependency, so it is not done. Neither explains the gap to zstd's 1,646 MB/s, which remains open.
 
+The compiled loop has 751 instructions, 151 of them touching the stack, so registers looked like the limit. Splitting it into a decode loop and a run loop, 64 sequences at a time, gave no gain (about 920 against 930 MB/s, four alternating rounds) and was reverted. It did price the two halves: reading fields from the bit stream takes about 71 ms for 9.1 M sequences, 7.8 ns each, and copying takes about 46 ms, 5 ns each, with those timers in place. zstd's whole decode leaves about 7.8 ns per sequence for both, if literals take about 13 ms (estimated, not measured). So the larger part of the gap is in bit reading and tANS, not copying.
+
+Tuning stopped here, as agreed: no remaining experiment promises a large saving.
+
 ## Gates
