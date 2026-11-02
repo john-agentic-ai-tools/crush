@@ -598,18 +598,23 @@ fn decompress_tiles_gpu(
 
     // Validate checksums and place each tile.
     let mut from_gpu = decompressed.iter();
-    let slots = tile_slots(entries, output);
-    for (i, ((raw, entry), slot)) in stored.iter().zip(entries).zip(slots).enumerate() {
-        let tile_data: &[u8] = match raw {
-            Some(raw) => raw,
-            None => from_gpu.next().ok_or_else(|| {
-                PluginError::OperationFailed(format!("GPU returned no output for tile {i}"))
-            })?,
-        };
-        place_tile(tile_data, slot, entry, i, config)?;
-    }
-
-    Ok(())
+    let sources = stored
+        .iter()
+        .map(|raw| match raw {
+            Some(raw) => Ok(*raw),
+            None => from_gpu.next().map(Vec::as_slice).ok_or_else(|| {
+                CrushError::from(PluginError::OperationFailed(
+                    "GPU returned too few tiles".to_owned(),
+                ))
+            }),
+        })
+        .collect::<Result<Vec<&[u8]>>>()?;
+    tile_slots(entries, output)
+        .into_par_iter()
+        .zip(sources)
+        .zip(entries)
+        .enumerate()
+        .try_for_each(|(i, ((slot, tile), entry))| place_tile(tile, slot, entry, i, config))
 }
 
 /// Read a single tile from the archive and decompress it.
