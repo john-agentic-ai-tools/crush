@@ -47,7 +47,7 @@ u24  regenerated size (at most 131,072)
 
 - **Raw**: The literal bytes follow.
 - **RLE**: One byte follows.
-- **Huffman**: u24 total size, a table description, three u16 stream sizes (the fourth is implied), and four streams.
+- **Huffman**: u24 total size, a table description, three u16 stream sizes (the fourth is implied), and four streams. The description is a u8 last symbol, then a 4-bit code length per symbol up to it, low nibble first.
 - **Repeat Huffman**: As Huffman, with no table description.
 
 Code lengths are at most 11 bits. Streams are read backward from their final byte, which holds a sentinel bit. Each of the first three streams decodes `ceil(regenerated / 4)` symbols, and the fourth decodes the remainder.
@@ -63,7 +63,13 @@ u8      modes: bits 0-1 literal length, 2-3 offset, 4-5 match length
 
 Modes: 0 predefined, 1 RLE, 2 explicit, 3 repeat.
 
-Fields use code plus extra-bits classes, in the style of RFC 8878. Offset values 1 to 3 select repeat offsets, and the rest carry `offset + 3`. Maximum table logs: 9 for literal length, 8 for offset, 9 for match length. Exact code tables and predefined distributions go here once the prototype confirms them.
+Literal and match length codes, and the predefined distributions, are those of RFC 8878. Offset value `v` has code `floor(log2(v))` with that many extra bits. Values above 3 carry `offset + 3`. Values 1 to 3 select the first to third repeat offsets, or with a literal length of 0, the second, the third, and the first less one. Maximum table logs: 9 for literal length, 8 for offset, 9 for match length. A count of 0 is an error.
+
+An explicit table is a u8 table log (at least 5), a u8 symbol count, a u8 stream size, and a backward stream of `count + 1` fields, each as wide as the slots still free require.
+
+The bitstream holds the three opening states, then for each sequence the offset, match length and literal length extra bits, then, except after the last, the literal length, match length and offset state bits. States open in the order literal length, offset, match length.
+
+An RLE or predefined table is also the current table for repeat mode.
 
 ## State reset
 
@@ -73,5 +79,4 @@ Huffman table, tANS tables and repeat offsets reset at each block start. Repeat 
 
 - Separate per-field bit readers versus one shared stream (R8 experiment).
 - Persistence across segments (R6).
-- Block size (R5). It is stored in the file, so a change does not change the layout.
 - Predefined distributions tuned on the benchmark corpora, with care not to over-fit `real`.

@@ -111,6 +111,10 @@ impl CompressionAlgorithm for ParallelDeflatePlugin {
         .map(Some)
     }
 
+    fn block_count(&self, input: &[u8]) -> Result<Option<u64>> {
+        load_index(&mut std::io::Cursor::new(input)).map(|index| Some(index.len()))
+    }
+
     fn detect(&self, file_header: &[u8]) -> bool {
         // CRSH files start with the 4-byte magic [0x43, 0x52, 0x53, 0x48] ("CRSH")
         file_header.len() >= 4 && file_header[0..4] == crate::format::CRSH_MAGIC

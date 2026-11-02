@@ -21,7 +21,13 @@ linkme = { workspace = true }
 
 [dev-dependencies]
 criterion = { workspace = true }
+# Only for the shared bench generators (crush-parallel/benches/common/variants.rs).
+libdeflater = { workspace = true }
 proptest = "1.11"
+
+[[bench]]
+name = "codec"
+harness = false
 
 [lints.clippy]
 all = "deny"

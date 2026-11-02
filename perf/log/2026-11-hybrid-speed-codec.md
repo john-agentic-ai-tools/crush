@@ -142,6 +142,134 @@ Consequence: `decompress_medium/1MB` can swing about ±18% between builds of ide
 
 ## Block-size sweep
 
+2026-11-01, i9-12900K under WSL2, zstd 1.5.7, 128 MiB `real` in tmpfs (the file from the 2026-10-29 comparison). Sizes are exact. Each chunk is compressed alone with `zstd -3` and the sizes summed.
+
+| Block | `-T1` (the gate's flag) | Against 3.700 | `--single-thread` | `-T1`, no literal compression |
+|---|---|---|---|---|
+| 1 MiB | 3.586 | -3.1% | 3.570 | 3.299 |
+| 2 MiB | 3.644 | -1.5% | 3.626 | 3.365 |
+| 4 MiB | 3.675 | -0.7% | 3.648 | 3.403 |
+| 8 MiB | 3.692 | -0.2% | 3.661 | 3.422 |
+| 16 MiB | 3.697 | -0.1% | 3.671 | 3.428 |
+| Whole file | 3.700 | | 3.675 | 3.432 |
+
+`--single-thread`, the flag in the original method, gives 3.675 on the whole file. `perf/compare.py` runs `-T<n>`, which gives 3.700 at every thread count, so `-T1` is the like-for-like figure. Why the two modes differ was not investigated.
+
+8 MiB is not a free fallback. SC-008 allows 5 ms for one block, and at the 1.6 GB/s measured below an 8 MiB block takes about 5 ms before any read, while 4 MiB takes about 2.5 ms. It also halves the tasks available to parallel decode.
+
+Sprint can spend more on matching instead. 4 MiB blocks, one pinned core, `zstd -b3 -B4194304`, median of three rounds, in memory:
+
+| Window, 8-byte table, 5-byte table | Ratio | Compress | Decompress |
+|---|---|---|---|
+| 2^22, 2^17, 2^16 | 3.678 | 379 MB/s | 1,639 MB/s |
+| 2^22, 2^17, 2^17 | 3.691 | 359 | 1,649 |
+| 2^22, 2^18, 2^16 | 3.699 | 347 | 1,646 |
+| 2^22, 2^18, 2^17 | 3.709 | 326 | 1,644 |
+
+A whole-block window alone adds 0.08%. The 8-byte table is the cheap lever: 2^18 entries reach 3.6994 against the live 3.6996, for 8.5% less compression speed, and decompression does not change. Both tables at the larger size clear the gate by 0.3% and cost 14%.
+
+**Decision**: stay at 4 MiB. Start the sprint matcher at 2^18 8-byte entries and 2^16 5-byte entries, and let the prototype decide on 2^17 5-byte entries. These are zstd's numbers: sprint's entropy stage and matcher will land elsewhere.
+
+## Literal compression
+
+One pinned core, whole file, `--single-thread`, ABBA, 22 runs each, median MB/s with spread:
+
+| | Ratio | Compress | Decompress |
+|---|---|---|---|
+| `zstd -3` | 3.675 | 317.5 (8%) | 1,283.5 (9%) |
+| `zstd -3 --no-compress-literals` | 3.422 | 327.9 (10%) | 1,437.6 (16%) |
+
+Huffman literals are worth 7.4% of ratio here (7.8% with `-T1`, 3.700 against 3.432). Both speed differences are inside the spreads: about 3% on compress and 11% on decompress. SC-001 cannot be reached without them, so they stay.
+
 ## Prototype
+
+2026-11-01, i9-12900K under WSL2, one pinned core, in memory, 128 MiB `real`, 4 MiB blocks, 128 KiB segments, safe Rust. `crush-sprint/examples/codec_bench.rs`, medians of three to five runs per round, over several rounds. Tables: 2^18 8-byte, 2^16 5-byte.
+
+| Stage | Sprint | zstd 1.5.7 | Multiple |
+|---|---|---|---|
+| Huffman decode, MB/s of literals | 1,302 | 1,460 | **0.89x** |
+| Compress so far (match + Huffman), MB/s of input | 284 | 344 | **0.83x** |
+| Match stage alone, MB/s of input | 303 | | |
+| Huffman encode, MB/s of input | 4,600 | | |
+
+Sprint figures are from the final build, whose three decode medians ranged 1,266-1,327. The zstd decode figure comes from an earlier round in the same session, and the 1,331 measured then, before the lint changes to `common_length` and the decode loop, may be the same code on a quieter machine: that was not tested. How to read the comparison:
+
+- The decode reference is `zstd -b3 -B131072` on the literal bytes sprint produced. Nearly nothing in them matches (ratio 1.165), so that run is mostly zstd's Huffman decoder, with some framing cost included.
+- The compress reference is `zstd -b3 -B4194304 --zstd=wlog=22,hlog=18`, the whole of zstd at the table sizes that reach 3.70. Sprint's figure has **no sequence coding yet**, so the 0.83x will fall when T044 and T048 land.
+
+Estimated ratio: 3.62 at 2^16 5-byte entries, 3.63 at 2^17, for 8% less match speed. The target is 3.70. This is an estimate, not a measurement: sequences have no coder, so their size is the per-segment order-0 entropy of the codes, using coarser match-length classes than the format's. It sets 22.4 MB of sequences beside about 21.5 MB implied for zstd, and at most that gap is real. Actual ratio waits for T044 to T050.
+
+The first run of this bench showed changing the 5-byte table had no effect. The hash constant had 24 trailing zero bits, so the short hash saw only 2 bytes. The fix took the estimate from 3.56 to 3.62, and a test now pins which bytes the hash covers.
+
+### Bounds checks (T042)
+
+Counted in the optimized assembly, panicking checks only:
+
+| Function | Before | After |
+|---|---|---|
+| `HuffmanDecoder::decode_interleaved` | 0 | 0 |
+| `Matcher::find`, with `common_length` | 6, plus 4 in `common_length` | 0 |
+
+`find` traded index expressions for `get` and reverse iterators. Old against new, four alternating rounds: 298-303 MB/s and 276-302 MB/s. Output is identical. The one low reading aside there is no measurable change. Refills and reads still compare a length before each load. These branches do not panic and were not removed.
+
+**T043 go/no-go**: both stages are at or above 0.8x, so sprint continues without an `unsafe` exception. T046 is not triggered.
+
+## First full codec
+
+2026-11-01, same machine and corpus. All of T044 to T056 in place, safe Rust, no `unsafe` exception.
+
+Through the CLI against `zstd -3 -T<n>`, ABBA, 7 reps, 128 MiB in tmpfs, median MB/s. Ratio 3.631 against 3.700, -1.9%:
+
+| | 1 core | 4 cores | all cores |
+|---|---|---|---|
+| Sprint compress | 221 | 718 | 689 |
+| `zstd -3` compress | 202 | 1,059 | 1,633 |
+| **Multiple**, gate | **1.09x**, 1.0x | **0.68x**, 1.0x | **0.42x**, 1.5x |
+| Sprint decompress | 729 | 2,173 | 3,196 |
+| `zstd -3` decompress | 1,039 | 1,196 | 1,205 |
+| **Multiple**, gate | **0.70x**, 1.0x | **1.82x**, 2.0x | **2.65x**, 3.0x |
+
+`zstd -3 --single-thread` compressed at 317 MB/s earlier today, against 202 for `-T1`, so the 1-core pass rests on the flag the gate uses. `-T1` also spends a thread on I/O, pinned to the same CPU.
+
+Compression stops scaling after 4 cores. At all cores a run takes 0.18 s wall with 2.7 s user and 0.3 s system, against about 0.6 s of CPU on one core, so the loss is not kernel time. The input is only 32 blocks for 24 threads, of which 8 are E-cores, and contention for memory is also possible. The cause is not established.
+
+In memory, one core, 4 MiB blocks, medians of three rounds. zstd is `-b3 -B4194304 --zstd=wlog=22,hlog=18`, the tables that reach 3.70:
+
+| | Sprint | zstd | Multiple | SC-004 |
+|---|---|---|---|---|
+| Compress | 241 MB/s | 354 | 0.68x | 0.85x, **miss** |
+| Decompress | 1,031 MB/s | 1,646 | 0.63x | 0.85x, **miss** |
+
+Decode time before the repeat-offset shift, 128 MiB: sequences 102 ms (11.3 ns each, 9.04 M sequences), literals 15 ms, tables 4 ms.
+
+### Decoder changes
+
+Medians over three rounds, MB/s:
+
+| Change | Decompress | Verdict |
+|---|---|---|
+| First build | 991 | |
+| 16-byte array copies, 1 flush fewer | 1,020 | Kept |
+| Branchless repeat offsets, word-at-a-time short periods | 1,076 | Kept |
+| Codes resolved into table entries, one shifted word per sequence | 1,084 | Kept, no measurable gain |
+| Ring of 8 sequences, touching each source early | 1,030 | **Reverted**: slower |
+| Match copies through `split_at_mut` | 1,115 | Kept |
+| Branching offset pick | 1,010 | **Reverted**: -10%, so mispredicts matter here |
+| Repeat-offset shift with no literals | 1,031 | Kept for ratio, -7% |
+
+Simulated branch misses in `run` were about 0.2 per sequence, and the reverted branching pick shows that figure undercounts. `run` executes about 200 instructions per sequence. The cause of the remaining gap to zstd is not established.
+
+### Ratio
+
+| Change | Ratio |
+|---|---|
+| First build | 3.6173 |
+| Repeat-offset shift with no literals (kept) | 3.6307 |
+| 2^17 5-byte table | 3.6409, 8% less compress speed |
+| 64 KiB segments | 3.6493 |
+| 32 KiB segments | 3.6521 |
+| 64 KiB segments and 2^17 table | 3.6587 |
+
+Smaller segments are not a free win (6% less compress and 8% less decompress speed at 64 KiB), but the gain suggests table boundaries should follow the content. zstd 1.5.7 may do this with its block pre-splitter at this level; that was not verified. Table descriptions are a second lead: about 240 KB in all, unmeasured against zstd's. Huffman tables use 4 bits per symbol with no entropy coding.
 
 ## Gates

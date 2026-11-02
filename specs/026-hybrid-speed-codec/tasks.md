@@ -100,44 +100,44 @@ description: "Task list for the hybrid high-speed codec"
 
 ### Pre-design measurement
 
-- [ ] T028 [US2] Run the block-size sweep from `specs/026-hybrid-speed-codec/quickstart.md` step 3 at 1, 2, 4 and 8 MiB, record it in `perf/log/2026-11-hybrid-speed-codec.md`, and finalize R5 in `specs/026-hybrid-speed-codec/research.md`
-- [ ] T029 [US2] Measure `zstd -3 --no-compress-literals` on `real`, record it in `perf/log/2026-11-hybrid-speed-codec.md`, and note which features pay for themselves
+- [X] T028 [US2] Run the block-size sweep from `specs/026-hybrid-speed-codec/quickstart.md` step 3 at 1, 2, 4 and 8 MiB, record it in `perf/log/2026-11-hybrid-speed-codec.md`, and finalize R5 in `specs/026-hybrid-speed-codec/research.md`
+- [X] T029 [US2] Measure `zstd -3 --no-compress-literals` on `real`, record it in `perf/log/2026-11-hybrid-speed-codec.md`, and note which features pay for themselves
 
 ### Tests for User Story 2
 
-- [ ] T030 [P] [US2] Write bit-stream and Huffman unit tests in `crush-sprint/tests/huffman.rs`, including "Code lengths must form a complete code with a maximum of 11 bits"
-- [ ] T031 [P] [US2] Write tANS unit tests in `crush-sprint/tests/tans.rs`, including "Normalized counts must sum to the table size" and table-log maximums of 9, 8 and 9
-- [ ] T032 [P] [US2] Write `proptest` round trips over empty, tiny, random, repetitive and mixed inputs in `crush-sprint/tests/roundtrip.rs`
-- [ ] T033 [P] [US2] Write malformed-input tests in `crush-sprint/tests/malformed.rs` covering every validation rule in `specs/026-hybrid-speed-codec/data-model.md`, including "Match offsets must not exceed bytes already produced in the block, and must be non-zero", "Output must never exceed the segment's regenerated size", and "Repeat mode with no earlier table in the block is an error"
-- [ ] T034 [P] [US2] Write format tests in `crush-sprint/tests/format.rs` for header layout, `sprint_version`, reserved segment type 3, and "Trailing bytes after the last segment are an error"
-- [ ] T035 [P] [US2] Write plugin tests in `crush-sprint/tests/plugin.rs` for magic `43 52 01 05`, detection, cancellation, and selection staying unchanged with sprint registered
-- [ ] T036 [P] [US2] Add CLI tests in `crush-cli/tests/sprint.rs` for file and piped round trips, `--block`, error cases, and Ctrl-C leaving no partial output, per `contracts/cli.md`
-- [ ] T037 [US2] **Approval checkpoint**: Present T030-T036 in `crush-sprint/tests/` and `crush-cli/tests/sprint.rs` to the maintainer, then confirm they fail
+- [X] T030 [P] [US2] Write bit-stream and Huffman unit tests in `crush-sprint/tests/huffman.rs`, including "Code lengths must form a complete code with a maximum of 11 bits"
+- [X] T031 [P] [US2] Write tANS unit tests in `crush-sprint/tests/tans.rs`, including "Normalized counts must sum to the table size" and table-log maximums of 9, 8 and 9
+- [X] T032 [P] [US2] Write `proptest` round trips over empty, tiny, random, repetitive and mixed inputs in `crush-sprint/tests/roundtrip.rs`
+- [X] T033 [P] [US2] Write malformed-input tests in `crush-sprint/tests/malformed.rs` covering every validation rule in `specs/026-hybrid-speed-codec/data-model.md`, including "Match offsets must not exceed bytes already produced in the block, and must be non-zero", "Output must never exceed the segment's regenerated size", and "Repeat mode with no earlier table in the block is an error"
+- [X] T034 [P] [US2] Write format tests in `crush-sprint/tests/format.rs` for header layout, `sprint_version`, reserved segment type 3, and "Trailing bytes after the last segment are an error"
+- [X] T035 [P] [US2] Write plugin tests in `crush-sprint/tests/plugin.rs` for magic `43 52 01 05`, detection, cancellation, and selection staying unchanged with sprint registered
+- [X] T036 [P] [US2] Add CLI tests in `crush-cli/tests/sprint.rs` for file and piped round trips, `--block`, error cases, and Ctrl-C leaving no partial output, per `contracts/cli.md`
+- [X] T037 [US2] **Approval checkpoint**: Present T030-T036 in `crush-sprint/tests/` and `crush-cli/tests/sprint.rs` to the maintainer, then confirm they fail
 
 ### Prototype (go/no-go)
 
-- [ ] T038 [US2] Implement safe bit reader and writer in `crush-sprint/src/bits.rs`, using fixed-size reads and masked table indices (R3)
-- [ ] T039 [US2] Implement Huffman build, encode, and 4-stream decode in `crush-sprint/src/huffman.rs`, with 11-bit maximum code length and fixed-size masked tables
-- [ ] T040 [US2] Implement the two-table match finder in `crush-sprint/src/matcher.rs`: 8-byte hashes at 2^17 entries, 5-byte at 2^16, repeat-offset probe at ip+1, and step growth
-- [ ] T041 [US2] Create `crush-sprint/examples/codec_bench.rs`, and measure T039 and T040 on `real` against live zstd in memory, recording results in `perf/log/2026-11-hybrid-speed-codec.md`
-- [ ] T042 [US2] Inspect optimized code for T039 and T040 and remove remaining hot-loop bounds checks by safe means, recording before and after figures in `perf/log/2026-11-hybrid-speed-codec.md`
-- [ ] T043 [US2] **Go/no-go**: Report T041 and T042 from `perf/log/2026-11-hybrid-speed-codec.md` to the maintainer. At 0.8x of zstd or better, continue. Below 0.8x, go to T046 before continuing
+- [X] T038 [US2] Implement safe bit reader and writer in `crush-sprint/src/bits.rs`, using fixed-size reads and masked table indices (R3)
+- [X] T039 [US2] Implement Huffman build, encode, and 4-stream decode in `crush-sprint/src/huffman.rs`, with 11-bit maximum code length and fixed-size masked tables
+- [X] T040 [US2] Implement the two-table match finder in `crush-sprint/src/matcher.rs`: 8-byte hashes at 2^18 entries, 5-byte at 2^16 or 2^17 (T028), repeat-offset probe at ip+1, and step growth
+- [X] T041 [US2] Create `crush-sprint/examples/codec_bench.rs`, and measure T039 and T040 on `real` against live zstd in memory, recording results in `perf/log/2026-11-hybrid-speed-codec.md`
+- [X] T042 [US2] Inspect optimized code for T039 and T040 and remove remaining hot-loop bounds checks by safe means, recording before and after figures in `perf/log/2026-11-hybrid-speed-codec.md`
+- [X] T043 [US2] **Go/no-go**: Report T041 and T042 from `perf/log/2026-11-hybrid-speed-codec.md` to the maintainer. At 0.8x of zstd or better, continue. Below 0.8x, go to T046 before continuing
 
 ### Implementation for User Story 2
 
-- [ ] T044 [US2] Implement tANS table build, encode and decode in `crush-sprint/src/tans.rs`, with predefined, RLE, explicit and repeat modes, and maximum table logs of 9, 8 and 9
-- [ ] T045 [US2] Implement byte statistics and sampled early exit in `crush-sprint/src/histogram.rs` (R8)
+- [X] T044 [US2] Implement tANS table build, encode and decode in `crush-sprint/src/tans.rs`, with predefined, RLE, explicit and repeat modes, and maximum table logs of 9, 8 and 9
+- [X] T045 [US2] Implement byte statistics and sampled early exit in `crush-sprint/src/histogram.rs` (R8)
 - [ ] T046 [US2] **Only if a wall is measured**: Create `specs/026-hybrid-speed-codec/unsafe-exceptions.md` with the fields in `data-model.md`, try safe alternatives first, escalate hard diagnosis to Fable within Pro plan usage (stating it when done), and get maintainer approval before any `unsafe`. An approved exception lives in one audited module, the rest of `crush-sprint` keeps `deny(unsafe_code)`, and it needs fuzz coverage and Miri
-- [ ] T047 [US2] Implement segment and section headers in `crush-sprint/src/format.rs` per `contracts/sprint-format.md`, with "Regenerated size must be at most 128 KiB" and all section bounds checks
-- [ ] T048 [US2] Implement sequence encode and decode in `crush-sprint/src/sequences.rs`, with repeat offsets starting at 1, 4, 8
-- [ ] T049 [US2] Implement block compression in `crush-sprint/src/codec.rs`: 128 KiB segments, block entropy state, table reuse, and raw and RLE segments
-- [ ] T050 [US2] Implement block decompression in `crush-sprint/src/decompress.rs`, enforcing "Segment sizes must sum exactly to the block's uncompressed size" and "Bitstreams must end exactly at their initial position"
-- [ ] T051 [US2] Implement `BlockCodec` with `CODEC_ID = 1` for sprint in `crush-sprint/src/codec.rs`, using 4 MiB blocks or the size chosen in T028
-- [ ] T052 [US2] Add provided method `auto_selectable()`, defaulting to `true`, in `crush-core/src/plugin/contract.rs`, and skip plugins returning `false` in `crush-core/src/plugin/selector.rs` (R14)
-- [ ] T053 [US2] Implement and register `SprintPlugin` in `crush-sprint/src/lib.rs` with magic `43 52 01 05` and `auto_selectable() == false`
-- [ ] T054 [US2] Wire `crush-sprint` into `crush-cli/Cargo.toml`, and keep `crush plugins list` and `crush inspect` correct in `crush-cli/src/commands/plugins.rs` and `crush-cli/src/commands/inspect.rs`
-- [ ] T055 [P] [US2] Add fuzz targets `fuzz_decompress`, `fuzz_roundtrip` and `fuzz_tables` in `crush-sprint/fuzz/fuzz_targets/`
-- [ ] T056 [P] [US2] Add suite `sprint` to `.claude/skills/perf/bench.py` and benchmarks in `crush-sprint/benches/codec.rs`
+- [X] T047 [US2] Implement segment and section headers in `crush-sprint/src/format.rs` per `contracts/sprint-format.md`, with "Regenerated size must be at most 128 KiB" and all section bounds checks
+- [X] T048 [US2] Implement sequence encode and decode in `crush-sprint/src/sequences.rs`, with repeat offsets starting at 1, 4, 8
+- [X] T049 [US2] Implement block compression in `crush-sprint/src/codec.rs`: 128 KiB segments, block entropy state, table reuse, and raw and RLE segments
+- [X] T050 [US2] Implement block decompression in `crush-sprint/src/decompress.rs`, enforcing "Segment sizes must sum exactly to the block's uncompressed size" and "Bitstreams must end exactly at their initial position"
+- [X] T051 [US2] Implement `BlockCodec` with `CODEC_ID = 1` for sprint in `crush-sprint/src/codec.rs`, using 4 MiB blocks (T028)
+- [X] T052 [US2] Add provided method `auto_selectable()`, defaulting to `true`, in `crush-core/src/plugin/contract.rs`, and skip plugins returning `false` in `crush-core/src/plugin/selector.rs` (R14)
+- [X] T053 [US2] Implement and register `SprintPlugin` in `crush-sprint/src/lib.rs` with magic `43 52 01 05` and `auto_selectable() == false`
+- [X] T054 [US2] Wire `crush-sprint` into `crush-cli/Cargo.toml`, and keep `crush plugins list` and `crush inspect` correct in `crush-cli/src/commands/plugins.rs` and `crush-cli/src/commands/inspect.rs`
+- [X] T055 [P] [US2] Add fuzz targets `fuzz_decompress`, `fuzz_roundtrip` and `fuzz_tables` in `crush-sprint/fuzz/fuzz_targets/`
+- [X] T056 [P] [US2] Add suite `sprint` to `.claude/skills/perf/bench.py` and benchmarks in `crush-sprint/benches/codec.rs`
 
 ### Format experiments and freeze
 

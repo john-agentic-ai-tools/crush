@@ -279,6 +279,24 @@ pub trait CompressionAlgorithm: Send + Sync {
         false
     }
 
+    /// Blocks in a compressed `input`, for plugins that store them. `None` means
+    /// the plugin has no such count.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `input` is malformed.
+    fn block_count(&self, input: &[u8]) -> Result<Option<u64>> {
+        let _ = input;
+        Ok(None)
+    }
+
+    /// False keeps this plugin out of automatic selection altogether, so it is
+    /// used only when asked for by name. New codecs stay opted out until their
+    /// gates pass.
+    fn auto_selectable(&self) -> bool {
+        true
+    }
+
     /// Cheap estimate of `input.len() / compressed_len` for this plugin, taken
     /// from samples of `input`. `None` means no estimate is available; a
     /// content-aware plugin is then not selected automatically.

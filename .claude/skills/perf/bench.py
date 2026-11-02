@@ -99,7 +99,7 @@ MICRO_NS = 100_000
 
 # Performance crates and hot-path files: what .claude/hooks/perf-trigger.sh
 # watches. The hook delegates to `changeset --hook`, so this is the only copy.
-PERF_SRC = ["crush-core/src", "crush-parallel/src", "crush-gpu/src", "crush-lz/src"]
+PERF_SRC = ["crush-core/src", "crush-parallel/src", "crush-gpu/src", "crush-lz/src", "crush-sprint/src"]
 HOT_RE = re.compile(
     r"^(crush-core/src/(compression|decompression|plugin/default)\.rs"
     r"|crush-parallel/src/(engine|block|format)\.rs"
@@ -134,11 +134,13 @@ SUITES: dict[str, list[tuple[str, str, str | None]]] = {
         ("crush-core", "compression", r"^decompress_"),
     ],
     "fast-lz": [("crush-lz", "codec", None)],
+    "sprint": [("crush-sprint", "codec", None)],
     "full": [
         ("crush-core", "", None),
         ("crush-parallel", "", None),
         ("crush-gpu", "", None),
         ("crush-lz", "", None),
+        ("crush-sprint", "", None),
     ],
 }
 CRATE_SUITE = {
@@ -146,6 +148,7 @@ CRATE_SUITE = {
     "crush-parallel": "quick-parallel",
     "crush-gpu": "quick-gpu",
     "crush-lz": "fast-lz",
+    "crush-sprint": "sprint",
 }
 # Changed file -> the benchmarks that exercise it: (path regex, package, bench
 # target, criterion filter). First match wins; a file with no row falls back
@@ -169,6 +172,8 @@ CALLGRIND_CASES = [
     (r"^decompress_medium/", "crush-core", "decompress", 1024 * 1024),
     (r"^fast_lz/compress/", "crush-lz", "compress", 4 * 1024 * 1024),
     (r"^fast_lz/decompress/", "crush-lz", "decompress", 4 * 1024 * 1024),
+    (r"^sprint/compress/", "crush-sprint", "compress", 4 * 1024 * 1024),
+    (r"^sprint/decompress/", "crush-sprint", "decompress", 4 * 1024 * 1024),
 ]
 PROFILE_ROWS = 15
 # Criterion's measured loop; anything outside it is the benchmark's setup.

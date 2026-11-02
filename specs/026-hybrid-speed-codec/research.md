@@ -31,10 +31,10 @@ Broader evidence is in [the research report](../../reports/Beating%20zstd%20with
 
 ## R5. Block size
 
-- **Decision (Provisional)**: 4 MiB independent blocks.
-- **Rationale**: Level 3 uses a 2 MiB window. Published data shows about +0.54% size at 4 MB, and offsets can span the whole block.
-- **Overturned by**: The sweep below falling clearly below 3.70, in which case 8 MiB is next. SC-008 must be rechecked if the size moves.
-- **Method**: Split `real` into chunks of 1, 2, 4 and 8 MiB, compress each with `zstd -3 --single-thread`, and sum the sizes. This needs only stock zstd, not a custom build.
+- **Decision**: 4 MiB independent blocks, final as of the 2026-11-01 sweep.
+- **Rationale**: `zstd -3 -T1` on `real` gives 3.675 at 4 MiB against 3.700 whole, 0.7% short. 8 MiB gets to 3.692 but puts SC-008 (5 ms per block) at risk, and halves parallel decode tasks. A larger 8-byte match table closes the gap instead: 2^18 entries reach 3.699 at 4 MiB for 8.5% less compression speed and no decompression cost. Full figures are in `perf/log/2026-11-hybrid-speed-codec.md`.
+- **Overturned by**: The prototype showing it cannot reach 3.70 at 4 MiB within the speed gates, in which case 8 MiB is next, and SC-008 must be rechecked.
+- **Method**: Split `real` into chunks of 1, 2, 4, 8 and 16 MiB, compress each with `zstd -3`, and sum the sizes. Use `-T1`, as the gate does: `--single-thread` reads about 0.7% lower. This needs only stock zstd, not a custom build.
 
 ## R6. Segment model
 
@@ -96,4 +96,4 @@ Broader evidence is in [the research report](../../reports/Beating%20zstd%20with
 
 ## Resolved Unknowns
 
-No NEEDS CLARIFICATION items remain. R5, R6 and R11 are provisional, and each has a named measurement in the delivery order.
+No NEEDS CLARIFICATION items remain. R6 and R11 are provisional, and each has a named measurement in the delivery order.

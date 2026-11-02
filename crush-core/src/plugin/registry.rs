@@ -188,6 +188,9 @@ pub fn list_plugins() -> Vec<PluginMetadata> {
 pub(crate) fn list_plugins_with_awareness() -> Vec<(PluginMetadata, bool)> {
     list_plugins()
         .into_iter()
+        .filter(|m| {
+            get_plugin_by_magic(m.magic_number).is_none_or(CompressionAlgorithm::auto_selectable)
+        })
         .map(|m| {
             let aware = get_plugin_by_magic(m.magic_number)
                 .is_some_and(CompressionAlgorithm::content_aware);

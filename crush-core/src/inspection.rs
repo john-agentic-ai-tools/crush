@@ -11,6 +11,8 @@ pub struct InspectResult {
     pub plugin_name: String,
     pub crc_valid: bool,
     pub metadata: FileMetadata,
+    /// Blocks in the file, for plugins that store them.
+    pub blocks: Option<u64>,
 }
 
 /// Inspects a compressed file and returns metadata about its contents.
@@ -64,6 +66,7 @@ pub fn inspect(input: &[u8]) -> Result<InspectResult> {
             .into());
         }
         let metadata_bytes = &input[payload_start..payload_start + metadata_len];
+        payload_start += metadata_len;
 
         FileMetadata::from_bytes(metadata_bytes)?
     } else {
@@ -77,11 +80,14 @@ pub fn inspect(input: &[u8]) -> Result<InspectResult> {
         ))
     })?;
 
+    let blocks = plugin.block_count(&input[payload_start..]).ok().flatten();
+
     Ok(InspectResult {
         original_size: header.original_size,
         compressed_size: input.len() as u64,
         plugin_name: plugin.name().to_string(),
         crc_valid,
         metadata,
+        blocks,
     })
 }

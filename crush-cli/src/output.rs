@@ -69,6 +69,13 @@ pub fn format_inspect_result(path: &std::path::Path, result: &InspectResult, use
     let _ = stdout.reset();
     let _ = writeln!(&mut stdout, "{}", result.plugin_name);
 
+    if let Some(blocks) = result.blocks {
+        let _ = stdout.set_color(ColorSpec::new().set_fg(Some(Color::Cyan)));
+        let _ = write!(&mut stdout, "  Blocks: ");
+        let _ = stdout.reset();
+        let _ = writeln!(&mut stdout, "{}", blocks);
+    }
+
     let crc_status_color = if result.crc_valid {
         Color::Green
     } else {
@@ -390,6 +397,7 @@ mod tests {
 
     fn sample_inspect_result() -> InspectResult {
         InspectResult {
+            blocks: None,
             original_size: 1000,
             compressed_size: 400,
             plugin_name: "deflate".to_string(),
@@ -438,6 +446,7 @@ mod tests {
     #[test]
     fn test_format_inspect_result_zero_original_size() {
         let result = InspectResult {
+            blocks: None,
             original_size: 0,
             compressed_size: 0,
             plugin_name: "deflate".to_string(),
@@ -453,6 +462,7 @@ mod tests {
     fn test_format_inspect_result_expansion() {
         // File grew (negative reduction)
         let result = InspectResult {
+            blocks: None,
             original_size: 100,
             compressed_size: 150,
             plugin_name: "deflate".to_string(),
@@ -466,6 +476,7 @@ mod tests {
     #[test]
     fn test_format_inspect_result_same_size() {
         let result = InspectResult {
+            blocks: None,
             original_size: 100,
             compressed_size: 100,
             plugin_name: "deflate".to_string(),
@@ -479,6 +490,7 @@ mod tests {
     #[test]
     fn test_format_inspect_result_no_mtime() {
         let result = InspectResult {
+            blocks: None,
             original_size: 1000,
             compressed_size: 500,
             plugin_name: "deflate".to_string(),
@@ -546,6 +558,7 @@ mod tests {
     #[test]
     fn test_format_inspect_csv_zero_original() {
         let result = InspectResult {
+            blocks: None,
             original_size: 0,
             compressed_size: 0,
             plugin_name: "deflate".to_string(),
