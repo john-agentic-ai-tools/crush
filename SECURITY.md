@@ -11,4 +11,4 @@ This product is still in early development. Any installations of the product wil
 
 ## Reporting a Vulnerability
 
-If you find a security vulnerability please send message to <druginsightaiconduct@atomicmail.io>
+If you find a security vulnerability please send message to <crushcomp@atomicmail.io>
