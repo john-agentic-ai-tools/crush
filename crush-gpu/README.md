@@ -53,20 +53,22 @@ Key design principles:
 **Test Environment:**
 
 - GPU: NVIDIA GeForce RTX 3060 Ti (8 GB VRAM, 38 SMs)
-- Rust: 1.93.1 (stable), release mode
+- Rust: 1.99.1, release mode, commit `b464204` (2026-10-29)
 
 #### Benchmark Results (Criterion, wgpu Vulkan backend)
 
 | Corpus | GPU Throughput | CPU Throughput | Winner |
 |--------|---------------|----------------|--------|
-| log-1MB | 141 MiB/s | 319 MiB/s | CPU (small data) |
-| binary-1MB | 85 MiB/s | 126 MiB/s | CPU (small data) |
-| mixed-1MB | 87 MiB/s | 176 MiB/s | CPU (small data) |
-| mixed-10MB | **355 MiB/s** | 179 MiB/s | **GPU 1.98x** |
+| log-1MB | 153 MB/s | 348 MB/s | CPU (small data) |
+| binary-1MB | 94 MB/s | 148 MB/s | CPU (small data) |
+| mixed-1MB | 94 MB/s | 199 MB/s | CPU (small data) |
+| mixed-10MB | **329 MB/s** | 210 MB/s | **GPU 1.57x** |
 
 GPU decompression outperforms CPU at larger data sizes where the per-tile dispatch overhead is amortized. The crossover point is around 2-4 MB.
 
 #### Real-World Large File Performance (1.8 GB compressed, ~62K tiles)
+
+An earlier measurement, on Rust 1.93.1, not repeated since.
 
 | Backend | Throughput | vs CPU |
 |---------|-----------|--------|

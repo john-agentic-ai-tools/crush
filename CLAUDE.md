@@ -240,27 +240,16 @@ Test tasks are marked with story labels and must be written before implementatio
 
 This is a Rust workspace project for the **Crush** high-performance parallel compression library.
 
-### Expected Workspace Structure (Post-Implementation)
+### Workspace Structure
 
 ```
 crush/
-├── crush-core/          # Core library crate
-│   ├── src/
-│   │   ├── lib.rs
-│   │   ├── engine.rs    # Compression engine
-│   │   ├── stream.rs    # Streaming I/O
-│   │   ├── block.rs     # Block processing
-│   │   ├── pool.rs      # Memory pool
-│   │   └── plugins/     # Plugin system
-│   └── Cargo.toml
-├── crush-cli/           # CLI wrapper crate
-│   ├── src/
-│   │   ├── main.rs
-│   │   ├── args.rs      # clap argument parsing
-│   │   └── signal.rs    # Signal handling
-│   └── Cargo.toml
-├── benches/             # Criterion benchmarks
-├── fuzz/                # Fuzz testing (cargo-fuzz)
+├── crush-core/          # Core library and plugin system
+├── crush-parallel/      # Parallel DEFLATE engine, CRSH block format
+├── crush-lz/            # fast-lz plugin
+├── crush-gpu/           # GPU compression engine
+├── crush-cli/           # CLI wrapper
+├── perf/                # Comparisons, baselines, performance logs
 ├── specs/               # SpecKit feature specs
 ├── Cargo.toml           # Workspace manifest
 └── CLAUDE.md
