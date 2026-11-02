@@ -30,7 +30,8 @@ at any core count.
   in safe Rust. Use it with `crush compress --plugin fast-lz`, or let
   `--level fast` choose it when a quick sample shows the data compresses well.
 - **`perf/compare.py` covers zstd and lz4** alongside gzip and pigz, and can
-  interleave tools and compare several builds of crush.
+  interleave tools and compare several builds of crush. It also reports
+  interquartile range and a log corpus.
 - **`perf/chart.py` charts the results** as speed against ratio, with an
   interactive page and SVGs for the README.
 - **`/perf`**, a benchmark-driven workflow for checking changes and diagnosing
@@ -72,30 +73,32 @@ Ratios are unchanged.
 | repetitive text | 854 → 873 | 2,072 → 2,173 |
 | random | 110 → 669 | 1,059 → 1,795 |
 
-Against other tools on real files, same setup, commit 5964e93 (gzip 1.10,
-pigz 2.8, zstd 1.5.7, lz4 1.10.0):
+Against other tools on real files, 128 MiB, in tmpfs, median of 7 alternating
+runs, commit 6f7c3d8 (gzip 1.10, pigz 2.8, zstd 1.5.7, lz4 1.10.0):
 
 | All cores | Compress | Decompress | Ratio |
 |---|---|---|---|
-| `crush` | 989 | 3,472 | 3.503 |
-| `crush --plugin fast-lz` | 1,823 | 1,799 | 2.230 |
-| `zstd -1` | 2,303 | 1,300 | 3.233 |
-| `zstd -3` | 1,421 | 1,215 | 3.700 |
-| `lz4 -1` | 2,049 | 2,300 | 2.295 |
-| `pigz -6` | 611 | 343 | 3.481 |
+| `crush` | 1,099 | 4,490 | 3.503 |
+| `crush --plugin fast-lz` | 2,017 | 1,924 | 2.230 |
+| `zstd -1` | 2,872 | 1,332 | 3.233 |
+| `zstd -3` | 1,697 | 1,237 | 3.700 |
+| `lz4 -1` | 2,095 | 2,476 | 2.295 |
+| `pigz -6` | 627 | 338 | 3.481 |
 
-- On real files, `crush` is the fastest decompressor at all cores, of the
-  configurations measured. `fast-lz` is the fastest at one core. At 4 cores
-  `lz4 -9` leads narrowly, 2,382 to 2,334 MB/s.
+- On real files, `crush` is the fastest decompressor at 4 and all cores, of the
+  configurations measured. `fast-lz` is the fastest at one core.
 - `zstd` remains ahead on compression speed at its ratio: `zstd -3` is both
   faster and smaller than `crush` when compressing.
-- `fast-lz` trails `lz4 -1` through the CLI at 4 and all cores (0.80x and 0.89x).
-  On one core the two are level.
+- `fast-lz` trails `lz4 -1` through the CLI at 4 cores (0.86x) and all cores
+  (0.96x). On one core it leads, 624 to 604 MB/s.
 - At all cores, `fast-lz` on incompressible data is 4-7% slower than its old
   single-threaded path, though at 4 cores it is faster.
 
-Multi-core runs on this machine vary, with spreads of up to about 40% around
-these medians. `perf/comparisons/chart.html` has every dataset and core count.
+These figures replace an earlier comparison from a harness that made `crush`
+overwrite its old output while `zstd` truncated its own, which cost `crush`
+about 7-10% on decompression. Every tool now writes a fresh file. Interquartile
+ranges on these rows are under 8%, except `zstd -1` compress at 22%.
+`perf/comparisons/chart.html` has every dataset and core count.
 
 ## [2026-10-27]
 

@@ -53,10 +53,12 @@ is a `REGRESSION`, which fails the constitution's benchmark gate.
 
 `comparisons/<machine>.json` holds the latest `perf/compare.py` run for one
 machine: crush, gzip, pigz, zstd (`-1`, `-3`), and lz4 (`-1`, `-9`) on 128 MB
-of text, repetitive, random, and real-file data (a tar of `/usr/lib` and
-`/usr/share`), pinned with `taskset` to 1 CPU, 4 CPUs on distinct physical
-cores, and all CPUs. It records the median of 5 runs, the compression ratio,
-and the tool versions. gzip and pigz are the constitution's external
+of text, repetitive, random, real-file (a tar of `/usr/lib` and `/usr/share`)
+and log data, pinned with `taskset` to 1 CPU, 4 CPUs on distinct physical
+cores, and all CPUs. It records the median of 5 runs, the range and
+interquartile range, the compression ratio, and the tool versions. Each tool
+gets one uncounted run first, and writes fresh output files. Quote the
+interquartile range: one stray run sets the plain range. gzip and pigz are the constitution's external
 reference point ("within 5% of gzip single-threaded, match pigz on 4+
 cores"); zstd and lz4 are optional (skipped when not on PATH) and use their
 own formats. Linux only; on Windows run it in WSL with crush built there.
@@ -76,6 +78,13 @@ python3 perf/compare.py
 
 These are wall-clock CLI numbers including file I/O and process start, so
 they aren't comparable with the criterion baselines above.
+
+A win under 10% needs `--builds`, so pass separately built binaries when one is
+close. Tests: `python perf/test_compare.py`.
+
+I/O is in tmpfs, which is not neutral. Writing to tmpfs is unusually cheap for
+tools that call `write`, and allocating a mapped output there is unusually dear,
+so check a close result on a disk file system too.
 
 To chart the newest results as speed against ratio:
 

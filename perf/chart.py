@@ -31,6 +31,7 @@ DATASETS = {
     "real": "real files",
     "text": "base64 text",
     "repetitive": "repetitive text",
+    "log": "log lines",
     "random": "random data",
 }
 CORES = {"all": "all cores", "4": "4 cores", "1": "1 core"}
