@@ -71,10 +71,13 @@ fn bench_codec(c: &mut Criterion) {
             let mut output = vec![0u8; BLOCK_SIZE];
             b.iter(|| {
                 for (payload, block) in packed.iter().zip(data.chunks(BLOCK_SIZE)) {
-                    if let Some(payload) = payload {
-                        codec
-                            .decompress_block(&mut decoder, payload, &mut output[..block.len()])
-                            .expect("decompress");
+                    let output = &mut output[..block.len()];
+                    match payload {
+                        Some(payload) => codec
+                            .decompress_block(&mut decoder, payload, output)
+                            .expect("decompress"),
+                        // The engine copies a stored block.
+                        None => output.copy_from_slice(block),
                     }
                 }
                 black_box(output[0])

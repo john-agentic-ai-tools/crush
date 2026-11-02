@@ -25,12 +25,16 @@ const SHORT_LOG: u32 = 16;
 /// Below this, Huffman's table costs more than it saves.
 const MIN_HUFFMAN_LITERALS: usize = 64;
 /// One byte in this many feeds the segment boundary search.
-const SPLIT_SAMPLE: usize = 8;
+const SPLIT_SAMPLE: usize = 32;
+/// Low bits ignored by the search. So few samples over 256 buckets look like
+/// a change on random data, and every false boundary costs a set of tables.
+const SPLIT_SHIFT: u32 = 2;
+const SPLIT_BUCKETS: usize = 256 >> SPLIT_SHIFT;
 /// Bytes compared at a time by the boundary search.
 const SPLIT_CHUNK: usize = 8192;
-/// Total variation between a chunk and its segment that ends the segment, of
-/// a possible 2. Tuned on `real`, where lower costs more in tables than it saves.
-const SPLIT_DISTANCE: f64 = 0.7;
+/// Total variation between a chunk and its segment that ends the segment, in
+/// thousandths of a possible 2. Noise reaches about 0.5 at this sample size.
+const SPLIT_DISTANCE: u64 = 650;
 /// No boundary before this many bytes.
 const MIN_SPLIT: usize = 16_384;
 /// Bytes one short literal copy moves.
@@ -235,22 +239,22 @@ impl Encoder {
 /// like the segment so far, so each entropy table fits its data.
 fn segment_end(block: &[u8], start: usize) -> usize {
     let limit = (start + MAX_SEGMENT_SIZE).min(block.len());
-    let mut total = [0u32; 256];
-    let mut count = 0u32;
+    let mut total = [0u32; SPLIT_BUCKETS];
+    let mut count = 0u64;
     for (i, part) in block[start..limit].chunks(SPLIT_CHUNK).enumerate() {
-        let mut current = [0u32; 256];
+        let mut current = [0u32; SPLIT_BUCKETS];
         for &byte in part.iter().step_by(SPLIT_SAMPLE) {
-            current[usize::from(byte)] += 1;
+            current[usize::from(byte >> SPLIT_SHIFT)] += 1;
         }
-        let part_count: u32 = current.iter().sum();
+        let part_count = part.len().div_ceil(SPLIT_SAMPLE) as u64;
         if count != 0 && (i + 1) * SPLIT_CHUNK > MIN_SPLIT {
-            let (n, m) = (f64::from(count), f64::from(part_count));
-            let distance: f64 = total
+            // Total variation, cross-multiplied to stay in integers.
+            let distance: u64 = total
                 .iter()
                 .zip(&current)
-                .map(|(&t, &c)| (f64::from(t) / n - f64::from(c) / m).abs())
+                .map(|(&t, &c)| (u64::from(t) * part_count).abs_diff(u64::from(c) * count))
                 .sum();
-            if distance > SPLIT_DISTANCE {
+            if distance * 1000 > SPLIT_DISTANCE * count * part_count {
                 return start + i * SPLIT_CHUNK;
             }
         }
@@ -366,5 +370,47 @@ impl BlockCodec for SprintCodec {
         output: &mut [u8],
     ) -> Result<()> {
         decompress_block(decoder, payload, output)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn noise(len: usize, mut x: u64) -> Vec<u8> {
+        (0..len)
+            .map(|_| {
+                x ^= x << 13;
+                x ^= x >> 7;
+                x ^= x << 17;
+                x as u8
+            })
+            .collect()
+    }
+
+    /// Every false boundary costs tables, and random data has nothing to gain.
+    #[test]
+    fn noise_has_no_boundaries() {
+        let block = noise(BLOCK_SIZE, 0x9E37_79B9_7F4A_7C15);
+        let mut start = 0;
+        while start < block.len() {
+            let end = segment_end(&block, start);
+            assert!(end == block.len() || end - start == MAX_SEGMENT_SIZE);
+            start = end;
+        }
+    }
+
+    #[test]
+    fn a_change_of_content_ends_the_segment() {
+        let mut block = vec![b'a'; 3 * SPLIT_CHUNK];
+        block.extend(noise(2 * MAX_SEGMENT_SIZE, 7));
+        assert_eq!(segment_end(&block, 0), 3 * SPLIT_CHUNK);
+    }
+
+    #[test]
+    fn no_boundary_before_the_minimum() {
+        let mut block = vec![b'a'; SPLIT_CHUNK];
+        block.extend(noise(MAX_SEGMENT_SIZE, 7));
+        assert!(segment_end(&block, 0) >= MIN_SPLIT);
     }
 }

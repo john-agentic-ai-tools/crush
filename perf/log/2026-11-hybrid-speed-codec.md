@@ -329,4 +329,19 @@ Through the CLI against `zstd -3 -T<n>`, ABBA, 7 reps, 128 MiB in tmpfs, median 
 
 Fuzz on this state: `fuzz_tables`, `fuzz_decompress` and `fuzz_roundtrip`, 50,000 runs each, clean. `fuzz_tables` finishes in under a second, so it is probably rejecting most inputs early.
 
+### Boundary search cost
+
+`/perf check` against 5110f41 confirmed the first boundary search slowed random data by 12.2% (1,715 to 1,528 MB/s, CI +10.1% to +14.4%, full run). Profiles put 98.5% of the added instructions in `segment_end`. Skipping the search on data that looks incompressible was rejected, because an early sample can miss a compressible remainder. The search now samples 1 byte in 32, in 64 buckets, with an integer distance. In memory, one core, MB/s:
+
+| Sample, buckets, distance | Ratio | `real` compress | `random` compress |
+|---|---|---|---|
+| 1/8, 256, 0.70 (was) | 3.663 | 246 | 1,678 |
+| 1/32, 256, 0.80 | 3.664 | 240 | 714 |
+| 1/32, 64, 0.50 | 3.658 | 236 | 1,449 |
+| 1/32, 64, 0.60 | 3.663 | 247 | 1,751 |
+| 1/32, 64, 0.65 (kept) | 3.662 | 248 | 1,804 |
+| 1/32, 64, 0.80 | 3.658 | 243 | 1,802 |
+
+At 1/32 sampling, 256 buckets split random data falsely, and 64 buckets at 0.50 still do.
+
 ## Gates
