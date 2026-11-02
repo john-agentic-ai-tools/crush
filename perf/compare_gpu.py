@@ -17,6 +17,12 @@ back to the CPU, because the timing would then not describe the GPU.
 --corpus holds text.bin, repetitive.bin, random.bin, real.bin and log.bin, copied
 from the /dev/shm/crush-compare directory compare.py creates, so both
 environments read identical files.
+
+To compare two builds on decompression, alternating them (A B B A ...) on one
+compressed file:
+
+    python perf/compare_gpu.py --crush NEW --baseline OLD --corpus DIR --work DIR \\
+        --data real --backend cuda --reps 10
 """
 import argparse
 import datetime
@@ -133,6 +139,41 @@ def measure(a, data):
     return rows
 
 
+def compare_builds(a):
+    src = os.path.join(a.corpus, f"{a.data}.bin")
+    size = os.path.getsize(src)
+    packed = os.path.join(a.work, "out.crush")
+    plain = os.path.join(a.work, "out.raw")
+    subprocess.run([a.crush, "compress", "--plugin", "gpu-deflate", src, "-o", packed, "-f"],
+                   check=True, capture_output=True)
+    args = ["--gpu-backend", a.backend]
+    expected = "CUDA" if a.backend == "cuda" else "wgpu"
+    for build in (a.baseline, a.crush):
+        remove(plain)
+        log = subprocess.run([build, "-v", "decompress", *args, packed, "-o", plain, "-f"],
+                             check=True, capture_output=True, text=True, errors="replace")
+        problem = backend_check(log.stdout + log.stderr, expected)
+        if problem:
+            sys.exit(f"{build}: {problem}")
+        if not filecmp.cmp(src, plain, shallow=False):
+            sys.exit(f"{build}: output differs from the input")
+
+    def once(build):
+        remove(plain)
+        return timed([build, "decompress", *args, packed, "-o", plain, "-f"])
+
+    base, new = [], []
+    for i in range(a.reps * 2):
+        if i % 4 in (0, 3):
+            base.append(once(a.baseline))
+        else:
+            new.append(once(a.crush))
+    old_speed, old_iqr = stats(base, size)
+    new_speed, new_iqr = stats(new, size)
+    print(f"{a.data}, {a.backend}: baseline {old_speed} MB/s (IQR {old_iqr}%), "
+          f"new {new_speed} MB/s (IQR {new_iqr}%), {new_speed / old_speed - 1:+.1%}")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--crush", required=True, help="built with --features cuda")
@@ -140,10 +181,16 @@ def main():
     ap.add_argument("--work", required=True, help="directory for outputs, on disk")
     ap.add_argument("--reps", type=int, default=7)
     ap.add_argument("--out", default=OUT)
+    ap.add_argument("--baseline", help="compare --crush against this build")
+    ap.add_argument("--data", default="real", choices=DATASETS, help="with --baseline")
+    ap.add_argument("--backend", default="cuda", choices=("cuda", "wgpu"), help="with --baseline")
     a = ap.parse_args()
     if sys.platform != "win32":
         sys.exit("compare_gpu.py measures native Windows; use compare.py elsewhere")
     os.makedirs(a.work, exist_ok=True)
+    if a.baseline:
+        compare_builds(a)
+        return
 
     results = [row for data in DATASETS for row in measure(a, data)]
     gpu = subprocess.run(["nvidia-smi", "--query-gpu=name,driver_version", "--format=csv,noheader"],

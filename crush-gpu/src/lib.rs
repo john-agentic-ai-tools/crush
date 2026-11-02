@@ -120,6 +120,24 @@ impl CompressionAlgorithm for GpuDeflatePlugin {
         engine::decompress(input, &config, &cancel_flag)
     }
 
+    fn decompressed_len(&self, input: &[u8]) -> Result<Option<usize>> {
+        engine::decompressed_len(input).map(Some)
+    }
+
+    fn decompress_into(
+        &self,
+        input: &[u8],
+        cancel_flag: Arc<AtomicBool>,
+        output: &mut [u8],
+    ) -> Result<()> {
+        let plugin_cfg = get_config();
+        let config = engine::EngineConfig {
+            force_cpu: plugin_cfg.force_cpu,
+            ..engine::EngineConfig::default()
+        };
+        engine::decompress_into(input, &config, &cancel_flag, output)
+    }
+
     fn detect(&self, file_header: &[u8]) -> bool {
         // CGPU files start with the 4-byte magic [0x43, 0x47, 0x50, 0x55]
         file_header.len() >= 4 && file_header[0..4] == format::CGPU_MAGIC

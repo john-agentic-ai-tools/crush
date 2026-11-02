@@ -22,6 +22,10 @@ use crate::gdeflate;
 // EngineConfig
 // ============================================================================
 
+/// Most a DEFLATE stream can expand, rounded up: a 258-byte match costs at least
+/// 2 bits, about 1032 to 1. Rejects archives that claim more before allocating.
+const MAX_EXPANSION: u64 = 2048;
+
 /// Runtime configuration for the GPU compression engine.
 #[derive(Debug, Clone)]
 pub struct EngineConfig {
@@ -198,28 +202,49 @@ fn encode_tile<'a>(
 /// * [`CrushError::InvalidFormat`] if the archive header/footer is invalid.
 /// * [`CrushError::Cancelled`] if `cancel` is set during processing.
 pub fn decompress(input: &[u8], config: &EngineConfig, cancel: &AtomicBool) -> Result<Vec<u8>> {
-    if input.len() < GpuFileHeader::SIZE + GpuFileFooter::SIZE {
-        return try_decompress_empty_archive(input);
-    }
+    let mut output = vec![0; decompressed_len(input)?];
+    decompress_into(input, config, cancel, &mut output)?;
+    Ok(output)
+}
 
-    // ── Footer ───────────────────────────────────────────────────────
-    let footer_start = input.len() - GpuFileFooter::SIZE;
-    let footer_bytes: &[u8; GpuFileFooter::SIZE] = input[footer_start..]
-        .try_into()
-        .map_err(|_| CrushError::InvalidFormat("footer truncated".to_owned()))?;
-    let footer = GpuFileFooter::from_bytes(footer_bytes)?;
+/// Exact decompressed length of a GPU-format archive.
+///
+/// # Errors
+///
+/// * [`CrushError::InvalidFormat`] if the archive header, footer or tile sizes
+///   are invalid.
+pub fn decompressed_len(input: &[u8]) -> Result<usize> {
+    let entries = parse_archive(input)?.unwrap_or_default();
+    let total: u64 = entries.iter().map(|e| u64::from(e.uncompressed_size)).sum();
+    usize::try_from(total).map_err(|_| {
+        CrushError::InvalidFormat("uncompressed size too large for platform".to_owned())
+    })
+}
 
-    // ── File header ──────────────────────────────────────────────────
-    let hdr_bytes: &[u8; GpuFileHeader::SIZE] = input[..GpuFileHeader::SIZE]
-        .try_into()
-        .map_err(|_| CrushError::InvalidFormat("header truncated".to_owned()))?;
-    let header = GpuFileHeader::from_bytes(hdr_bytes)?;
-
-    if header.tile_count == 0 {
-        return Ok(Vec::new());
-    }
-
-    let entries = read_tile_index(input, &footer, footer_start)?;
+/// Decompress a GPU-format archive into `output`, whose length must be
+/// [`decompressed_len`].
+///
+/// Attempts GPU decompression first. If no GPU is available or GPU decoding
+/// fails, every tile is decoded again on the CPU.
+///
+/// # Errors
+///
+/// * [`CrushError::InvalidFormat`] if the archive is invalid, or `output` has
+///   the wrong length. `output` may then hold partial data.
+/// * [`CrushError::Cancelled`] if `cancel` is set during processing.
+pub fn decompress_into(
+    input: &[u8],
+    config: &EngineConfig,
+    cancel: &AtomicBool,
+    output: &mut [u8],
+) -> Result<()> {
+    let Some(entries) = parse_archive(input)? else {
+        return check_output_len(0, output);
+    };
+    check_output_len(
+        entries.iter().map(|e| u64::from(e.uncompressed_size)).sum(),
+        output,
+    )?;
 
     // ── Try GPU decompression first ──────────────────────────────────
     if config.force_cpu {
@@ -240,19 +265,7 @@ pub fn decompress(input: &[u8], config: &EngineConfig, cancel: &AtomicBool) -> R
                     backend.name(),
                     entries.len()
                 );
-                match decompress_tiles_gpu(input, &header, &entries, config, cancel, &*backend) {
-                    Ok(output) => {
-                        info!(
-                            output_bytes = output.len(),
-                            "GPU decompression succeeded ({} bytes)",
-                            output.len()
-                        );
-                        return Ok(output);
-                    }
-                    Err(e) => {
-                        warn!("GPU decompression failed, falling back to CPU: {e}");
-                    }
-                }
+                return decode_with_fallback(input, &entries, config, cancel, &*backend, output);
             }
             Ok(None) => {
                 info!("No GPU backend available, using CPU");
@@ -270,18 +283,113 @@ pub fn decompress(input: &[u8], config: &EngineConfig, cancel: &AtomicBool) -> R
         "Starting CPU decompression for {} tiles",
         entries.len()
     );
-    decompress_tiles_cpu(input, &header, &entries, config, cancel)
+    decompress_tiles_cpu(input, &entries, config, cancel, output)
+}
+
+/// Decode on `backend`, and on any failure decode every tile again on the CPU,
+/// which overwrites whatever the GPU attempt left in `output`.
+fn decode_with_fallback(
+    input: &[u8],
+    entries: &[TileIndexEntry],
+    config: &EngineConfig,
+    cancel: &AtomicBool,
+    backend: &dyn crate::backend::ComputeBackend,
+    output: &mut [u8],
+) -> Result<()> {
+    match decompress_tiles_gpu(input, entries, config, cancel, backend, output) {
+        Ok(()) => {
+            info!(
+                output_bytes = output.len(),
+                "GPU decompression succeeded ({} bytes)",
+                output.len()
+            );
+            Ok(())
+        }
+        Err(e) => {
+            warn!("GPU decompression failed, falling back to CPU: {e}");
+            decompress_tiles_cpu(input, entries, config, cancel, output)
+        }
+    }
+}
+
+fn check_output_len(expected: u64, output: &[u8]) -> Result<()> {
+    if output.len() as u64 == expected {
+        Ok(())
+    } else {
+        Err(CrushError::InvalidFormat(format!(
+            "output holds {} bytes, archive decodes to {expected}",
+            output.len()
+        )))
+    }
+}
+
+/// Parse and validate an archive. `None` means it has no tiles.
+fn parse_archive(input: &[u8]) -> Result<Option<Vec<TileIndexEntry>>> {
+    if input.len() < GpuFileHeader::SIZE + GpuFileFooter::SIZE {
+        return try_decompress_empty_archive(input).map(|()| None);
+    }
+
+    // ── Footer ───────────────────────────────────────────────────────
+    let footer_start = input.len() - GpuFileFooter::SIZE;
+    let footer_bytes: &[u8; GpuFileFooter::SIZE] = input[footer_start..]
+        .try_into()
+        .map_err(|_| CrushError::InvalidFormat("footer truncated".to_owned()))?;
+    let footer = GpuFileFooter::from_bytes(footer_bytes)?;
+
+    // ── File header ──────────────────────────────────────────────────
+    let hdr_bytes: &[u8; GpuFileHeader::SIZE] = input[..GpuFileHeader::SIZE]
+        .try_into()
+        .map_err(|_| CrushError::InvalidFormat("header truncated".to_owned()))?;
+    let header = GpuFileHeader::from_bytes(hdr_bytes)?;
+
+    if header.tile_count == 0 {
+        return Ok(None);
+    }
+
+    let entries = read_tile_index(input, &footer, footer_start)?;
+    validate_sizes(&header, &entries, input.len())?;
+    Ok(Some(entries))
+}
+
+/// Every size is checked here, because the caller allocates from them.
+fn validate_sizes(
+    header: &GpuFileHeader,
+    entries: &[TileIndexEntry],
+    archive_len: usize,
+) -> Result<()> {
+    let mut total = 0u64;
+    for (i, entry) in entries.iter().enumerate() {
+        if entry.uncompressed_size > header.tile_size {
+            return Err(CrushError::InvalidFormat(format!(
+                "tile {i} holds {} bytes, more than the tile size {}",
+                entry.uncompressed_size, header.tile_size
+            )));
+        }
+        total += u64::from(entry.uncompressed_size);
+    }
+    if total != header.uncompressed_size {
+        return Err(CrushError::InvalidFormat(format!(
+            "tiles hold {total} bytes, header says {}",
+            header.uncompressed_size
+        )));
+    }
+    if total > (archive_len as u64).saturating_mul(MAX_EXPANSION) {
+        return Err(CrushError::InvalidFormat(format!(
+            "{total} bytes cannot come from a {archive_len}-byte archive"
+        )));
+    }
+    Ok(())
 }
 
 /// Attempt to parse an undersized archive as an empty archive.
-fn try_decompress_empty_archive(input: &[u8]) -> Result<Vec<u8>> {
+fn try_decompress_empty_archive(input: &[u8]) -> Result<()> {
     if input.len() == GpuFileHeader::SIZE + TileIndexHeader::SIZE + GpuFileFooter::SIZE {
         let hdr_bytes: &[u8; GpuFileHeader::SIZE] = input[..GpuFileHeader::SIZE]
             .try_into()
             .map_err(|_| CrushError::InvalidFormat("header truncated".to_owned()))?;
         let header = GpuFileHeader::from_bytes(hdr_bytes)?;
         if header.tile_count == 0 {
-            return Ok(Vec::new());
+            return Ok(());
         }
     }
     Err(CrushError::InvalidFormat(
@@ -329,52 +437,80 @@ fn read_tile_index(
 /// CPU-fallback decompression of all tiles.
 fn decompress_tiles_cpu(
     input: &[u8],
-    header: &GpuFileHeader,
     entries: &[TileIndexEntry],
     config: &EngineConfig,
     cancel: &AtomicBool,
-) -> Result<Vec<u8>> {
-    let uncompressed_total = usize::try_from(header.uncompressed_size).map_err(|_| {
-        CrushError::InvalidFormat("uncompressed size too large for platform".to_owned())
-    })?;
-    let mut output = Vec::with_capacity(uncompressed_total);
-
-    for (i, entry) in entries.iter().enumerate() {
+    output: &mut [u8],
+) -> Result<()> {
+    let slots = tile_slots(entries, output);
+    for (i, (entry, slot)) in entries.iter().zip(slots).enumerate() {
         if cancel.load(Ordering::Relaxed) {
             return Err(CrushError::Cancelled);
         }
 
         let tile_data = read_and_decompress_tile(input, entry, i, config.sub_stream_count)?;
-
-        if config.enable_checksums && entry.checksum != 0 {
-            let mut h = Hasher::new();
-            h.update(&tile_data);
-            let actual = h.finalize();
-            if actual != entry.checksum {
-                return Err(CrushError::ChecksumMismatch {
-                    block_index: u64::try_from(i)
-                        .map_err(|e| PluginError::OperationFailed(e.to_string()))?,
-                    expected: entry.checksum,
-                    actual,
-                });
-            }
-        }
-
-        output.extend_from_slice(&tile_data);
+        place_tile(&tile_data, slot, entry, i, config)?;
     }
 
-    Ok(output)
+    Ok(())
 }
 
-/// GPU decompression of all tiles via a [`ComputeBackend`].
+/// Split `output` into one slice per tile. Its length has been checked against
+/// `entries`.
+fn tile_slots<'a>(entries: &[TileIndexEntry], mut output: &'a mut [u8]) -> Vec<&'a mut [u8]> {
+    entries
+        .iter()
+        .map(|entry| {
+            let (slot, rest) =
+                std::mem::take(&mut output).split_at_mut(entry.uncompressed_size as usize);
+            output = rest;
+            slot
+        })
+        .collect()
+}
+
+/// Check one decoded tile and copy it into place.
+fn place_tile(
+    tile: &[u8],
+    slot: &mut [u8],
+    entry: &TileIndexEntry,
+    index: usize,
+    config: &EngineConfig,
+) -> Result<()> {
+    if tile.len() != slot.len() {
+        return Err(CrushError::InvalidFormat(format!(
+            "tile {index} decoded to {} bytes, expected {}",
+            tile.len(),
+            slot.len()
+        )));
+    }
+    if config.enable_checksums && entry.checksum != 0 {
+        let mut h = Hasher::new();
+        h.update(tile);
+        let actual = h.finalize();
+        if actual != entry.checksum {
+            return Err(CrushError::ChecksumMismatch {
+                block_index: u64::try_from(index)
+                    .map_err(|e| PluginError::OperationFailed(e.to_string()))?,
+                expected: entry.checksum,
+                actual,
+            });
+        }
+    }
+    slot.copy_from_slice(tile);
+    Ok(())
+}
+
+/// Decompress tiles on the GPU. Stored tiles need no decoding, so they stay on
+/// the CPU, and an archive with nothing else never reaches the backend.
 fn decompress_tiles_gpu(
     input: &[u8],
-    header: &GpuFileHeader,
     entries: &[TileIndexEntry],
     config: &EngineConfig,
     cancel: &AtomicBool,
     backend: &dyn crate::backend::ComputeBackend,
-) -> Result<Vec<u8>> {
+    output: &mut [u8],
+) -> Result<()> {
     // Build CompressedTile structs from the archive entries.
     debug!(
         tile_count = entries.len(),
@@ -451,36 +587,29 @@ fn decompress_tiles_gpu(
         dispatch_elapsed.as_secs_f64() * 1000.0
     );
 
-    // Validate checksums and assemble output.
-    let uncompressed_total = usize::try_from(header.uncompressed_size).map_err(|_| {
-        CrushError::InvalidFormat("uncompressed size too large for platform".to_owned())
-    })?;
-    let mut output = Vec::with_capacity(uncompressed_total);
+    if decompressed.len() != tiles.len() {
+        return Err(PluginError::OperationFailed(format!(
+            "GPU returned {} tiles for {}",
+            decompressed.len(),
+            tiles.len()
+        ))
+        .into());
+    }
+
+    // Validate checksums and place each tile.
     let mut from_gpu = decompressed.iter();
-    for (i, (raw, entry)) in stored.iter().zip(entries.iter()).enumerate() {
+    let slots = tile_slots(entries, output);
+    for (i, ((raw, entry), slot)) in stored.iter().zip(entries).zip(slots).enumerate() {
         let tile_data: &[u8] = match raw {
             Some(raw) => raw,
             None => from_gpu.next().ok_or_else(|| {
                 PluginError::OperationFailed(format!("GPU returned no output for tile {i}"))
             })?,
         };
-        if config.enable_checksums && entry.checksum != 0 {
-            let mut h = Hasher::new();
-            h.update(tile_data);
-            let actual = h.finalize();
-            if actual != entry.checksum {
-                return Err(CrushError::ChecksumMismatch {
-                    block_index: u64::try_from(i)
-                        .map_err(|e| PluginError::OperationFailed(e.to_string()))?,
-                    expected: entry.checksum,
-                    actual,
-                });
-            }
-        }
-        output.extend_from_slice(tile_data);
+        place_tile(tile_data, slot, entry, i, config)?;
     }
 
-    Ok(output)
+    Ok(())
 }
 
 /// Read a single tile from the archive and decompress it.
@@ -664,10 +793,23 @@ mod tests {
     struct FakeBackend {
         info: GpuInfo,
         received: Mutex<Vec<usize>>,
+        fault: Fault,
+    }
+
+    #[derive(Clone, Copy, PartialEq)]
+    enum Fault {
+        None,
+        WrongBytes,
+        TooFewTiles,
+        ShortTile,
     }
 
     impl FakeBackend {
         fn new() -> Self {
+            Self::faulty(Fault::None)
+        }
+
+        fn faulty(fault: Fault) -> Self {
             Self {
                 info: GpuInfo {
                     name: "fake".to_owned(),
@@ -676,6 +818,7 @@ mod tests {
                     api_backend: "fake".to_owned(),
                 },
                 received: Mutex::new(Vec::new()),
+                fault,
             }
         }
 
@@ -707,13 +850,24 @@ mod tests {
             _cancel: &AtomicBool,
         ) -> Result<Vec<Vec<u8>>> {
             self.received.lock().unwrap().push(tiles.len());
-            tiles
+            let mut decoded = tiles
                 .iter()
                 .map(|t| {
                     gdeflate::gdeflate_decompress_tile(&t.data, t.uncompressed_size as usize)
                         .or_else(|_| Ok(vec![0; t.uncompressed_size as usize]))
                 })
-                .collect()
+                .collect::<Result<Vec<_>>>()?;
+            match self.fault {
+                Fault::None => {}
+                Fault::WrongBytes => decoded[0][0] ^= 0xff,
+                Fault::TooFewTiles => {
+                    decoded.pop();
+                }
+                Fault::ShortTile => {
+                    decoded[0].pop();
+                }
+            }
+            Ok(decoded)
         }
 
         fn release(&self) {}
@@ -756,11 +910,20 @@ mod tests {
     ) -> Result<Vec<u8>> {
         let cancel = AtomicBool::new(false);
         let archive = compress(original, config, &cancel)?;
-        let footer_start = archive.len() - GpuFileFooter::SIZE;
-        let footer = GpuFileFooter::from_bytes(archive[footer_start..].try_into().unwrap())?;
-        let header = GpuFileHeader::from_bytes(archive[..GpuFileHeader::SIZE].try_into().unwrap())?;
-        let entries = read_tile_index(&archive, &footer, footer_start)?;
-        decompress_tiles_gpu(&archive, &header, &entries, config, &cancel, backend)
+        let entries = parse_archive(&archive)?.expect("tiles");
+        let mut output = vec![0xaa; decompressed_len(&archive)?];
+        decompress_tiles_gpu(&archive, &entries, config, &cancel, backend, &mut output)?;
+        Ok(output)
+    }
+
+    fn with_fallback(original: &[u8], backend: &FakeBackend) -> Vec<u8> {
+        let config = EngineConfig::default();
+        let cancel = AtomicBool::new(false);
+        let archive = compress(original, &config, &cancel).unwrap();
+        let entries = parse_archive(&archive).unwrap().expect("tiles");
+        let mut output = vec![0xaa; decompressed_len(&archive).unwrap()];
+        decode_with_fallback(&archive, &entries, &config, &cancel, backend, &mut output).unwrap();
+        output
     }
 
     #[test]
@@ -779,6 +942,75 @@ mod tests {
         };
         let output = through_gpu(&original, &config, &FakeBackend::new()).unwrap();
         assert!(output == original, "output differs from the original");
+    }
+
+    #[test]
+    fn decompress_into_matches_decompress() {
+        let config = EngineConfig {
+            force_cpu: true,
+            ..EngineConfig::default()
+        };
+        let cancel = AtomicBool::new(false);
+        for original in [compressible(), incompressible(4), mixed(), Vec::new()] {
+            let archive = compress(&original, &config, &cancel).unwrap();
+            let mut output = vec![0xaa; decompressed_len(&archive).unwrap()];
+            decompress_into(&archive, &config, &cancel, &mut output).unwrap();
+            assert!(output == original, "decompress_into differs");
+            assert!(
+                decompress(&archive, &config, &cancel).unwrap() == original,
+                "decompress differs"
+            );
+        }
+    }
+
+    #[test]
+    fn a_wrong_length_output_is_rejected() {
+        let config = EngineConfig {
+            force_cpu: true,
+            ..EngineConfig::default()
+        };
+        let cancel = AtomicBool::new(false);
+        let archive = compress(&compressible(), &config, &cancel).unwrap();
+        let mut output = vec![0; TILE - 1];
+        assert!(decompress_into(&archive, &config, &cancel, &mut output).is_err());
+    }
+
+    #[test]
+    fn a_bad_gpu_result_falls_back_and_leaves_no_trace() {
+        let original = mixed();
+        for fault in [Fault::WrongBytes, Fault::TooFewTiles, Fault::ShortTile] {
+            let output = with_fallback(&original, &FakeBackend::faulty(fault));
+            assert!(output == original, "fallback output differs");
+        }
+    }
+
+    #[test]
+    fn too_few_tiles_is_an_error_not_a_panic() {
+        let result = through_gpu(
+            &mixed(),
+            &EngineConfig::default(),
+            &FakeBackend::faulty(Fault::TooFewTiles),
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn a_short_tile_is_an_error_not_a_panic() {
+        let result = through_gpu(
+            &mixed(),
+            &EngineConfig::default(),
+            &FakeBackend::faulty(Fault::ShortTile),
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn a_header_that_disagrees_with_the_index_is_rejected() {
+        let cancel = AtomicBool::new(false);
+        let mut archive = compress(&compressible(), &EngineConfig::default(), &cancel).unwrap();
+        // The header's uncompressed size, claiming far more than the tiles hold.
+        archive[24..32].copy_from_slice(&(1u64 << 40).to_le_bytes());
+        assert!(decompressed_len(&archive).is_err());
     }
 
     #[test]

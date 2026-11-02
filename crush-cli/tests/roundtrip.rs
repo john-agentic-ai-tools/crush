@@ -87,3 +87,36 @@ fn test_roundtrip_large_random_file() -> std::io::Result<()> {
 
     Ok(())
 }
+
+/// A GPU-format file decodes through the mapped output, here on the CPU.
+#[test]
+fn test_gpu_format_roundtrip_to_a_file() -> std::io::Result<()> {
+    let dir = test_dir();
+    let mut original_content = b"gpu tiles round trip through a mapped file. ".repeat(4000);
+    let mut state = 1u64;
+    original_content.extend((0..70_000).map(|_| {
+        state = state
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1);
+        (state >> 56) as u8
+    }));
+    let original = create_test_file(dir.path(), "tiles.bin", &original_content);
+    let compressed = dir.path().join("tiles.bin.crush");
+    let decompressed = dir.path().join("tiles.out");
+
+    crush_cmd()
+        .args(["compress", "--plugin", "gpu-deflate"])
+        .arg(&original)
+        .assert()
+        .success();
+    crush_cmd()
+        .args(["decompress", "--force-cpu"])
+        .arg(&compressed)
+        .arg("-o")
+        .arg(&decompressed)
+        .assert()
+        .success();
+
+    assert_eq!(std::fs::read(&decompressed)?, original_content);
+    Ok(())
+}
