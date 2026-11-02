@@ -1,0 +1,193 @@
+{
+ "date": "2026-11-02",
+ "commit": "995abaf",
+ "machine": {
+  "os": "Windows-11-10.0.26300-SP0",
+  "gpu": "NVIDIA GeForce RTX 3060 Ti, 617.42"
+ },
+ "method": {
+  "size_mb": 128,
+  "reps": 7,
+  "statistic": "median",
+  "alternating": true,
+  "io": "disk",
+  "pinning": "none"
+ },
+ "results": [
+  {
+   "cores": "all",
+   "data": "text",
+   "tool": "crush-parallel-windows",
+   "env": "windows",
+   "ratio": 1.324,
+   "comp_mbs": 413.8,
+   "decomp_mbs": 901.7,
+   "comp_iqr_pct": 8.5,
+   "decomp_iqr_pct": 3.1
+  },
+  {
+   "cores": "all",
+   "data": "text",
+   "tool": "crush-gpu-windows",
+   "env": "windows",
+   "ratio": 0.998,
+   "comp_mbs": 278.7,
+   "decomp_mbs": 297.4,
+   "comp_iqr_pct": 4.7,
+   "decomp_iqr_pct": 1.2,
+   "gpu_used": false
+  },
+  {
+   "cores": "all",
+   "data": "text",
+   "tool": "crush-gpu-cuda-windows",
+   "env": "windows",
+   "ratio": 0.998,
+   "comp_mbs": 284.7,
+   "decomp_mbs": 472.9,
+   "comp_iqr_pct": 10.3,
+   "decomp_iqr_pct": 2.3,
+   "gpu_used": false
+  },
+  {
+   "cores": "all",
+   "data": "repetitive",
+   "tool": "crush-parallel-windows",
+   "env": "windows",
+   "ratio": 328.814,
+   "comp_mbs": 1265.1,
+   "decomp_mbs": 1535.6,
+   "comp_iqr_pct": 2.9,
+   "decomp_iqr_pct": 1.8
+  },
+  {
+   "cores": "all",
+   "data": "repetitive",
+   "tool": "crush-gpu-windows",
+   "env": "windows",
+   "ratio": 55.723,
+   "comp_mbs": 816.6,
+   "decomp_mbs": 224.5,
+   "comp_iqr_pct": 3.4,
+   "decomp_iqr_pct": 1.1,
+   "gpu_used": true
+  },
+  {
+   "cores": "all",
+   "data": "repetitive",
+   "tool": "crush-gpu-cuda-windows",
+   "env": "windows",
+   "ratio": 55.723,
+   "comp_mbs": 803.1,
+   "decomp_mbs": 393.4,
+   "comp_iqr_pct": 2.2,
+   "decomp_iqr_pct": 1.5,
+   "gpu_used": true
+  },
+  {
+   "cores": "all",
+   "data": "random",
+   "tool": "crush-parallel-windows",
+   "env": "windows",
+   "ratio": 1.0,
+   "comp_mbs": 549.3,
+   "decomp_mbs": 958.2,
+   "comp_iqr_pct": 17.8,
+   "decomp_iqr_pct": 2.1
+  },
+  {
+   "cores": "all",
+   "data": "random",
+   "tool": "crush-gpu-windows",
+   "env": "windows",
+   "ratio": 0.998,
+   "comp_mbs": 284.4,
+   "decomp_mbs": 306.7,
+   "comp_iqr_pct": 3.1,
+   "decomp_iqr_pct": 1.3,
+   "gpu_used": false
+  },
+  {
+   "cores": "all",
+   "data": "random",
+   "tool": "crush-gpu-cuda-windows",
+   "env": "windows",
+   "ratio": 0.998,
+   "comp_mbs": 285.9,
+   "decomp_mbs": 477.6,
+   "comp_iqr_pct": 4.0,
+   "decomp_iqr_pct": 1.6,
+   "gpu_used": false
+  },
+  {
+   "cores": "all",
+   "data": "real",
+   "tool": "crush-parallel-windows",
+   "env": "windows",
+   "ratio": 3.503,
+   "comp_mbs": 591.4,
+   "decomp_mbs": 1163.7,
+   "comp_iqr_pct": 8.0,
+   "decomp_iqr_pct": 1.9
+  },
+  {
+   "cores": "all",
+   "data": "real",
+   "tool": "crush-gpu-windows",
+   "env": "windows",
+   "ratio": 2.359,
+   "comp_mbs": 526.9,
+   "decomp_mbs": 174.1,
+   "comp_iqr_pct": 4.8,
+   "decomp_iqr_pct": 3.9,
+   "gpu_used": true
+  },
+  {
+   "cores": "all",
+   "data": "real",
+   "tool": "crush-gpu-cuda-windows",
+   "env": "windows",
+   "ratio": 2.359,
+   "comp_mbs": 530.5,
+   "decomp_mbs": 304.5,
+   "comp_iqr_pct": 19.4,
+   "decomp_iqr_pct": 1.5,
+   "gpu_used": true
+  },
+  {
+   "cores": "all",
+   "data": "log",
+   "tool": "crush-parallel-windows",
+   "env": "windows",
+   "ratio": 4.898,
+   "comp_mbs": 673.3,
+   "decomp_mbs": 1216.6,
+   "comp_iqr_pct": 12.4,
+   "decomp_iqr_pct": 4.5
+  },
+  {
+   "cores": "all",
+   "data": "log",
+   "tool": "crush-gpu-windows",
+   "env": "windows",
+   "ratio": 2.8,
+   "comp_mbs": 560.8,
+   "decomp_mbs": 194.0,
+   "comp_iqr_pct": 3.2,
+   "decomp_iqr_pct": 2.4,
+   "gpu_used": true
+  },
+  {
+   "cores": "all",
+   "data": "log",
+   "tool": "crush-gpu-cuda-windows",
+   "env": "windows",
+   "ratio": 2.8,
+   "comp_mbs": 584.7,
+   "decomp_mbs": 327.6,
+   "comp_iqr_pct": 5.5,
+   "decomp_iqr_pct": 1.3,
+   "gpu_used": true
+  }
+ ]
+}

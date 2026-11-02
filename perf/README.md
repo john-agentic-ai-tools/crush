@@ -86,6 +86,10 @@ I/O is in tmpfs, which is not neutral. Writing to tmpfs is unusually cheap for
 tools that call `write`, and allocating a mapped output there is unusually dear,
 so check a close result on a disk file system too.
 
+`perf/compare_gpu.py` measures `crush` parallel, GPU and GPU CUDA on native
+Windows, because WSL2 has no real Vulkan driver or nvrtc here. It fails if a GPU
+run falls back to the CPU. `perf/chart.py` adds its results, marked as Windows.
+
 To chart the newest results as speed against ratio:
 
 ```sh
