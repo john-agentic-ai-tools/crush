@@ -231,7 +231,7 @@ Through the CLI against `zstd -3 -T<n>`, ABBA, 7 reps, 128 MiB in tmpfs, median 
 
 `zstd -3 --single-thread` compressed at 317 MB/s earlier today, against 202 for `-T1`, so the 1-core pass rests on the flag the gate uses. `-T1` also spends a thread on I/O, pinned to the same CPU.
 
-Compression stops scaling after 4 cores. At all cores a run takes 0.18 s wall with 2.7 s user and 0.3 s system, against about 0.6 s of CPU on one core, so the loss is not kernel time. The input is only 32 blocks for 24 threads, of which 8 are E-cores, and contention for memory is also possible. The cause is not established.
+Compression stops scaling after 4 cores: the cause is below, under "All-core compression".
 
 In memory, one core, 4 MiB blocks, medians of three rounds. zstd is `-b3 -B4194304 --zstd=wlog=22,hlog=18`, the tables that reach 3.70:
 
@@ -271,5 +271,35 @@ Simulated branch misses in `run` were about 0.2 per sequence, and the reverted b
 | 64 KiB segments and 2^17 table | 3.6587 |
 
 Smaller segments are not a free win (6% less compress and 8% less decompress speed at 64 KiB), but the gain suggests table boundaries should follow the content. zstd 1.5.7 may do this with its block pre-splitter at this level; that was not verified. Table descriptions are a second lead: about 240 KB in all, unmeasured against zstd's. Huffman tables use 4 bits per symbol with no entropy coding.
+
+### All-core compression
+
+The 2^18 8-byte table chosen in T028 for ratio is what stops compression scaling. Throughput falls as threads are added. Medians of three, MB/s:
+
+| | 1 P | 8 P | 16 P threads | 8 E | all 24 |
+|---|---|---|---|---|---|
+| 128 MiB | 214 | 997 | 799 | 1,033 | 671 |
+| 1 GiB | 212 | 1,078 | 823 | 1,069 | 664 |
+
+Ruled out, medians of five at all cores unless noted:
+
+- **Too few blocks**: 1 GiB behaves like 128 MiB.
+- **Kernel time**: 0.3 s system against 2.7 s user.
+- **Encoder rebuilt per rayon split**: a thread-local encoder gave 680 MB/s. Reverted.
+- **Allocator**: glibc with no `mmap` and no trimming gave 640 against 645.
+
+Match table sizes at all 24 threads, medians of five, 8-byte and 5-byte logs:
+
+| Tables | Compress | Ratio |
+|---|---|---|
+| 2^18, 2^16 | 684 | 3.631 |
+| 2^17, 2^16 | 935 | 3.609 |
+| 2^16, 2^15 | 1,196 | 3.555 |
+| 2^14, 2^13 | 1,362 | 3.368 |
+| 2^12, 2^11 | 1,339 | 3.095 |
+
+Fewer threads on all CPUs also help: 978 MB/s at 8, 886 at 12. That fits contention for the shared L3 (30 MB): 24 threads each hold about 1.3 MB of randomly accessed tables and a 4 MiB block. WSL has no hardware counters, so the L3 is inferred, not observed. Decompression has no such tables, and scales.
+
+The curve flattens near 1,360 MB/s, below zstd's 1,633 and the 2,450 SC-002 asks for at all cores, so smaller tables alone cannot pass that gate. Table size cannot follow the thread count either, because output must not depend on it.
 
 ## Gates
