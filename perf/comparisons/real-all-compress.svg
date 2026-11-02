@@ -77,9 +77,9 @@ ratio 2.230</title><circle class="hit" cx="101.6" cy="146.5" r="12"/><circle cla
 ratio 3.503"><title>crush
 1,099 MB/s
 ratio 3.503</title><circle class="hit" cx="587.3" cy="254.5" r="12"/><circle class="dot-crush" cx="587.3" cy="254.5" r="6"/></g>
-<g class="pt" tabindex="0" data-tip="crush-sprint
+<g class="pt" tabindex="0" data-tip="crush sprint
 870 MB/s
-ratio 3.662"><title>crush-sprint
+ratio 3.662"><title>crush sprint
 870 MB/s
 ratio 3.662</title><circle class="hit" cx="648.1" cy="295.9" r="12"/><circle class="dot-crush" cx="648.1" cy="295.9" r="6"/></g>
 <text x="493.4" y="87.7" text-anchor="start">zstd -1</text>
@@ -88,7 +88,7 @@ ratio 3.662</title><circle class="hit" cx="648.1" cy="295.9" r="12"/><circle cla
 <text x="653.4" y="181.2" text-anchor="end">zstd -3</text>
 <text x="415.6" y="227.1" text-anchor="start">pigz -1</text>
 <text class="own" x="596.3" y="258.5" text-anchor="start">crush</text>
-<text class="own" x="639.1" y="299.9" text-anchor="end">crush-sprint</text>
+<text class="own" x="639.1" y="299.9" text-anchor="end">crush sprint</text>
 <text x="587.9" y="358.3" text-anchor="start">pigz -6</text>
 <text x="383.6" y="372.3" text-anchor="start">lz4 -9</text>
 </svg>

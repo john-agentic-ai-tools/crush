@@ -31,6 +31,7 @@ DATASETS = {
     "real": "real files",
     "text": "base64 text",
     "repetitive": "repetitive text",
+    "log": "log lines",
     "random": "random data",
 }
 CORES = {"all": "all cores", "4": "4 cores", "1": "1 core"}
@@ -39,6 +40,7 @@ OPS = {"compress": ("comp_mbs", "Compression"),
 NAMES = {
     "crush": "crush",
     "crush-fast-lz": "crush fast-lz",
+    "crush-sprint": "crush sprint",
     "gzip-6": "gzip -6", "gzip-1": "gzip -1",
     "pigz-6": "pigz -6", "pigz-1": "pigz -1",
     "zstd-1": "zstd -1", "zstd-3": "zstd -3",

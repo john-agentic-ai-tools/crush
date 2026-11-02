@@ -74,10 +74,10 @@ on the frontier"><title>crush
 4,490 MB/s
 ratio 3.503
 on the frontier</title><circle class="hit" cx="587.3" cy="70.0" r="12"/><circle class="dot-crush" cx="587.3" cy="70.0" r="6"/></g>
-<g class="pt" tabindex="0" data-tip="crush-sprint
+<g class="pt" tabindex="0" data-tip="crush sprint
 3,533 MB/s
 ratio 3.662
-on the frontier"><title>crush-sprint
+on the frontier"><title>crush sprint
 3,533 MB/s
 ratio 3.662
 on the frontier</title><circle class="hit" cx="648.1" cy="98.0" r="12"/><circle class="dot-crush" cx="648.1" cy="98.0" r="6"/></g>
@@ -87,7 +87,7 @@ ratio 2.230"><title>crush fast-lz
 1,924 MB/s
 ratio 2.230</title><circle class="hit" cx="101.6" cy="168.8" r="12"/><circle class="dot-crush" cx="101.6" cy="168.8" r="6"/></g>
 <text class="own" x="596.3" y="74.0" text-anchor="start">crush</text>
-<text class="own" x="639.1" y="102.0" text-anchor="end">crush-sprint</text>
+<text class="own" x="639.1" y="102.0" text-anchor="end">crush sprint</text>
 <text x="383.6" y="139.8" text-anchor="start">lz4 -9</text>
 <text x="135.2" y="143.4" text-anchor="start">lz4 -1</text>
 <text class="own" x="110.6" y="172.8" text-anchor="start">crush fast-lz</text>
