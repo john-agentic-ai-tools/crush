@@ -382,3 +382,30 @@ The compiled loop has 751 instructions, 151 of them touching the stack, so regis
 Tuning stopped here, as agreed: no remaining experiment promises a large saving.
 
 ## Gates
+
+The maintainer revised the gates on 2026-11-01: sprint is a decompression leader, with a ratio within about 1% of zstd -3. Decompression targets stayed at 2.0x and 3.0x, so sprint stays opt-in until it meets them.
+
+Through the CLI against `zstd -3 -T<n>`, ABBA, 7 reps, 128 MiB `real` in tmpfs, median MB/s:
+
+| | 1 core | 4 cores | all cores |
+|---|---|---|---|
+| Sprint compress | 223 | 735 | 955 |
+| `zstd -3` compress | 209 | 1,003 | 1,698 |
+| Multiple | **1.07x** | 0.73x | 0.56x |
+| Sprint decompress | 701 | 2,041 | 3,052 |
+| `zstd -3` decompress | 1,055 | 1,200 | 1,216 |
+| Multiple | 0.66x | **1.70x** | **2.51x** |
+
+These multiples move from run to run: 1.74x and 2.73x in the run before the boundary fix, whose decode path is the same. Multi-core spreads were not recorded in either run.
+
+| Criterion | Target | Result | |
+|---|---|---|---|
+| SC-001 ratio | 0.99x | 0.9899x (3.6624 against 3.6996) | **Miss** by 0.01% |
+| SC-002 compress, 1 core | 1.0x | 1.07x | Pass, on `-T1` |
+| SC-003 decompress, 4 cores | 2.0x | 1.70x | **Miss** |
+| SC-003 decompress, all cores | 3.0x | 2.51x | **Miss** |
+| SC-006 memory per thread | under 32 MB | Process peak 10.4 MB compressing and 11.1 MB decompressing 4 MiB on one thread, against 4.3 MB for `--version`, input and output included | Pass |
+| SC-007 fuzz | 100,000 runs | `fuzz_tables`, `fuzz_decompress`, `fuzz_roundtrip`, 100,000 each, clean, empty corpus | Pass |
+| SC-008 one block | under 5 ms | Median 4.4 to 4.7 ms, slowest of 32 blocks 5.8 to 6.5 ms, in memory, four runs | Median passes, slowest **misses** |
+
+BMI2 was approved only if it closed SC-003. It reached 1.76x and 2.65x, built for the whole crate, so it was not added and sprint stays free of `unsafe`.

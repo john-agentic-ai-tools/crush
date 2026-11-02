@@ -149,8 +149,8 @@ description: "Task list for the hybrid high-speed codec"
 
 ### Verification
 
-- [ ] T062 [US2] Run all fuzz targets for at least 100,000 iterations each (SC-007) and fix every finding, in `crush-sprint/fuzz/`
-- [ ] T063 [US2] Measure memory per thread (SC-006) and single-block retrieval time (SC-008), and record them in `perf/log/2026-11-hybrid-speed-codec.md`
+- [X] T062 [US2] Run all fuzz targets for at least 100,000 iterations each (SC-007) and fix every finding, in `crush-sprint/fuzz/`
+- [X] T063 [US2] Measure memory per thread (SC-006) and single-block retrieval time (SC-008), and record them in `perf/log/2026-11-hybrid-speed-codec.md`
 - [ ] T064 [US2] Run `detect-duplicates.ps1 -Json`, extract shared code, and update `specs/026-hybrid-speed-codec/cleanup-summary.md`
 
 **Checkpoint**: Sprint works by name, automatic selection is unchanged, and the format is frozen.

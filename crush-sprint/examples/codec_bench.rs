@@ -156,6 +156,27 @@ fn median(values: &mut [f64]) -> f64 {
 }
 
 /// The whole codec, block by block, on one thread.
+/// Time to fetch one block from a compressed file in memory (SC-008).
+fn block_retrieval(data: &[u8]) {
+    use crush_core::plugin::CompressionAlgorithm;
+    use crush_sprint::SprintPlugin;
+    use std::sync::Arc;
+    use std::sync::atomic::AtomicBool;
+
+    let cancel = Arc::new(AtomicBool::new(false));
+    let packed = SprintPlugin.compress(data, cancel).expect("compress");
+    let blocks = (data.len() / BLOCK) as u64;
+    let mut times = Vec::new();
+    for n in 0..blocks {
+        let t = Instant::now();
+        std::hint::black_box(SprintPlugin.decompress_block(&packed, n).expect("block"));
+        times.push(t.elapsed().as_secs_f64() * 1e3);
+    }
+    let middle = median(&mut times);
+    let worst = times.last().copied().unwrap_or(0.0);
+    println!("block retrieval: median {middle:.2} ms, worst {worst:.2} ms, {blocks} blocks");
+}
+
 fn full_codec(data: &[u8], runs: usize) {
     use crush_parallel::codec::BlockCodec;
     use crush_sprint::SprintCodec;
@@ -208,6 +229,7 @@ fn main() {
     let data = std::fs::read(path).expect("read");
     let mb = data.len() as f64 / 1e6;
     full_codec(&data, runs);
+    block_retrieval(&data);
 
     let mut matcher = Matcher::new(long_log, short_log).expect("matcher");
     let mut segments = Vec::new();

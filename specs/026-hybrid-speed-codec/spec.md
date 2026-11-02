@@ -145,10 +145,10 @@ Once the new codec has passed every gate, users who do not choose a plugin recei
 
 All speed and ratio multiples are against zstd -3 in the same session, on the reference workstation and `real` corpus, unless stated otherwise. The reference figures are from 2026-10-30, and the live multiple is what governs.
 
-- **SC-001**: Compression ratio is at least 1.00x of zstd -3 at 1, 4 and all cores (reference 3.70).
-- **SC-002**: Full-pipeline compression speed is at least 1.0x at 1 core, 1.0x at 4 cores and 1.5x at all cores.
-- **SC-003**: Full-pipeline decompression speed is at least 1.0x at 1 core, 2.0x at 4 cores and 3.0x at all cores.
-- **SC-004**: In-memory, single-core speed is at least 0.85x of zstd -3 for both compression and decompression.
+- **SC-001**: Compression ratio is at least 0.99x of zstd -3 at 1, 4 and all cores (reference 3.70). Revised from 1.00x on 2026-11-01.
+- **SC-002**: Full-pipeline compression speed is at least 1.0x at 1 core. Speed at 4 and all cores is reported, not gated. Revised on 2026-11-01 from 1.0x at 4 cores and 1.5x at all cores.
+- **SC-003**: Full-pipeline decompression speed is at least 2.0x at 4 cores and 3.0x at all cores. These are the codec's headline targets. Speed at 1 core is reported, not gated. Revised on 2026-11-01 from a further 1.0x gate at 1 core.
+- **SC-004**: In-memory, single-core speed against zstd -3 is reported for both compression and decompression, not gated. Revised on 2026-11-01 from at least 0.85x.
 - **SC-005**: Decompressing existing large archives speeds up by at least 3.0x at 4 cores and at least 3.3x at all cores, compared with 1 core (today 2.19x and 2.58x). The plan may raise these targets after profiling.
 - **SC-006**: Memory use stays below 32 MB per thread, not counting input and output data.
 - **SC-007**: All new decoding paths complete at least 100,000 fuzz iterations with no crash, hang, memory error or incorrect output.
