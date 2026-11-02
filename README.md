@@ -180,9 +180,10 @@ cargo bench -p crush-gpu --bench ratio
 ### Comparing Against gzip, pigz, zstd, and lz4
 
 `perf/compare.py` runs crush, gzip, and pigz (plus zstd and lz4 when
-installed) on 128 MB text, repetitive, random, and real-file data, pinned to
-1, 4, and all CPUs, with all I/O in tmpfs. It reports the median of 5 runs,
-checks every round-trip, and writes `perf/comparisons/<machine>.json`. It
+installed) on 128 MB text, repetitive, random, real-file and log data, pinned
+to 1, 4, and all CPUs, with all I/O in tmpfs. It reports the median of 5 runs
+and their interquartile range, checks every round-trip, and writes
+`perf/comparisons/<machine>.json`. It
 needs Linux (on Windows, use WSL) and `pigz`:
 
 ```bash
@@ -208,6 +209,39 @@ is better:
 
 To explore every dataset and core count, open `perf/comparisons/chart.html`.
 After a new `perf/compare.py` run, redraw these with `python perf/chart.py`.
+
+### High-speed codec (`sprint`, opt-in)
+
+`sprint` aims at fast decompression with a ratio close to `zstd -3`. It is safe
+Rust, in independent 4 MiB blocks, so one block can be read on its own, and it
+is used only when asked for. Its format may still change.
+
+```bash
+crush compress --plugin sprint file
+crush decompress file.crush
+crush decompress --block 3 file.crush -o block3
+```
+
+Against `zstd -3` on 128 MiB of real files, worst of three builds, i9-12900K
+under WSL2, zstd 1.5.7, tmpfs, interquartile range under 8%:
+
+| | 1 core | 4 cores | all cores |
+|---|---|---|---|
+| Compress | 1.10x | 0.69x | 0.56x |
+| Decompress | 0.65x | 1.75x | 2.79x |
+
+The ratio is 3.662 against 3.700. Limits to these figures:
+
+- Decompression leads only with more than one core, and only on compressible
+  data. On random data it trails zstd in tmpfs (0.66x at all cores), and on ext4
+  the two are about level (1.06x).
+- tmpfs favours sprint on real files: all-core decompression read about 2.5x on
+  ext4, in a smaller run, against about 3x in tmpfs in that same run.
+- The default `crush` plugin decompresses faster still at all cores, at a lower
+  ratio (3.503). `zstd -3` compresses faster at 4 and all cores, and smaller.
+- It misses two of its targets for leaving opt-in: 2.0x and 3.0x decompression
+  at 4 and all cores. Full results are in
+  `perf/log/2026-11-hybrid-speed-codec.md`.
 
 ### Fast compression (`fast-lz`)
 

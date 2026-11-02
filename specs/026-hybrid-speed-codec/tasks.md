@@ -174,7 +174,7 @@ description: "Task list for the hybrid high-speed codec"
 - [X] T068 [US3] Add a log or text-like corpus to `DATASETS` in `perf/compare.py`
 - [X] T069 [US3] Run the gates on all corpora, rotating builds for wins under 10%, and record them in `perf/log/2026-11-hybrid-speed-codec.md`
 - [X] T070 [US3] If a gate fails, report the metric and cause from `perf/log/2026-11-hybrid-speed-codec.md` to the maintainer and return to Phase 4 or T046, without weakening the gate
-- [ ] T071 [US3] Publish results with machine, corpus, zstd version and spread in `perf/README.md` and `README.md`, limiting claims to the conditions measured (FR-022)
+- [X] T071 [US3] Publish results with machine, corpus, zstd version and spread in `perf/README.md` and `README.md`, limiting claims to the conditions measured (FR-022)
 - [ ] T072 [US3] Attempt Stretch A and Stretch B, and record outcomes in `perf/log/2026-11-hybrid-speed-codec.md`. Misses here do not block release
 
 **Checkpoint**: Opt-in release ready.

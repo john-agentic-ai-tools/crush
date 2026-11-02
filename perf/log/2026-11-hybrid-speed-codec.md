@@ -467,4 +467,17 @@ The report printed 0.9897x for SC-001 because the harness rounded ratios to thre
 
 `random` decompression on one run of each, by `CRUSH_TIMINGS`: 54 ms on 1 core, 29 on 4, 28 on all, of which 3.8 ms maps the input, and the harness adds about 8 ms of process start and exit. The work is a copy and a checksum per block, and it stops scaling at 4 cores. Faults on the mapped output are the likely limit, which was not measured.
 
+### Output path
+
+Decompression at all cores, MB/s, 128 MiB, ABBA, 9 reps, with the output on tmpfs or ext4. `populate` is the current build with the output mapping pre-faulted:
+
+| | Current | `populate` | `zstd -3` | Current against zstd |
+|---|---|---|---|---|
+| `random`, tmpfs | 3,975 | 2,409 | 5,549 | 0.72x |
+| `random`, ext4 | 3,095 | 2,555 | 2,911 | 1.06x |
+| `real`, tmpfs | 3,805 | 2,146 | 1,257 | 3.03x |
+| `real`, ext4 | 3,222 | 2,192 | 1,266 | 2.55x |
+
+Pre-faulting is much slower and was reverted. Sprint's weakness on `random` comes from tmpfs, where zstd's `write` is unusually fast, and is gone on ext4. tmpfs flatters sprint on `real`, so the SC-003 multiples are measured under conditions that suit it, and the spec's 3.0x would be harder on disk. `fallocate` of 128 MiB takes 5.3 ms on tmpfs and 0.09 ms on ext4. What limits scaling on tmpfs was not established. These are single builds, not rotated.
+
 BMI2 was approved only if it closed SC-003. It reached 1.76x and 2.65x, built for the whole crate, so it was not added and sprint stays free of `unsafe`.
