@@ -82,3 +82,7 @@ cargo run --release -p crush-lz --example codec_bench -- FILE [RUNS]
 bash perf/lz-vs-lz4.sh                                   # vs lz4 -b1 (WSL/Linux)
 cargo test --release -p crush-lz --test selection_report -- --ignored --nocapture
 ```
+
+## License
+
+MIT
