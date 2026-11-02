@@ -1028,7 +1028,7 @@ See the [Contributing Guide](CONTRIBUTING.md) for details on how to contribute t
 
 ## License
 
-See the [LICENSE](LICENSE) file for details.
+Crush is licensed under the [MIT License](LICENSE).
 
 ## Acknowledgments
 
