@@ -408,4 +408,63 @@ These multiples move from run to run: 1.74x and 2.73x in the run before the boun
 | SC-007 fuzz | 100,000 runs | `fuzz_tables`, `fuzz_decompress`, `fuzz_roundtrip`, 100,000 each, clean, empty corpus | Pass |
 | SC-008 one block | under 5 ms | Median 4.4 to 4.7 ms, slowest of 32 blocks 5.8 to 6.5 ms, in memory, four runs | Median passes, slowest **misses** |
 
+SC-008's slowest block is the densest, not a slow lookup. `load_index` takes under 1 microsecond, and across 32 blocks the fastest took 3.4 ms at 0.75 MB compressed and the slowest 6.2 ms at 1.26 MB. About 20% more decode speed would clear it.
+
+### All corpora (T069)
+
+`perf/compare.py --builds`, three separately built binaries, `zstd -3 -T<n>`, ABBA, 7 reps, 128 MiB in tmpfs. Sprint figures are the worst build's multiple, as SC-011 requires, against one `zstd -3` row:
+
+| Corpus | Ratio, sprint / zstd | Compress 1 / 4 / all | Decompress 1 / 4 / all |
+|---|---|---|---|
+| `real` | 3.662 / 3.700 | 1.06x / 0.69x / 0.53x | 0.65x / 1.66x / 2.57x |
+| `log` | 4.579 / 4.635 | 1.07x / 0.81x / 0.58x | 0.71x / 1.68x / 2.24x |
+| `text` | 1.327 / 1.327 | 0.91x / 0.62x / 0.45x | 0.87x / 1.98x / 2.27x |
+| `repetitive` | 6,315 / 10,882 | 2.40x / 1.26x / 0.75x | 0.87x / 1.72x / 1.68x |
+| `random` | 1.000 / 1.000 | 1.08x / 0.56x / 0.38x | 0.89x / 0.75x / 0.68x |
+
+Gate report: 2 passed, 7 failed, on `real` unless noted.
+
+| Gate | Target | Worst build | Result |
+|---|---|---|---|
+| SC-001 ratio | 0.99x | 0.9899x | Fail, by 0.01% |
+| SC-002 compress, 1 core | 1.0x | 1.06x | Pass |
+| SC-003 decompress, 4 cores | 2.0x | 1.66x | Fail |
+| SC-003 decompress, all cores | 3.0x | 2.57x | Fail |
+| SC-005 `crush` scaling, 4 cores | 3.0x | 2.83x | Fail, as accepted on 2026-10-31 at 2.86x |
+| SC-005 `crush` scaling, all cores | 3.3x | 4.29x | Pass |
+| SC-010 `text` compress, 1 core | 1.0x at 1.32 | 0.91x at 1.327 | Fail on speed |
+
+Spreads on the decompress rows reach 133% at 4 cores and 36% at all cores on `real`, so a single median is weak evidence there, and they were not investigated. `zstd -3` itself reads 42% on `log` compress at all cores. On `random`, sprint decompresses more slowly than zstd at every core count, 0.68x at all cores, because stored blocks go through the engine and checksums while zstd copies. Causes of the failed gates are the ones above: decode speed for SC-003 and SC-008, 2^17 tables for SC-001. The cause of SC-010 is not established.
+
+### Harness corrections
+
+The table above came from a harness with two faults, and the run below supersedes it.
+
+- **Unequal output handling**: `crush -f` wrote over the old output while `zstd ... >` truncated it first. On `real`, a fresh output was about 7% faster at 4 cores (59 against 63.5 ms) and 10% at all cores (35.7 against 39.5 ms). `compare.py` now deletes outputs before each timed step, for every tool.
+- **Max minus min as spread**: one stray run set it. An isolated series of 16 at 4 cores spread 7%, against 133% in the harness. `compare.py` now reports interquartile range as well, and runs each tool once uncounted, because a binary's first run was the suspected source of the strays. That suspicion was not tested separately.
+
+Same builds and method as T069, worst of three builds, IQR beside each gate:
+
+| Corpus | Ratio, sprint / zstd | Compress 1 / 4 / all | Decompress 1 / 4 / all |
+|---|---|---|---|
+| `real` | 3.662 / 3.700 | 1.10x / 0.69x / 0.56x | 0.65x / 1.75x / 2.79x |
+| `log` | 4.579 / 4.635 | 1.12x / 0.82x / 0.53x | 0.69x / 1.74x / 2.37x |
+| `text` | 1.327 / 1.327 | 0.88x / 0.59x / 0.40x | 0.89x / 2.09x / 2.91x |
+| `repetitive` | 6,315 / 10,882 | 2.33x / 1.10x / 0.73x | 0.84x / 1.80x / 1.76x |
+| `random` | 1.000 / 1.000 | 1.05x / 0.54x / 0.37x | 0.88x / 0.71x / 0.66x |
+
+| Gate | Target | Result | IQR | |
+|---|---|---|---|---|
+| SC-001 ratio | 0.99x | 0.9899x | | Fail by 0.01% |
+| SC-002 compress, 1 core | 1.0x | 1.10x | 4.9% | Pass |
+| SC-003 decompress, 4 cores | 2.0x | 1.75x | 2.8% | Fail |
+| SC-003 decompress, all cores | 3.0x | 2.79x | 3.6% | Fail |
+| SC-005 `crush` scaling, 4 cores | 3.0x | 3.00x | 4.2% | Pass |
+| SC-005 `crush` scaling, all cores | 3.3x | 4.45x | 18.3% | Pass |
+| SC-010 `text` compress, 1 core | 1.0x at 1.32 | 0.88x at 1.327 | 9.9% | Fail on speed |
+
+The report printed 0.9897x for SC-001 because the harness rounded ratios to three places before dividing, now four. 0.9899x is the exact figure. `zstd -3`'s own compress and decompress rows also changed between runs, and SC-005's pass at 3.00x rests on a 4% IQR. All-core IQR stays high on some rows: 28% on `text` and 20% on `log` decompression.
+
+`random` decompression on one run of each, by `CRUSH_TIMINGS`: 54 ms on 1 core, 29 on 4, 28 on all, of which 3.8 ms maps the input, and the harness adds about 8 ms of process start and exit. The work is a copy and a checksum per block, and it stops scaling at 4 cores. Faults on the mapped output are the likely limit, which was not measured.
+
 BMI2 was approved only if it closed SC-003. It reached 1.76x and 2.65x, built for the whole crate, so it was not added and sprint stays free of `unsafe`.

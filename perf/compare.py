@@ -27,6 +27,8 @@ Feature 026:
     --in-memory prints zstd's own in-memory benchmark (zstd -b) for each dataset,
     single-threaded, so codec speed can be told apart from CLI I/O costs.
 
+    With crush-sprint in the run, a gate report follows the table; a win
+    under 10% needs --builds to count (SC-011).
     --builds a=PATH,b=PATH runs every crush tool once per binary, as separate
     rows named tool@a and tool@b. A win under 10% counts only if it holds across
     separately built binaries, because identical code can move that much with
@@ -55,6 +57,15 @@ DATASETS = {
     "random": "head -c {n} /dev/urandom",
     # real files: shared libraries, docs, locale data
     "real": "tar -cf - /usr/lib /usr/share 2>/dev/null | head -c {n}",
+    # Log lines with varied ids, times and paths: repetitive, not random
+    "log": "python3 -c 'import random,sys\n"
+           "r = random.Random(1)\n"
+           "while True:\n"
+           "    print(\"2026-11-01T%02d:%02d:%02d.%03dZ %s svc-%d request id=%08x "
+           "path=/api/v1/items/%d status=%d ms=%d\" % (r.randrange(24), r.randrange(60), "
+           "r.randrange(60), r.randrange(1000), r.choice([\"INFO\"]*9 + [\"WARN\"]), "
+           "r.randrange(20), r.getrandbits(32), r.randrange(5000), "
+           "r.choice([200]*19 + [503]), r.randrange(400)))' 2>/dev/null | head -c {n}",
 }
 
 
@@ -97,6 +108,8 @@ def crush_tools(crush):
                   f"{crush} decompress {{o}} -o {{d}} -f >/dev/null 2>&1"),
         "crush-fast-lz": (f"{crush} compress --plugin fast-lz {{i}} -o {{o}} -f >/dev/null 2>&1",
                           f"{crush} decompress {{o}} -o {{d}} -f >/dev/null 2>&1"),
+        "crush-sprint": (f"{crush} compress --plugin sprint {{i}} -o {{o}} -f >/dev/null 2>&1",
+                         f"{crush} decompress {{o}} -o {{d}} -f >/dev/null 2>&1"),
     }
 
 
@@ -145,6 +158,116 @@ def tools(crush, threads, builds=None):
     }
     return {name: cmds for name, cmds in all_tools.items()
             if name.split("-")[0] not in OPTIONAL or shutil.which(name.split("-")[0])}
+
+
+CLEAR_MARGIN = 1.10  # SC-011: a win below this needs several builds
+EPSILON = 1e-9
+
+
+def lookup(results, tool, data, cores):
+    return next((r for r in results if r["tool"] == tool and r["data"] == data
+                 and r["cores"] == cores), None)
+
+
+def builds_of(results, tool):
+    """The rows' names for tool: "tool", or each "tool@label" of a rotated run."""
+    rotated = sorted({r["tool"] for r in results if r["tool"].startswith(tool + "@")})
+    return rotated or [tool]
+
+
+def verdict_for(multiples, target, rotated, exact):
+    if target is None:
+        return "reported"
+    worst = min(multiples)
+    if worst < target - EPSILON:
+        return "fail"
+    if exact or rotated or worst >= target * CLEAR_MARGIN - EPSILON:
+        return "pass"
+    return "provisional"
+
+
+def gate(results, criterion, metric, field, data, cores, target, names, base, exact=False):
+    """One report row. base(name) gives the row a tool is measured against."""
+    multiples, spreads = [], []
+    for name in names:
+        ours, theirs = lookup(results, name, data, cores), base(name)
+        if not ours or not theirs:
+            multiples = None
+            break
+        multiples.append(ours[field] / theirs[field])
+        if field != "ratio":
+            spreads.append(ours.get(field.replace("_mbs", "_iqr_pct"),
+                                    ours.get(field.replace("_mbs", "_spread_pct"), 0)))
+    return {"criterion": criterion, "metric": metric, "data": data, "cores": cores,
+            "target": target, "multiple": min(multiples) if multiples else None,
+            "spread": max(spreads) if spreads else None,
+            "verdict": verdict_for(multiples, target, len(names) > 1, exact)
+            if multiples else "missing"}
+
+
+def gate_report(results, tool="crush-sprint", reference="zstd-3"):
+    """Evaluate the spec's gates on compare.py rows. SC-004 is in memory, and
+    reported by crush-sprint/examples/codec_bench.rs."""
+    names = builds_of(results, tool)
+    crush = builds_of(results, "crush")
+
+    def against(data, cores):
+        return lambda _name: lookup(results, reference, data, cores)
+
+    rows = [gate(results, "SC-001", "ratio", "ratio", "real", cores, 0.99, names,
+                 against("real", cores), exact=True) for cores in ("1", "4", "all")]
+    for criterion, metric, field, cores, target in (
+            ("SC-002", "compress", "comp_mbs", "1", 1.0),
+            ("SC-002", "compress", "comp_mbs", "4", None),
+            ("SC-002", "compress", "comp_mbs", "all", None),
+            ("SC-003", "decompress", "decomp_mbs", "1", None),
+            ("SC-003", "decompress", "decomp_mbs", "4", 2.0),
+            ("SC-003", "decompress", "decomp_mbs", "all", 3.0)):
+        rows.append(gate(results, criterion, metric, field, "real", cores, target, names,
+                         against("real", cores)))
+    for cores, target in (("4", 3.0), ("all", 3.3)):
+        rows.append(gate(results, "SC-005", "scaling", "decomp_mbs", "real", cores, target,
+                         crush, lambda name: lookup(results, name, "real", "1")))
+
+    text = gate(results, "SC-010", "compress", "comp_mbs", "text", "1", 1.0, names,
+                against("text", "1"))
+    if text["verdict"] != "missing":
+        ratios = [lookup(results, n, "text", "1")["ratio"] for n in names]
+        if min(ratios) < 1.32:
+            text["verdict"] = "fail"
+    rows.append(text)
+    return rows
+
+
+def format_gate_report(rows):
+    lines = []
+    for r in rows:
+        where = f"{r['cores']} core{'' if r['cores'] == '1' else 's'} on {r['data']}"
+        digits = 4 if r["metric"] == "ratio" else 2
+        multiple = "no data" if r["multiple"] is None else f"{r['multiple']:.{digits}f}x"
+        target = "" if r["target"] is None else f", target {r['target']:.{digits}f}x"
+        spread = "" if r["spread"] is None else f", IQR {r['spread']:.1f}%"
+        lines.append(f"{r['verdict'].upper()} {r['criterion']} {r['metric']} {where}: "
+                     f"{multiple}{target}{spread}")
+    count = {v: sum(r["verdict"] == v for r in rows)
+             for v in ("pass", "provisional", "fail", "missing")}
+    lines.append(f"{count['pass']} passed, {count['provisional']} provisional, "
+                 f"{count['fail']} failed, {count['missing']} missing")
+    return "\n".join(lines)
+
+
+def remove(path):
+    if os.path.exists(path):
+        os.unlink(path)
+
+
+def iqr_pct(values):
+    """Interquartile range as a percentage of the median. Unlike max minus
+    min, one stray run does not set it."""
+    if len(values) < 2:
+        return 0.0
+    q1, _, q3 = statistics.quantiles(values, n=4, method="inclusive")
+    return round((q3 - q1) / statistics.median(values) * 100, 1)
 
 
 def timed(cmd):
@@ -228,13 +351,24 @@ def main():
                 times = {t: ([], []) for t in sel}
                 ratio = {}
 
-                def run(tool):
+                def run(tool, record=True):
                     c, x = sel[tool]
                     ct, dt = times[tool]
-                    ct.append(timed(pin + c.format(i=i, o=o, d=d)))
-                    dt.append(timed(pin + x.format(i=i, o=o, d=d)))
+                    # Every tool gets a fresh output: overwriting costs some
+                    # tools more than others, and hides what is being measured.
+                    remove(o)
+                    compress_time = timed(pin + c.format(i=i, o=o, d=d))
+                    remove(d)
+                    decompress_time = timed(pin + x.format(i=i, o=o, d=d))
                     sh(f"cmp -s {i} {d}")
-                    ratio[tool] = round(size / os.path.getsize(o), 3)
+                    ratio[tool] = round(size / os.path.getsize(o), 4)
+                    if record:
+                        ct.append(compress_time)
+                        dt.append(decompress_time)
+
+                # Uncounted: the first run of a binary pays to load it.
+                for tool in sel:
+                    run(tool, record=False)
 
                 if a.abba:
                     order = list(sel)
@@ -255,7 +389,9 @@ def main():
                          "comp_spread_pct": round(
                              (max(ct) - min(ct)) / statistics.median(ct) * 100, 1),
                          "decomp_spread_pct": round(
-                             (max(dt) - min(dt)) / statistics.median(dt) * 100, 1)}
+                             (max(dt) - min(dt)) / statistics.median(dt) * 100, 1),
+                         "comp_iqr_pct": iqr_pct(ct),
+                         "decomp_iqr_pct": iqr_pct(dt)}
                     results.append(r)
                     print(f"{cores:>3} {ds:<10} {tool:<13} compress {r['comp_mbs']:>8} MB/s"
                           f" (±{r['comp_spread_pct']}%)"
@@ -295,6 +431,9 @@ def main():
                    "core_sets": {k: v[0] for k, v in core_sets().items()}},
         "results": results,
     }
+    if any(r["tool"].split("@")[0] == "crush-sprint" for r in results):
+        print()
+        print(format_gate_report(gate_report(results)))
     if subset and not a.out:
         return
     path = a.out or os.path.join(REPO, "perf", "comparisons", f"{slug(m)}.json")
