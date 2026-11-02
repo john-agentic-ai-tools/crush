@@ -180,9 +180,10 @@ cargo bench -p crush-gpu --bench ratio
 ### Comparing Against gzip, pigz, zstd, and lz4
 
 `perf/compare.py` runs crush, gzip, and pigz (plus zstd and lz4 when
-installed) on 128 MB text, repetitive, random, and real-file data, pinned to
-1, 4, and all CPUs, with all I/O in tmpfs. It reports the median of 5 runs,
-checks every round-trip, and writes `perf/comparisons/<machine>.json`. It
+installed) on 128 MB text, repetitive, random, real-file and log data, pinned
+to 1, 4, and all CPUs, with all I/O in tmpfs. It reports the median of 5 runs
+and their interquartile range, checks every round-trip, and writes
+`perf/comparisons/<machine>.json`. It
 needs Linux (on Windows, use WSL) and `pigz`:
 
 ```bash

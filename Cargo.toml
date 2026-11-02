@@ -6,14 +6,12 @@ members = [
     "crush-parallel",
     "crush-gpu",
     "crush-lz",
-    "crush-sprint",
 ]
 exclude = [
     "crush-core/fuzz",
     "crush-parallel/fuzz",
     "crush-gpu/fuzz",
     "crush-lz/fuzz",
-    "crush-sprint/fuzz",
 ]
 
 [workspace.package]

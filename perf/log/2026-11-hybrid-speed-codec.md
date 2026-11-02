@@ -2,6 +2,26 @@
 
 Machine, zstd version, build and spread are recorded with every result. Spec: `specs/026-hybrid-speed-codec/spec.md`.
 
+## Outcome
+
+Sprint was closed on 2026-11-02 and not shipped. Its code is on branch `026-hybrid-speed-codec`, ending at 2c2ebe6. The scaling work it prompted stays in the engine.
+
+The test was end-to-end time: does the smaller file save enough transfer time to repay the slower compression and decompression? Calculated for 1 GB of real files at all cores from the comparison at 6f7c3d8, without latency, protocol overhead or disk time. Compress, transfer and decompress in turn, seconds:
+
+| Link | `crush` | Sprint | `zstd -3` |
+|---|---|---|---|
+| 100 Mb/s | 23.97 | 23.28 | **23.02** |
+| 1 Gb/s | **3.42** | 3.62 | 3.56 |
+| 10 Gb/s | **1.36** | 1.65 | 1.61 |
+
+`lz4 -1` is fastest of all at 10 Gb/s, at 1.23.
+
+- Sprint saves 12.4 MB against `crush` and costs 0.30 s, so it gains only below about 330 Mb/s, and there `zstd -3` is ahead. It is slower and larger than `zstd -3` at every link speed.
+- When the stages overlap, compression speed caps throughput, and sprint's 870 MB/s is below `crush` at 1,099 and `zstd -3` at 1,237.
+- To match at 1 Gb/s it would need a ratio of 3.76 against `zstd -3` and 4.03 against `crush`, at the same speeds. Its ceiling at these table sizes is about 3.68.
+- On `log`, `crush` has the better ratio, 4.898 to 4.579.
+- Its one win is compressing once for many downloads over 100 Mb/s to 1 Gb/s, on real files, with at least 4 cores at each receiver: 1-2% ahead of the next best, in tmpfs, which favours it.
+
 ## Baselines
 
 2026-10-31, i9-12900K under WSL2, zstd 1.5.7, 128 MiB, 10 reps, ABBA, commit 6d213da plus setup. Median MB/s, with spread in brackets.
@@ -142,6 +162,342 @@ Consequence: `decompress_medium/1MB` can swing about ±18% between builds of ide
 
 ## Block-size sweep
 
+2026-11-01, i9-12900K under WSL2, zstd 1.5.7, 128 MiB `real` in tmpfs (the file from the 2026-10-29 comparison). Sizes are exact. Each chunk is compressed alone with `zstd -3` and the sizes summed.
+
+| Block | `-T1` (the gate's flag) | Against 3.700 | `--single-thread` | `-T1`, no literal compression |
+|---|---|---|---|---|
+| 1 MiB | 3.586 | -3.1% | 3.570 | 3.299 |
+| 2 MiB | 3.644 | -1.5% | 3.626 | 3.365 |
+| 4 MiB | 3.675 | -0.7% | 3.648 | 3.403 |
+| 8 MiB | 3.692 | -0.2% | 3.661 | 3.422 |
+| 16 MiB | 3.697 | -0.1% | 3.671 | 3.428 |
+| Whole file | 3.700 | | 3.675 | 3.432 |
+
+`--single-thread`, the flag in the original method, gives 3.675 on the whole file. `perf/compare.py` runs `-T<n>`, which gives 3.700 at every thread count, so `-T1` is the like-for-like figure. Why the two modes differ was not investigated.
+
+8 MiB is not a free fallback. SC-008 allows 5 ms for one block, and at the 1.6 GB/s measured below an 8 MiB block takes about 5 ms before any read, while 4 MiB takes about 2.5 ms. It also halves the tasks available to parallel decode.
+
+Sprint can spend more on matching instead. 4 MiB blocks, one pinned core, `zstd -b3 -B4194304`, median of three rounds, in memory:
+
+| Window, 8-byte table, 5-byte table | Ratio | Compress | Decompress |
+|---|---|---|---|
+| 2^22, 2^17, 2^16 | 3.678 | 379 MB/s | 1,639 MB/s |
+| 2^22, 2^17, 2^17 | 3.691 | 359 | 1,649 |
+| 2^22, 2^18, 2^16 | 3.699 | 347 | 1,646 |
+| 2^22, 2^18, 2^17 | 3.709 | 326 | 1,644 |
+
+A whole-block window alone adds 0.08%. The 8-byte table is the cheap lever: 2^18 entries reach 3.6994 against the live 3.6996, for 8.5% less compression speed, and decompression does not change. Both tables at the larger size clear the gate by 0.3% and cost 14%.
+
+**Decision**: stay at 4 MiB. Start the sprint matcher at 2^18 8-byte entries and 2^16 5-byte entries, and let the prototype decide on 2^17 5-byte entries. These are zstd's numbers: sprint's entropy stage and matcher will land elsewhere.
+
+## Literal compression
+
+One pinned core, whole file, `--single-thread`, ABBA, 22 runs each, median MB/s with spread:
+
+| | Ratio | Compress | Decompress |
+|---|---|---|---|
+| `zstd -3` | 3.675 | 317.5 (8%) | 1,283.5 (9%) |
+| `zstd -3 --no-compress-literals` | 3.422 | 327.9 (10%) | 1,437.6 (16%) |
+
+Huffman literals are worth 7.4% of ratio here (7.8% with `-T1`, 3.700 against 3.432). Both speed differences are inside the spreads: about 3% on compress and 11% on decompress. SC-001 cannot be reached without them, so they stay.
+
 ## Prototype
 
+2026-11-01, i9-12900K under WSL2, one pinned core, in memory, 128 MiB `real`, 4 MiB blocks, 128 KiB segments, safe Rust. `crush-sprint/examples/codec_bench.rs`, medians of three to five runs per round, over several rounds. Tables: 2^18 8-byte, 2^16 5-byte.
+
+| Stage | Sprint | zstd 1.5.7 | Multiple |
+|---|---|---|---|
+| Huffman decode, MB/s of literals | 1,302 | 1,460 | **0.89x** |
+| Compress so far (match + Huffman), MB/s of input | 284 | 344 | **0.83x** |
+| Match stage alone, MB/s of input | 303 | | |
+| Huffman encode, MB/s of input | 4,600 | | |
+
+Sprint figures are from the final build, whose three decode medians ranged 1,266-1,327. The zstd decode figure comes from an earlier round in the same session, and the 1,331 measured then, before the lint changes to `common_length` and the decode loop, may be the same code on a quieter machine: that was not tested. How to read the comparison:
+
+- The decode reference is `zstd -b3 -B131072` on the literal bytes sprint produced. Nearly nothing in them matches (ratio 1.165), so that run is mostly zstd's Huffman decoder, with some framing cost included.
+- The compress reference is `zstd -b3 -B4194304 --zstd=wlog=22,hlog=18`, the whole of zstd at the table sizes that reach 3.70. Sprint's figure has **no sequence coding yet**, so the 0.83x will fall when T044 and T048 land.
+
+Estimated ratio: 3.62 at 2^16 5-byte entries, 3.63 at 2^17, for 8% less match speed. The target is 3.70. This is an estimate, not a measurement: sequences have no coder, so their size is the per-segment order-0 entropy of the codes, using coarser match-length classes than the format's. It sets 22.4 MB of sequences beside about 21.5 MB implied for zstd, and at most that gap is real. Actual ratio waits for T044 to T050.
+
+The first run of this bench showed changing the 5-byte table had no effect. The hash constant had 24 trailing zero bits, so the short hash saw only 2 bytes. The fix took the estimate from 3.56 to 3.62, and a test now pins which bytes the hash covers.
+
+### Bounds checks (T042)
+
+Counted in the optimized assembly, panicking checks only:
+
+| Function | Before | After |
+|---|---|---|
+| `HuffmanDecoder::decode_interleaved` | 0 | 0 |
+| `Matcher::find`, with `common_length` | 6, plus 4 in `common_length` | 0 |
+
+`find` traded index expressions for `get` and reverse iterators. Old against new, four alternating rounds: 298-303 MB/s and 276-302 MB/s. Output is identical. The one low reading aside there is no measurable change. Refills and reads still compare a length before each load. These branches do not panic and were not removed.
+
+**T043 go/no-go**: both stages are at or above 0.8x, so sprint continues without an `unsafe` exception. T046 is not triggered.
+
+## First full codec
+
+2026-11-01, same machine and corpus. All of T044 to T056 in place, safe Rust, no `unsafe` exception.
+
+Through the CLI against `zstd -3 -T<n>`, ABBA, 7 reps, 128 MiB in tmpfs, median MB/s. Ratio 3.631 against 3.700, -1.9%:
+
+| | 1 core | 4 cores | all cores |
+|---|---|---|---|
+| Sprint compress | 221 | 718 | 689 |
+| `zstd -3` compress | 202 | 1,059 | 1,633 |
+| **Multiple**, gate | **1.09x**, 1.0x | **0.68x**, 1.0x | **0.42x**, 1.5x |
+| Sprint decompress | 729 | 2,173 | 3,196 |
+| `zstd -3` decompress | 1,039 | 1,196 | 1,205 |
+| **Multiple**, gate | **0.70x**, 1.0x | **1.82x**, 2.0x | **2.65x**, 3.0x |
+
+`zstd -3 --single-thread` compressed at 317 MB/s earlier today, against 202 for `-T1`, so the 1-core pass rests on the flag the gate uses. `-T1` also spends a thread on I/O, pinned to the same CPU.
+
+Compression stops scaling after 4 cores: the cause is below, under "All-core compression".
+
+In memory, one core, 4 MiB blocks, medians of three rounds. zstd is `-b3 -B4194304 --zstd=wlog=22,hlog=18`, the tables that reach 3.70:
+
+| | Sprint | zstd | Multiple | SC-004 |
+|---|---|---|---|---|
+| Compress | 241 MB/s | 354 | 0.68x | 0.85x, **miss** |
+| Decompress | 1,031 MB/s | 1,646 | 0.63x | 0.85x, **miss** |
+
+Decode time before the repeat-offset shift, 128 MiB: sequences 102 ms (11.3 ns each, 9.04 M sequences), literals 15 ms, tables 4 ms.
+
+### Decoder changes
+
+Medians over three rounds, MB/s:
+
+| Change | Decompress | Verdict |
+|---|---|---|
+| First build | 991 | |
+| 16-byte array copies, 1 flush fewer | 1,020 | Kept |
+| Branchless repeat offsets, word-at-a-time short periods | 1,076 | Kept |
+| Codes resolved into table entries, one shifted word per sequence | 1,084 | Kept, no measurable gain |
+| Ring of 8 sequences, touching each source early | 1,030 | **Reverted**: slower |
+| Match copies through `split_at_mut` | 1,115 | Kept |
+| Branching offset pick | 1,010 | **Reverted**: -10%, so mispredicts matter here |
+| Repeat-offset shift with no literals | 1,031 | Kept for ratio, -7% |
+
+Simulated branch misses in `run` were about 0.2 per sequence, and the reverted branching pick shows that figure undercounts. `run` executes about 200 instructions per sequence. The cause of the remaining gap to zstd is not established.
+
+### Ratio
+
+| Change | Ratio |
+|---|---|
+| First build | 3.6173 |
+| Repeat-offset shift with no literals (kept) | 3.6307 |
+| 2^17 5-byte table | 3.6409, 8% less compress speed |
+| 64 KiB segments | 3.6493 |
+| 32 KiB segments | 3.6521 |
+| 64 KiB segments and 2^17 table | 3.6587 |
+
+Smaller segments are not a free win (6% less compress and 8% less decompress speed at 64 KiB), but the gain suggests table boundaries should follow the content. zstd 1.5.7 may do this with its block pre-splitter at this level; that was not verified. Table descriptions are a second lead: about 240 KB in all, unmeasured against zstd's. Huffman tables use 4 bits per symbol with no entropy coding.
+
+### All-core compression
+
+The 2^18 8-byte table chosen in T028 for ratio is what stops compression scaling. Throughput falls as threads are added. Medians of three, MB/s:
+
+| | 1 P | 8 P | 16 P threads | 8 E | all 24 |
+|---|---|---|---|---|---|
+| 128 MiB | 214 | 997 | 799 | 1,033 | 671 |
+| 1 GiB | 212 | 1,078 | 823 | 1,069 | 664 |
+
+Ruled out, medians of five at all cores unless noted:
+
+- **Too few blocks**: 1 GiB behaves like 128 MiB.
+- **Kernel time**: 0.3 s system against 2.7 s user.
+- **Encoder rebuilt per rayon split**: a thread-local encoder gave 680 MB/s. Reverted.
+- **Allocator**: glibc with no `mmap` and no trimming gave 640 against 645.
+
+Match table sizes at all 24 threads, medians of five, 8-byte and 5-byte logs:
+
+| Tables | Compress | Ratio |
+|---|---|---|
+| 2^18, 2^16 | 684 | 3.631 |
+| 2^17, 2^16 | 935 | 3.609 |
+| 2^16, 2^15 | 1,196 | 3.555 |
+| 2^14, 2^13 | 1,362 | 3.368 |
+| 2^12, 2^11 | 1,339 | 3.095 |
+
+Fewer threads on all CPUs also help: 978 MB/s at 8, 886 at 12. That fits contention for the shared L3 (30 MB): 24 threads each hold about 1.3 MB of randomly accessed tables and a 4 MiB block. WSL has no hardware counters, so the L3 is inferred, not observed. Decompression has no such tables, and scales.
+
+The curve flattens near 1,360 MB/s, below zstd's 1,633 and the 2,450 SC-002 asks for at all cores, so smaller tables alone cannot pass that gate. Table size cannot follow the thread count either, because output must not depend on it.
+
+### Option A: 2^17 tables and content-based segments
+
+The maintainer chose 2^17 / 2^16 tables on 2026-11-01 and asked to recover the ratio elsewhere. In memory, one core, one run each unless noted:
+
+| Change | Ratio | Compress | Decompress |
+|---|---|---|---|
+| 2^17 tables | 3.609 | 264 | 1,042 |
+| Boundaries, distance 1.0, 8 KiB chunks | 3.647 | 255 | 989 |
+| Boundaries, distance 0.7, 8 KiB chunks | 3.656 | 246 | 972 |
+| Boundaries, distance 0.35, 8 KiB chunks | 3.621 | 229 | 873 |
+| Distance 0.7, Huffman lengths tANS coded (kept) | 3.663 | 245 | 932 |
+
+Kept: a segment ends where a chunk's sampled byte distribution differs from the segment so far by more than 0.7 total variation, with no boundary in the first 16 KiB. Tried and dropped, medians of three: tANS table logs one or two steps larger (3.663 in both cases, no change), and favouring repeat mode by 2%, 5% or 10% (3.662, 3.657, 3.646, at most 2% more decode speed). The second also suggests table rebuilds are not why decoding fell, and that cause is open.
+
+Through the CLI against `zstd -3 -T<n>`, ABBA, 7 reps, 128 MiB in tmpfs, median MB/s. Ratio 3.663 against 3.700, -1.0%:
+
+| | 1 core | 4 cores | all cores |
+|---|---|---|---|
+| Sprint compress | 220 | 736 | 872 |
+| `zstd -3` compress | 201 | 1,010 | 1,729 |
+| **Multiple**, gate | **1.09x**, 1.0x | **0.73x**, 1.0x | **0.50x**, 1.5x |
+| Sprint decompress | 709 | 2,123 | 3,336 |
+| `zstd -3` decompress | 1,075 | 1,217 | 1,221 |
+| **Multiple**, gate | **0.66x**, 1.0x | **1.74x**, 2.0x | **2.73x**, 3.0x |
+
+Fuzz on this state: `fuzz_tables`, `fuzz_decompress` and `fuzz_roundtrip`, 50,000 runs each, clean. `fuzz_tables` finishes in under a second, so it is probably rejecting most inputs early.
+
+### Boundary search cost
+
+`/perf check` against 5110f41 confirmed the first boundary search slowed random data by 12.2% (1,715 to 1,528 MB/s, CI +10.1% to +14.4%, full run). Profiles put 98.5% of the added instructions in `segment_end`. Skipping the search on data that looks incompressible was rejected, because an early sample can miss a compressible remainder. The search now samples 1 byte in 32, in 64 buckets, with an integer distance. In memory, one core, MB/s:
+
+| Sample, buckets, distance | Ratio | `real` compress | `random` compress |
+|---|---|---|---|
+| 1/8, 256, 0.70 (was) | 3.663 | 246 | 1,678 |
+| 1/32, 256, 0.80 | 3.664 | 240 | 714 |
+| 1/32, 64, 0.50 | 3.658 | 236 | 1,449 |
+| 1/32, 64, 0.60 | 3.663 | 247 | 1,751 |
+| 1/32, 64, 0.65 (kept) | 3.662 | 248 | 1,804 |
+| 1/32, 64, 0.80 | 3.658 | 243 | 1,802 |
+
+At 1/32 sampling, 256 buckets split random data falsely, and 64 buckets at 0.50 still do.
+
+### Bucket match table (T060)
+
+Rejected. Against 2^17 single entries at 3.662, 247 MB/s and 906 MB/s at all cores, 2^16 buckets of two entries, the same memory, gave 3.653, 238 MB/s and 778 MB/s at all cores.
+
+### Table persistence (T057)
+
+Tables are kept across segments in a block, and repeat offsets stay. With repeat mode off for Huffman and sequence tables, the ratio is 3.661 against 3.662, about 0.03%, with no measurable change in speed. R6's reuse barely pays on `real`. It stays because it is already built and costs nothing, but it is not where the missing 1% is.
+
+### Stream sizes against zstd
+
+zstd's block headers parsed on the same 4 MiB chunks of `real`, `-3 -T1`, window 2^22, against sprint at the same tables:
+
+| | zstd 2^17 / 2^16 | zstd 2^18 / 2^16 | Sprint 2^17 / 2^16 |
+|---|---|---|---|
+| Ratio | 3.678 | 3.699 | 3.662 |
+| Sequences | 9.08 M | 9.01 M | 9.12 M |
+| Literals, share of input | 13.0% | 12.8% | 13.1% |
+| Blocks | 2,243 | 2,243 | |
+
+Sprint's sequence and literal counts are from fixed 128 KiB segments. The match finder is not the gap: both find about the same matches. zstd's 2,243 blocks average 60 KB, so it also ends blocks by content. At equal tables sprint is 0.4% behind, so about 3.68 is the likely ceiling at 2^17, and most of the shortfall against 3.70 is the table size chosen on 2026-11-01.
+
+### Pricing decode speed
+
+One pinned core, in memory, 128 MiB `real`, medians of three in alternating rounds, against about 930 to 950 MB/s for the same safe generic build:
+
+| Build | Compress | Decompress |
+|---|---|---|
+| Unchecked copies and bit loads, throwaway build, not kept | no change | 963 to 986 MB/s, about +4.5% |
+| BMI2 enabled for the whole crate | no change | 1,006 to 1,033 MB/s, about +7% |
+| `target-cpu=native` | no change | 1,019 to 1,035 MB/s, about +8% |
+
+Bounds checks are not the wall, so T046 is not triggered. Runtime BMI2 dispatch would need one `unsafe` call, or a dependency, so it is not done. Neither explains the gap to zstd's 1,646 MB/s, which remains open.
+
+The compiled loop has 751 instructions, 151 of them touching the stack, so registers looked like the limit. Splitting it into a decode loop and a run loop, 64 sequences at a time, gave no gain (about 920 against 930 MB/s, four alternating rounds) and was reverted. It did price the two halves: reading fields from the bit stream takes about 71 ms for 9.1 M sequences, 7.8 ns each, and copying takes about 46 ms, 5 ns each, with those timers in place. zstd's whole decode leaves about 7.8 ns per sequence for both, if literals take about 13 ms (estimated, not measured). So the larger part of the gap is in bit reading and tANS, not copying.
+
+Tuning stopped here, as agreed: no remaining experiment promises a large saving.
+
 ## Gates
+
+The maintainer revised the gates on 2026-11-01: sprint is a decompression leader, with a ratio within about 1% of zstd -3. Decompression targets stayed at 2.0x and 3.0x, so sprint stays opt-in until it meets them.
+
+Through the CLI against `zstd -3 -T<n>`, ABBA, 7 reps, 128 MiB `real` in tmpfs, median MB/s:
+
+| | 1 core | 4 cores | all cores |
+|---|---|---|---|
+| Sprint compress | 223 | 735 | 955 |
+| `zstd -3` compress | 209 | 1,003 | 1,698 |
+| Multiple | **1.07x** | 0.73x | 0.56x |
+| Sprint decompress | 701 | 2,041 | 3,052 |
+| `zstd -3` decompress | 1,055 | 1,200 | 1,216 |
+| Multiple | 0.66x | **1.70x** | **2.51x** |
+
+These multiples move from run to run: 1.74x and 2.73x in the run before the boundary fix, whose decode path is the same. Multi-core spreads were not recorded in either run.
+
+| Criterion | Target | Result | |
+|---|---|---|---|
+| SC-001 ratio | 0.99x | 0.9899x (3.6624 against 3.6996) | **Miss** by 0.01% |
+| SC-002 compress, 1 core | 1.0x | 1.07x | Pass, on `-T1` |
+| SC-003 decompress, 4 cores | 2.0x | 1.70x | **Miss** |
+| SC-003 decompress, all cores | 3.0x | 2.51x | **Miss** |
+| SC-006 memory per thread | under 32 MB | Process peak 10.4 MB compressing and 11.1 MB decompressing 4 MiB on one thread, against 4.3 MB for `--version`, input and output included | Pass |
+| SC-007 fuzz | 100,000 runs | `fuzz_tables`, `fuzz_decompress`, `fuzz_roundtrip`, 100,000 each, clean, empty corpus | Pass |
+| SC-008 one block | under 5 ms | Median 4.4 to 4.7 ms, slowest of 32 blocks 5.8 to 6.5 ms, in memory, four runs | Median passes, slowest **misses** |
+
+SC-008's slowest block is the densest, not a slow lookup. `load_index` takes under 1 microsecond, and across 32 blocks the fastest took 3.4 ms at 0.75 MB compressed and the slowest 6.2 ms at 1.26 MB. About 20% more decode speed would clear it.
+
+### All corpora (T069)
+
+`perf/compare.py --builds`, three separately built binaries, `zstd -3 -T<n>`, ABBA, 7 reps, 128 MiB in tmpfs. Sprint figures are the worst build's multiple, as SC-011 requires, against one `zstd -3` row:
+
+| Corpus | Ratio, sprint / zstd | Compress 1 / 4 / all | Decompress 1 / 4 / all |
+|---|---|---|---|
+| `real` | 3.662 / 3.700 | 1.06x / 0.69x / 0.53x | 0.65x / 1.66x / 2.57x |
+| `log` | 4.579 / 4.635 | 1.07x / 0.81x / 0.58x | 0.71x / 1.68x / 2.24x |
+| `text` | 1.327 / 1.327 | 0.91x / 0.62x / 0.45x | 0.87x / 1.98x / 2.27x |
+| `repetitive` | 6,315 / 10,882 | 2.40x / 1.26x / 0.75x | 0.87x / 1.72x / 1.68x |
+| `random` | 1.000 / 1.000 | 1.08x / 0.56x / 0.38x | 0.89x / 0.75x / 0.68x |
+
+Gate report: 2 passed, 7 failed, on `real` unless noted.
+
+| Gate | Target | Worst build | Result |
+|---|---|---|---|
+| SC-001 ratio | 0.99x | 0.9899x | Fail, by 0.01% |
+| SC-002 compress, 1 core | 1.0x | 1.06x | Pass |
+| SC-003 decompress, 4 cores | 2.0x | 1.66x | Fail |
+| SC-003 decompress, all cores | 3.0x | 2.57x | Fail |
+| SC-005 `crush` scaling, 4 cores | 3.0x | 2.83x | Fail, as accepted on 2026-10-31 at 2.86x |
+| SC-005 `crush` scaling, all cores | 3.3x | 4.29x | Pass |
+| SC-010 `text` compress, 1 core | 1.0x at 1.32 | 0.91x at 1.327 | Fail on speed |
+
+Spreads on the decompress rows reach 133% at 4 cores and 36% at all cores on `real`, so a single median is weak evidence there, and they were not investigated. `zstd -3` itself reads 42% on `log` compress at all cores. On `random`, sprint decompresses more slowly than zstd at every core count, 0.68x at all cores, because stored blocks go through the engine and checksums while zstd copies. Causes of the failed gates are the ones above: decode speed for SC-003 and SC-008, 2^17 tables for SC-001. The cause of SC-010 is not established.
+
+### Harness corrections
+
+The table above came from a harness with two faults, and the run below supersedes it.
+
+- **Unequal output handling**: `crush -f` wrote over the old output while `zstd ... >` truncated it first. On `real`, a fresh output was about 7% faster at 4 cores (59 against 63.5 ms) and 10% at all cores (35.7 against 39.5 ms). `compare.py` now deletes outputs before each timed step, for every tool.
+- **Max minus min as spread**: one stray run set it. An isolated series of 16 at 4 cores spread 7%, against 133% in the harness. `compare.py` now reports interquartile range as well, and runs each tool once uncounted, because a binary's first run was the suspected source of the strays. That suspicion was not tested separately.
+
+Same builds and method as T069, worst of three builds, IQR beside each gate:
+
+| Corpus | Ratio, sprint / zstd | Compress 1 / 4 / all | Decompress 1 / 4 / all |
+|---|---|---|---|
+| `real` | 3.662 / 3.700 | 1.10x / 0.69x / 0.56x | 0.65x / 1.75x / 2.79x |
+| `log` | 4.579 / 4.635 | 1.12x / 0.82x / 0.53x | 0.69x / 1.74x / 2.37x |
+| `text` | 1.327 / 1.327 | 0.88x / 0.59x / 0.40x | 0.89x / 2.09x / 2.91x |
+| `repetitive` | 6,315 / 10,882 | 2.33x / 1.10x / 0.73x | 0.84x / 1.80x / 1.76x |
+| `random` | 1.000 / 1.000 | 1.05x / 0.54x / 0.37x | 0.88x / 0.71x / 0.66x |
+
+| Gate | Target | Result | IQR | |
+|---|---|---|---|---|
+| SC-001 ratio | 0.99x | 0.9899x | | Fail by 0.01% |
+| SC-002 compress, 1 core | 1.0x | 1.10x | 4.9% | Pass |
+| SC-003 decompress, 4 cores | 2.0x | 1.75x | 2.8% | Fail |
+| SC-003 decompress, all cores | 3.0x | 2.79x | 3.6% | Fail |
+| SC-005 `crush` scaling, 4 cores | 3.0x | 3.00x | 4.2% | Pass |
+| SC-005 `crush` scaling, all cores | 3.3x | 4.45x | 18.3% | Pass |
+| SC-010 `text` compress, 1 core | 1.0x at 1.32 | 0.88x at 1.327 | 9.9% | Fail on speed |
+
+The report printed 0.9897x for SC-001 because the harness rounded ratios to three places before dividing, now four. 0.9899x is the exact figure. `zstd -3`'s own compress and decompress rows also changed between runs, and SC-005's pass at 3.00x rests on a 4% IQR. All-core IQR stays high on some rows: 28% on `text` and 20% on `log` decompression.
+
+`random` decompression on one run of each, by `CRUSH_TIMINGS`: 54 ms on 1 core, 29 on 4, 28 on all, of which 3.8 ms maps the input, and the harness adds about 8 ms of process start and exit. The work is a copy and a checksum per block, and it stops scaling at 4 cores. Faults on the mapped output are the likely limit, which was not measured.
+
+### Output path
+
+Decompression at all cores, MB/s, 128 MiB, ABBA, 9 reps, with the output on tmpfs or ext4. `populate` is the current build with the output mapping pre-faulted:
+
+| | Current | `populate` | `zstd -3` | Current against zstd |
+|---|---|---|---|---|
+| `random`, tmpfs | 3,975 | 2,409 | 5,549 | 0.72x |
+| `random`, ext4 | 3,095 | 2,555 | 2,911 | 1.06x |
+| `real`, tmpfs | 3,805 | 2,146 | 1,257 | 3.03x |
+| `real`, ext4 | 3,222 | 2,192 | 1,266 | 2.55x |
+
+Pre-faulting is much slower and was reverted. Sprint's weakness on `random` comes from tmpfs, where zstd's `write` is unusually fast, and is gone on ext4. tmpfs flatters sprint on `real`, so the SC-003 multiples are measured under conditions that suit it, and the spec's 3.0x would be harder on disk. `fallocate` of 128 MiB takes 5.3 ms on tmpfs and 0.09 ms on ext4. What limits scaling on tmpfs was not established. These are single builds, not rotated.
+
+BMI2 was approved only if it closed SC-003. It reached 1.76x and 2.65x, built for the whole crate, so it was not added and sprint stays free of `unsafe`.

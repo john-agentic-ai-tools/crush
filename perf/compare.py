@@ -55,6 +55,15 @@ DATASETS = {
     "random": "head -c {n} /dev/urandom",
     # real files: shared libraries, docs, locale data
     "real": "tar -cf - /usr/lib /usr/share 2>/dev/null | head -c {n}",
+    # Log lines with varied ids, times and paths: repetitive, not random
+    "log": "python3 -c 'import random,sys\n"
+           "r = random.Random(1)\n"
+           "while True:\n"
+           "    print(\"2026-11-01T%02d:%02d:%02d.%03dZ %s svc-%d request id=%08x "
+           "path=/api/v1/items/%d status=%d ms=%d\" % (r.randrange(24), r.randrange(60), "
+           "r.randrange(60), r.randrange(1000), r.choice([\"INFO\"]*9 + [\"WARN\"]), "
+           "r.randrange(20), r.getrandbits(32), r.randrange(5000), "
+           "r.choice([200]*19 + [503]), r.randrange(400)))' 2>/dev/null | head -c {n}",
 }
 
 
@@ -147,6 +156,20 @@ def tools(crush, threads, builds=None):
             if name.split("-")[0] not in OPTIONAL or shutil.which(name.split("-")[0])}
 
 
+def remove(path):
+    if os.path.exists(path):
+        os.unlink(path)
+
+
+def iqr_pct(values):
+    """Interquartile range as a percentage of the median. Unlike max minus
+    min, one stray run does not set it."""
+    if len(values) < 2:
+        return 0.0
+    q1, _, q3 = statistics.quantiles(values, n=4, method="inclusive")
+    return round((q3 - q1) / statistics.median(values) * 100, 1)
+
+
 def timed(cmd):
     t = time.perf_counter()
     sh(cmd)
@@ -228,13 +251,24 @@ def main():
                 times = {t: ([], []) for t in sel}
                 ratio = {}
 
-                def run(tool):
+                def run(tool, record=True):
                     c, x = sel[tool]
                     ct, dt = times[tool]
-                    ct.append(timed(pin + c.format(i=i, o=o, d=d)))
-                    dt.append(timed(pin + x.format(i=i, o=o, d=d)))
+                    # Every tool gets a fresh output: overwriting costs some
+                    # tools more than others, and hides what is being measured.
+                    remove(o)
+                    compress_time = timed(pin + c.format(i=i, o=o, d=d))
+                    remove(d)
+                    decompress_time = timed(pin + x.format(i=i, o=o, d=d))
                     sh(f"cmp -s {i} {d}")
-                    ratio[tool] = round(size / os.path.getsize(o), 3)
+                    ratio[tool] = round(size / os.path.getsize(o), 4)
+                    if record:
+                        ct.append(compress_time)
+                        dt.append(decompress_time)
+
+                # Uncounted: the first run of a binary pays to load it.
+                for tool in sel:
+                    run(tool, record=False)
 
                 if a.abba:
                     order = list(sel)
@@ -255,7 +289,9 @@ def main():
                          "comp_spread_pct": round(
                              (max(ct) - min(ct)) / statistics.median(ct) * 100, 1),
                          "decomp_spread_pct": round(
-                             (max(dt) - min(dt)) / statistics.median(dt) * 100, 1)}
+                             (max(dt) - min(dt)) / statistics.median(dt) * 100, 1),
+                         "comp_iqr_pct": iqr_pct(ct),
+                         "decomp_iqr_pct": iqr_pct(dt)}
                     results.append(r)
                     print(f"{cores:>3} {ds:<10} {tool:<13} compress {r['comp_mbs']:>8} MB/s"
                           f" (±{r['comp_spread_pct']}%)"
