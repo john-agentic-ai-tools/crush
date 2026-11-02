@@ -66,6 +66,12 @@ Key design principles:
 
 GPU decompression outperforms CPU at larger data sizes where the per-tile dispatch overhead is amortized. The crossover point is around 2-4 MB.
 
+#### Through the CLI (128 MiB of real files)
+
+CUDA decompresses at 242 MB/s and wgpu at 146 MB/s on Windows, against 1,177 MB/s
+for `crush` parallel on the same machine. The GPU decode itself took about 160 ms
+with CUDA; the rest of the run is outside it, and that split has not been profiled.
+
 #### Real-World Large File Performance (1.8 GB compressed, ~62K tiles)
 
 An earlier measurement, on Rust 1.93.1, not repeated since.

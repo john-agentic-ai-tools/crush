@@ -200,6 +200,21 @@ is better:
 
 ![Decompression speed against ratio](perf/comparisons/real-all-decompress.svg)
 
+Through the CLI on native Windows, same 128 MiB of real files, all cores, on disk
+with an RTX 3060 Ti, median of 7 runs:
+
+| | Compress | Decompress | Ratio |
+|---|---|---|---|
+| `crush` parallel | 597 MB/s | 1,177 MB/s | 3.503 |
+| `crush` GPU, wgpu | 532 MB/s | 146 MB/s | 2.359 |
+| `crush` GPU, CUDA | 531 MB/s | 242 MB/s | 2.359 |
+
+At this size, `crush` parallel beats both GPU flavours on speed and ratio. Most
+of a GPU run is spent outside the GPU decode, which took about 160 ms with CUDA.
+Tiles that do not compress are stored, and the GPU has nothing to do for them.
+The GPU figures are from Windows because WSL2 has no real Vulkan driver or nvrtc
+here. Windows points in the charts are hollow, and use disk rather than tmpfs.
+
 To explore every dataset and core count, open `perf/comparisons/chart.html`.
 After a new `perf/compare.py` run, redraw these with `python perf/chart.py`.
 

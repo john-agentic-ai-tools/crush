@@ -5,7 +5,9 @@ Standard library only, and it runs on any platform:
 
     python perf/chart.py [RESULTS.json] [--out perf/comparisons]
 
-RESULTS.json defaults to the newest file in perf/comparisons. This writes:
+RESULTS.json defaults to the newest file in perf/comparisons. Results from
+perf/compare_gpu.py in perf/comparisons/gpu are added and marked as Windows.
+This writes:
 
     chart.html                     every dataset, core count and direction, with
                                    filters, hover details and a table
@@ -38,8 +40,11 @@ CORES = {"all": "all cores", "4": "4 cores", "1": "1 core"}
 OPS = {"compress": ("comp_mbs", "Compression"),
        "decompress": ("decomp_mbs", "Decompression")}
 NAMES = {
-    "crush": "crush",
+    "crush": "crush parallel",
     "crush-fast-lz": "crush fast-lz",
+    "crush-parallel-windows": "crush parallel (Windows)",
+    "crush-gpu-windows": "crush GPU (Windows)",
+    "crush-gpu-cuda-windows": "crush GPU CUDA (Windows)",
     "gzip-6": "gzip -6", "gzip-1": "gzip -1",
     "pigz-6": "pigz -6", "pigz-1": "pigz -1",
     "zstd-1": "zstd -1", "zstd-3": "zstd -3",
@@ -47,7 +52,7 @@ NAMES = {
 }
 
 W, H = 720, 460
-LEFT, RIGHT, TOP, BOTTOM = 68, 24, 44, 52
+LEFT, RIGHT, TOP, BOTTOM = 68, 24, 54, 52
 CHAR_W, LINE_H = 6.6, 14
 
 STYLE = """
@@ -64,6 +69,7 @@ STYLE = """
 .c-root .axis{stroke:var(--axis);stroke-width:1}
 .c-root .dot-crush{fill:var(--crush);stroke:var(--surface);stroke-width:2}
 .c-root .dot-other{fill:var(--other);stroke:var(--surface);stroke-width:2}
+.c-root .dot-windows{fill:var(--surface);stroke:var(--crush);stroke-width:2.5}
 .c-root .hit{fill:transparent}
 """
 
@@ -126,6 +132,16 @@ def label(tool):
     return NAMES.get(tool, tool)
 
 
+def environment(row):
+    return "Windows" if row.get("env") == "windows" else "WSL2"
+
+
+def kind_of(row):
+    if row.get("env") == "windows":
+        return "windows"
+    return "crush" if mine(row["tool"]) else "other"
+
+
 def view_rows(results, data, cores, op):
     """Rows for one view, fastest first, each with its speed and frontier flag."""
     key = OPS[op][0]
@@ -134,7 +150,8 @@ def view_rows(results, data, cores, op):
     rows.sort(key=lambda r: -r["speed"])
     for r in rows:
         r["frontier"] = not any(
-            o is not r and o["speed"] >= r["speed"] and o["ratio"] >= r["ratio"]
+            o is not r and environment(o) == environment(r)
+            and o["speed"] >= r["speed"] and o["ratio"] >= r["ratio"]
             and (o["speed"] > r["speed"] or o["ratio"] > r["ratio"])
             for o in rows)
     return rows
@@ -216,10 +233,11 @@ def svg(rows, data, cores, op, standalone=False):
         out.append(f"<style>{STYLE}</style>")
     out.append(f'<rect class="bg" width="{W}" height="{H}"/>')
     out.append(f'<text class="title" x="{LEFT}" y="20">{html.escape(title)}</text>')
-    for x, kind, text in ((W - RIGHT - 104, "crush", "Crush"),
-                          (W - RIGHT - 54, "other", "Other tools")):
-        out.append(f'<circle class="dot-{kind}" cx="{x}" cy="16" r="5"/>')
-        out.append(f'<text x="{x + 8}" y="20">{text}</text>')
+    for x, kind, text in ((LEFT + 5, "crush", "Crush, WSL2"),
+                          (LEFT + 105, "windows", "Crush, Windows"),
+                          (LEFT + 225, "other", "Other tools, WSL2")):
+        out.append(f'<circle class="dot-{kind}" cx="{x}" cy="33" r="5"/>')
+        out.append(f'<text x="{x + 9}" y="37">{text}</text>')
 
     for t in speed_ticks(low, high):
         y = round(sy(t), 1)
@@ -237,13 +255,15 @@ def svg(rows, data, cores, op, standalone=False):
     points = [dict(r, x=round(sx(r["ratio"]), 1), y=round(sy(r["speed"]), 1)) for r in rows]
     place_labels(points)
     for p in sorted(points, key=lambda q: mine(q["tool"])):
-        kind = "crush" if mine(p["tool"]) else "other"
+        kind = kind_of(p)
         tip = (f"{label(p['tool'])}\n{p['speed']:,.0f} MB/s\nratio {p['ratio']:.3f}"
+               + (f"\nran on {environment(p)}")
+               + ("\nno GPU work: every tile is stored" if p.get("gpu_used") is False else "")
                + ("\non the frontier" if p["frontier"] else ""))
         out.append(f'<g class="pt" tabindex="0" data-tip="{html.escape(tip)}">'
                    f"<title>{html.escape(tip)}</title>"
                    f'<circle class="hit" cx="{p["x"]}" cy="{p["y"]}" r="12"/>'
-                   f'<circle class="dot-{kind}" cx="{p["x"]}" cy="{p["y"]}" r="{6 if kind == "crush" else 5}"/></g>')
+                   f'<circle class="dot-{kind}" cx="{p["x"]}" cy="{p["y"]}" r="{5 if kind == "other" else 6}"/></g>')
     for p in points:
         if "label" in p:
             tx, ty, anchor = p["label"]
@@ -255,14 +275,15 @@ def svg(rows, data, cores, op, standalone=False):
 
 
 def table(rows, op):
-    head = ("<tr><th>Tool</th><th>Speed rank</th><th>MB/s</th><th>Spread</th>"
+    head = ("<tr><th>Tool</th><th>Ran on</th><th>Speed rank</th><th>MB/s</th><th>Spread</th>"
             "<th>Ratio</th><th>On the frontier</th></tr>")
     spread = "comp_spread_pct" if op == "compress" else "decomp_spread_pct"
     body = []
     for rank, r in enumerate(rows, 1):
         cls = ' class="mine"' if mine(r["tool"]) else ""
-        pct = f"±{r[spread]:.0f}%" if spread in r else ""
-        body.append(f"<tr{cls}><td>{html.escape(label(r['tool']))}</td><td>{rank}</td>"
+        iqr = spread.replace("spread", "iqr")
+        pct = f"±{r[spread]:.0f}%" if spread in r else (f"IQR {r[iqr]:.0f}%" if iqr in r else "")
+        body.append(f"<tr{cls}><td>{html.escape(label(r['tool']))}</td><td>{environment(r)}</td><td>{rank}</td>"
                     f"<td>{r['speed']:,.0f}</td><td>{pct}</td><td>{r['ratio']:.3f}</td>"
                     f"<td>{'Yes' if r['frontier'] else 'No'}</td></tr>")
     return f'<div class="scroll"><table>{head}{"".join(body)}</table></div>'
@@ -289,7 +310,13 @@ def main():
         raise SystemExit("no results: run perf/compare.py first")
     with open(path, encoding="utf8") as f:
         doc = json.load(f)
-    results = doc["results"]
+    results = list(doc["results"])
+    gpu_doc = None
+    gpu_path = os.path.join(COMPARISONS, "gpu", "windows.json")
+    if os.path.exists(gpu_path):
+        with open(gpu_path, encoding="utf8") as f:
+            gpu_doc = json.load(f)
+        results += gpu_doc["results"]
 
     views = []
     for data in DATASETS:
@@ -309,7 +336,18 @@ def main():
         f" command line, with input and output in tmpfs, {'alternating tools, ' if method.get('abba') else ''}"
         f"pinned with taskset. Each run was checked to round-trip. gzip is single-threaded, so it"
         f" appears at 1 core only. A tool is on the frontier when no other tool in the view is"
-        f" at least as good on both speed and ratio. {tools}.")
+        f" at least as good on both speed and ratio, among tools from the same environment."
+        f" {tools}.")
+    if gpu_doc:
+        gm = gpu_doc["method"]
+        how += html.escape(
+            f" Points marked Windows ran on native Windows, on {gpu_doc['machine']['gpu']}, with"
+            f" input and output on disk, median of {gm['reps']} runs, commit {gpu_doc['commit']},"
+            f" all cores only. Everything else ran under WSL2 in tmpfs, so compare the two with"
+            f" care; crush parallel appears on both as a reference. WSL2 has no real Vulkan"
+            f" driver or nvrtc here, so GPU flavours were not measured there. Every GPU figure"
+            f" was checked to have used the GPU, not the CPU fallback. Where every tile is"
+            f" stored, as on random data, the GPU has nothing to decode.")
     filters = (select("Data", DATASETS) + select("Cores", CORES)
                + select("Direction", {k: v[1] for k, v in OPS.items()}))
     page = (PAGE.replace("__META__", meta).replace("__FILTERS__", filters)
