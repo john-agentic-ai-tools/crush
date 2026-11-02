@@ -59,3 +59,23 @@ MB/s, compress then decompress. `text` and `random` do no GPU decoding. The firs
 
 - Full `ab` against 98b4a9a: IMPROVED, no regression. `decompress_throughput/gpu/mixed-10MB` went from 382 to 461 MB/s. Largest slowdowns on ms-scale benchmarks: +1.6%, on `decompress_throughput/cpu/mixed-10MB`, under the gate.
 - Fuzz: `fuzz_decompress` and `fuzz_format`, 100,000 runs each, clean, from empty corpora.
+
+## Profile after the changes
+
+samply, 12 runs on Windows, against the same profile before. These are sampled call stacks and kernel time, not hardware counters.
+
+| Inclusive share | Before | After |
+|---|---|---|
+| `NtFreeVirtualMemory` | 23.3% | 3.8% |
+| `decompress_tiles_gdeflate` | 29.2% | 29.6% |
+| `discover_gpu` | 24.0% | 23.4% |
+
+The frees were the large output buffer and its tiles, as H1 supposed. The attribution rests on that drop, because kernel frames were not tied to callers.
+
+The 82 ms from the last log line to exit is not CPU time in this process: `ExitProcess` is 1.2% of samples. It is therefore waiting of some kind. What it waits for was not established, and a sampling profile cannot show it.
+
+The parallel placement is about 20% of samples. Page faults on the fresh mapping remain unmeasured.
+
+## Next
+
+The LZ77 kernel is unused: only tests reach `decompress_tiles`, and only format version 2 is accepted. Removing it should save about 28 ms on each CUDA run, not yet measured.
