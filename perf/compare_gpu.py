@@ -181,6 +181,8 @@ def main():
     ap.add_argument("--work", required=True, help="directory for outputs, on disk")
     ap.add_argument("--reps", type=int, default=7)
     ap.add_argument("--out", default=OUT)
+    ap.add_argument("--only", choices=DATASETS,
+                    help="re-measure one dataset and replace its rows in --out")
     ap.add_argument("--baseline", help="compare --crush against this build")
     ap.add_argument("--data", default="real", choices=DATASETS, help="with --baseline")
     ap.add_argument("--backend", default="cuda", choices=("cuda", "wgpu"), help="with --baseline")
@@ -190,6 +192,15 @@ def main():
     os.makedirs(a.work, exist_ok=True)
     if a.baseline:
         compare_builds(a)
+        return
+
+    if a.only:
+        with open(a.out, encoding="utf8") as f:
+            doc = json.load(f)
+        doc["results"] = [r for r in doc["results"] if r["data"] != a.only] + measure(a, a.only)
+        with open(a.out, "w", encoding="utf8", newline="\n") as f:
+            json.dump(doc, f, indent=1)
+            f.write("\n")
         return
 
     results = [row for data in DATASETS for row in measure(a, data)]

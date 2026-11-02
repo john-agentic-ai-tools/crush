@@ -68,9 +68,9 @@ GPU decompression outperforms CPU at larger data sizes where the per-tile dispat
 
 #### Through the CLI (128 MiB of real files)
 
-CUDA decompresses at 242 MB/s and wgpu at 146 MB/s on Windows, against 1,177 MB/s
-for `crush` parallel on the same machine. The GPU decode itself took about 160 ms
-with CUDA; the rest of the run is outside it, and that split has not been profiled.
+CUDA decompresses at 305 MB/s and wgpu at 174 MB/s on Windows, against 1,164 MB/s
+for `crush` parallel on the same machine. The GPU decode itself takes about 155 ms
+of a 440 ms CUDA run. `perf/log/2026-11-cuda-decompress.md` has the full split.
 
 #### Real-World Large File Performance (1.8 GB compressed, ~62K tiles)
 
