@@ -352,4 +352,29 @@ Rejected. Against 2^17 single entries at 3.662, 247 MB/s and 906 MB/s at all cor
 
 Tables are kept across segments in a block, and repeat offsets stay. With repeat mode off for Huffman and sequence tables, the ratio is 3.661 against 3.662, about 0.03%, with no measurable change in speed. R6's reuse barely pays on `real`. It stays because it is already built and costs nothing, but it is not where the missing 1% is.
 
+### Stream sizes against zstd
+
+zstd's block headers parsed on the same 4 MiB chunks of `real`, `-3 -T1`, window 2^22, against sprint at the same tables:
+
+| | zstd 2^17 / 2^16 | zstd 2^18 / 2^16 | Sprint 2^17 / 2^16 |
+|---|---|---|---|
+| Ratio | 3.678 | 3.699 | 3.662 |
+| Sequences | 9.08 M | 9.01 M | 9.12 M |
+| Literals, share of input | 13.0% | 12.8% | 13.1% |
+| Blocks | 2,243 | 2,243 | |
+
+Sprint's sequence and literal counts are from fixed 128 KiB segments. The match finder is not the gap: both find about the same matches. zstd's 2,243 blocks average 60 KB, so it also ends blocks by content. At equal tables sprint is 0.4% behind, so about 3.68 is the likely ceiling at 2^17, and most of the shortfall against 3.70 is the table size chosen on 2026-11-01.
+
+### Pricing decode speed
+
+One pinned core, in memory, 128 MiB `real`, medians of three in alternating rounds, against about 930 to 950 MB/s for the same safe generic build:
+
+| Build | Compress | Decompress |
+|---|---|---|
+| Unchecked copies and bit loads, throwaway build, not kept | no change | 963 to 986 MB/s, about +4.5% |
+| BMI2 enabled for the whole crate | no change | 1,006 to 1,033 MB/s, about +7% |
+| `target-cpu=native` | no change | 1,019 to 1,035 MB/s, about +8% |
+
+Bounds checks are not the wall, so T046 is not triggered. Runtime BMI2 dispatch would need one `unsafe` call, or a dependency, so it is not done. Neither explains the gap to zstd's 1,646 MB/s, which remains open.
+
 ## Gates
