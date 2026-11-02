@@ -38,9 +38,9 @@ Broader evidence is in [the research report](../../reports/Beating%20zstd%20with
 
 ## R6. Segment model
 
-- **Decision (Provisional)**: 128 KiB segments inside each block. Huffman tables, tANS tables and repeat offsets persist across segments, and reset at each block.
-- **Rationale**: Table reuse cuts encoder cost, and it is what makes a segment cheap. Reset at the block boundary preserves independence and therefore random access.
-- **Overturned by**: Measured ratio or speed loss from persistence, which has no published figure.
+- **Decision**: Segments of at most 128 KiB inside each block, ending early where the byte distribution shifts. Huffman tables, tANS tables and repeat offsets persist across segments, and reset at each block.
+- **Rationale**: Reset at the block boundary preserves independence and therefore random access. Content-based boundaries add about 1.3% ratio on `real`. Table reuse adds only 0.03% there, and stays because it costs nothing.
+- **Overturned by**: A corpus where reuse costs speed or ratio.
 
 ## R7. Match finder
 

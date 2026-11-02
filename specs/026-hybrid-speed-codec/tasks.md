@@ -141,10 +141,10 @@ description: "Task list for the hybrid high-speed codec"
 
 ### Format experiments and freeze
 
-- [ ] T057 [US2] Test table persistence across segments against reset per segment (R6), using `crush-sprint/src/codec.rs`, and record it in `perf/log/2026-11-hybrid-speed-codec.md`
+- [X] T057 [US2] Test table persistence across segments against reset per segment (R6), using `crush-sprint/src/codec.rs`, and record it in `perf/log/2026-11-hybrid-speed-codec.md`
 - [ ] T058 [US2] Test repeat offsets on versus off, and shared versus per-field sequence bit streams, in `crush-sprint/src/sequences.rs`, and record it in `perf/log/2026-11-hybrid-speed-codec.md`
 - [ ] T059 [US2] Tune predefined distributions in `crush-sprint/src/tans.rs` using all benchmark corpora, without over-fitting `real`
-- [ ] T060 [US2] Try the tag-filtered bucket match finder in `crush-sprint/src/matcher.rs` (R7), and keep it only if it wins on a same-session run
+- [X] T060 [US2] Try the tag-filtered bucket match finder in `crush-sprint/src/matcher.rs` (R7), and keep it only if it wins on a same-session run
 - [ ] T061 [US2] Freeze the format with maintainer approval: complete and mark final `specs/026-hybrid-speed-codec/contracts/sprint-format.md`, then add golden files in `crush-sprint/tests/golden/`
 
 ### Verification

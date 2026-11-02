@@ -344,4 +344,12 @@ Fuzz on this state: `fuzz_tables`, `fuzz_decompress` and `fuzz_roundtrip`, 50,00
 
 At 1/32 sampling, 256 buckets split random data falsely, and 64 buckets at 0.50 still do.
 
+### Bucket match table (T060)
+
+Rejected. Against 2^17 single entries at 3.662, 247 MB/s and 906 MB/s at all cores, 2^16 buckets of two entries, the same memory, gave 3.653, 238 MB/s and 778 MB/s at all cores.
+
+### Table persistence (T057)
+
+Tables are kept across segments in a block, and repeat offsets stay. With repeat mode off for Huffman and sequence tables, the ratio is 3.661 against 3.662, about 0.03%, with no measurable change in speed. R6's reuse barely pays on `real`. It stays because it is already built and costs nothing, but it is not where the missing 1% is.
+
 ## Gates
